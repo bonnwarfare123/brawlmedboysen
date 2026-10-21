@@ -416,3 +416,28 @@ body[data-phase="lobby"] .top-left,
 body[data-phase="lobby"] #round-banner { display: none; }
 body[data-phase="matchEnd"] #crosshair,
 body[data-phase="matchEnd"] #click-hint { display: none; }
+
+/* ---------- Utseende och volym ---------- */
+.look-row {
+  display: grid;
+  grid-template-columns: 80px 30px 1fr 30px;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+.look-row b { text-align: center; font-size: 14px; }
+.look-row button.small { margin: 0; padding: 3px 0; }
+
+#volume-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 64px;
+  width: 210px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 6px 10px;
+  z-index: 6;
+}
+#volume-panel label { margin: 0; font-size: 14px; }
+#volume-panel input { width: 100%; accent-color: #8a2f22; }

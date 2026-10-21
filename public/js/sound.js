@@ -12,7 +12,7 @@
 //
 // Webbläsare tillåter bara ljud efter ett klick, därför anropas unlock() vid knapptryck.
 
-const MUSIC_VOLUME = 0.2;
+const MUSIC_MAX = 0.35; // musikens volym när reglaget står längst till höger
 
 function midiToFreq(m) {
   return 440 * Math.pow(2, (m - 69) / 12);
@@ -64,10 +64,12 @@ function buildSong() {
 const SONG = buildSong();
 
 export class Sound {
-  constructor(muted = false, musicOn = true) {
+  constructor(muted = false, musicOn = true, musicVolume = 0.6, sfxVolume = 1) {
     this.ctx = null;
     this.muted = muted;
     this.musicOn = musicOn;
+    this.musicVolume = musicVolume; // 0–1, från reglaget
+    this.sfxVolume = sfxVolume;     // 0–1, från reglaget
     this.listener = { x: 0, y: 0, z: 0 };
     this.strings = new Map(); // färdigräknade lutsträngar per ton
     this.files = { aj: [], skrik: [], musik: null };
@@ -82,15 +84,17 @@ export class Sound {
         this.master.gain.value = this.muted ? 0 : 0.8;
         this.master.connect(this.ctx.destination);
         this.musicBus = this.ctx.createGain();
-        this.musicBus.gain.value = this.musicOn ? MUSIC_VOLUME : 0;
         this.musicBus.connect(this.master);
+        this.sfx = this.ctx.createGain(); // alla ljudeffekter går hit, så de kan sänkas separat
+        this.sfx.connect(this.master);
+        this.applyVolumes();
         // Lite rumsklang så det låter som en arena i stället för ett tomt rum
         this.reverb = this.ctx.createConvolver();
         this.reverb.buffer = this.makeImpulse(1.8);
         const wet = this.ctx.createGain();
         wet.gain.value = 0.25;
         this.reverb.connect(wet);
-        wet.connect(this.master);
+        wet.connect(this.sfx);
 
         const length = this.ctx.sampleRate;
         this.noise = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
@@ -147,7 +151,23 @@ export class Sound {
 
   setMusic(on) {
     this.musicOn = on;
-    if (this.musicBus) this.musicBus.gain.value = on ? MUSIC_VOLUME : 0;
+    this.applyVolumes();
+  }
+
+  setMusicVolume(v) {
+    this.musicVolume = v;
+    this.applyVolumes();
+  }
+
+  setSfxVolume(v) {
+    this.sfxVolume = v;
+    this.applyVolumes();
+  }
+
+  applyVolumes() {
+    if (!this.ctx) return;
+    this.musicBus.gain.value = this.musicOn ? MUSIC_MAX * this.musicVolume : 0;
+    this.sfx.gain.value = this.sfxVolume;
   }
 
   setListener(x, y, z) {
@@ -168,7 +188,7 @@ export class Sound {
 
   // ---------- Byggstenar ----------
 
-  envelope(volume, start, attack, hold, release, destination = this.master, reverbAmount = 0.3) {
+  envelope(volume, start, attack, hold, release, destination = this.sfx, reverbAmount = 0.3) {
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(0.0001, start);
     g.gain.exponentialRampToValueAtTime(Math.max(0.0002, volume), start + attack);
@@ -211,7 +231,7 @@ export class Sound {
     osc.stop(t + attack + hold + decay + 0.05);
   }
 
-  playBuffer(buffer, volume, dest = this.master, rate = 1) {
+  playBuffer(buffer, volume, dest = this.sfx, rate = 1) {
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
     src.playbackRate.value = rate;
@@ -248,7 +268,7 @@ export class Sound {
     return buffer;
   }
 
-  lute(midi, time, volume = 0.5) {
+  lute(midi, time, volume = 0.5, dest = this.musicBus) {
     const src = this.ctx.createBufferSource();
     src.buffer = this.stringBuffer(midi);
     const body = this.ctx.createBiquadFilter(); // lutans träkropp
@@ -263,7 +283,7 @@ export class Sound {
     src.connect(body);
     body.connect(soft);
     soft.connect(g);
-    g.connect(this.musicBus);
+    g.connect(dest);
     src.start(time);
   }
 
@@ -321,7 +341,7 @@ export class Sound {
     filter.frequency.exponentialRampToValueAtTime(2200, start + 0.12);
     filter.frequency.exponentialRampToValueAtTime(900, start + duration);
     osc.connect(filter);
-    filter.connect(this.envelope(volume, start, 0.06, Math.max(0, duration - 0.2), 0.15, this.master, 0.5));
+    filter.connect(this.envelope(volume, start, 0.06, Math.max(0, duration - 0.2), 0.15, this.sfx, 0.5));
     osc.start(start);
     osc.stop(start + duration + 0.1);
   }
@@ -347,7 +367,7 @@ export class Sound {
     wobble.connect(wobbleDepth);
     wobbleDepth.connect(src.frequency);
 
-    const out = this.envelope(v, t, 0.02, duration * 0.5, duration * 0.5, this.master, 0.35);
+    const out = this.envelope(v, t, 0.02, duration * 0.5, duration * 0.5, this.sfx, 0.35);
     // Tre formanter (vokalens "färg") som glider från första till sista vokalen
     const [from, to] = vowels;
     for (let i = 0; i < 3; i++) {
@@ -377,7 +397,7 @@ export class Sound {
     if (!this.ready()) return;
     if (this.files.aj.length) {
       const b = this.files.aj[Math.floor(Math.random() * this.files.aj.length)];
-      this.playBuffer(b, this.volumeAt(pos), this.master, 0.92 + voice * 0.16);
+      this.playBuffer(b, this.volumeAt(pos), this.sfx, 0.92 + voice * 0.16);
       return;
     }
     const vowelSets = [
@@ -400,7 +420,7 @@ export class Sound {
     if (!this.ready()) return;
     if (this.files.skrik.length) {
       const b = this.files.skrik[Math.floor(Math.random() * this.files.skrik.length)];
-      this.playBuffer(b, this.volumeAt(pos), this.master, 0.92 + voice * 0.16);
+      this.playBuffer(b, this.volumeAt(pos), this.sfx, 0.92 + voice * 0.16);
       return;
     }
     this.voiceSound(pos, voice, {
@@ -415,9 +435,14 @@ export class Sound {
 
   // ---------- Stridsljud ----------
 
-  swing(pos, heavy = false) {
+  // kind: "q" snabbt, "h" tungt, "t" stöt
+  swing(pos, heavy = false, kind = null) {
     if (!this.ready()) return;
     const v = this.volumeAt(pos);
+    if (kind === "t") {
+      this.noiseBurst({ volume: 0.45 * v, attack: 0.02, decay: 0.1, freq: 1400, freqEnd: 3800, q: 4 });
+      return;
+    }
     this.noiseBurst({
       volume: 0.4 * v,
       attack: heavy ? 0.07 : 0.035,
@@ -458,6 +483,45 @@ export class Sound {
     this.tone({ volume: 0.6 * v, freq: 85, freqEnd: 35, decay: 0.35 });
   }
 
+  // Sparkens svisch och dunsen när den träffar
+  kick(pos) {
+    if (!this.ready()) return;
+    this.noiseBurst({ volume: 0.3 * this.volumeAt(pos), attack: 0.04, decay: 0.12, freq: 350, freqEnd: 900, q: 2 });
+  }
+
+  kickHit(pos) {
+    if (!this.ready()) return;
+    const v = this.volumeAt(pos);
+    this.tone({ volume: 0.9 * v, freq: 95, freqEnd: 45, decay: 0.2 });
+    this.noiseBurst({ volume: 0.5 * v, decay: 0.08, type: "lowpass", freq: 900, q: 0.8 });
+    [1, 1.6].forEach((r, i) => this.tone({ volume: 0.1 * v / (i + 1), type: "triangle", freq: 900 * r, decay: 0.15 })); // plåtskrammel
+  }
+
+  // "HA HA HA!" när man pekar och skrattar
+  laugh(pos, voice = 0.5) {
+    if (!this.ready()) return;
+    for (let i = 0; i < 4; i++) {
+      setTimeout(() => {
+        if (!this.ready()) return;
+        this.voiceSound(pos, voice, {
+          duration: 0.16,
+          pitchStart: 1.5 - i * 0.06,
+          pitchEnd: 1.3 - i * 0.06,
+          vowels: [[750, 1250, 2600], [700, 1150, 2600]],
+          rasp: 0.35,
+          volume: 0.75,
+        });
+      }, i * 190);
+    }
+  }
+
+  // Liten lutslinga till dansen
+  dance() {
+    if (!this.ready()) return;
+    const t = this.ctx.currentTime;
+    [74, 72, 74, 77, 74, 72, 69, 74].forEach((n, i) => this.lute(n, t + i * 0.18, 0.6, this.sfx));
+  }
+
   // Publiken jublar
   crowd(strength = 1) {
     if (!this.ready()) return;
@@ -493,8 +557,8 @@ export class Sound {
   countdownBeat() {
     if (!this.ready()) return;
     const t = this.ctx.currentTime;
-    this.drum(t, true, 0.9, this.master);
-    this.drum(t + 0.12, false, 0.4, this.master);
+    this.drum(t, true, 0.9, this.sfx);
+    this.drum(t + 0.12, false, 0.4, this.sfx);
   }
 
   // STRID!: stridshornet blåser och trummorna rullar
@@ -504,7 +568,7 @@ export class Sound {
     this.horn(55, t, 0.35, 0.3);       // G
     this.horn(62, t + 0.35, 0.9, 0.35); // D (högre, lång)
     this.horn(50, t + 0.35, 0.9, 0.18); // D (låg, under)
-    for (let i = 0; i < 6; i++) this.drum(t + i * 0.07, i % 2 === 0, 0.5, this.master);
+    for (let i = 0; i < 6; i++) this.drum(t + i * 0.07, i % 2 === 0, 0.5, this.sfx);
     this.crowd(0.7);
   }
 
@@ -512,7 +576,7 @@ export class Sound {
   roundWin() {
     if (!this.ready()) return;
     const t = this.ctx.currentTime;
-    [62, 66, 69, 74].forEach((n, i) => this.lute(n, t + i * 0.08, 0.8));
+    [62, 66, 69, 74].forEach((n, i) => this.lute(n, t + i * 0.08, 0.8, this.sfx));
     this.crowd(0.8);
   }
 
@@ -522,7 +586,7 @@ export class Sound {
     const t = this.ctx.currentTime;
     [[62, 0, 0.25], [66, 0.25, 0.25], [69, 0.5, 0.25], [74, 0.75, 1.2]].forEach(([n, d, len]) => this.horn(n, t + d, len, 0.32));
     [[50, 0.75, 1.2], [57, 0.75, 1.2]].forEach(([n, d, len]) => this.horn(n, t + d, len, 0.15));
-    for (let i = 0; i < 4; i++) this.drum(t + 0.75 + i * 0.15, true, 0.6, this.master);
+    for (let i = 0; i < 4; i++) this.drum(t + 0.75 + i * 0.15, true, 0.6, this.sfx);
     this.crowd(1);
   }
 

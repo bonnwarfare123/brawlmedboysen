@@ -14,7 +14,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, MATCH, ARENA_RX, ARENA_RZ,
-  JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS, AIM_JOINT,
+  JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS, AIM_JOINT, ARMORS, HELMETS, SHIELDS,
 } from "../public/js/shared.js";
 
 export default {
@@ -57,6 +57,12 @@ function cleanName(value) {
   return name || "Namnlös riddare";
 }
 
+// Utseende: { a: rustning, h: hjälm, s: sköld } som index i listorna
+function cleanLook(look) {
+  const pick = (v, list) => (Number.isInteger(v) && v >= 0 && v < list.length ? v : 0);
+  return { a: pick(look?.a, ARMORS), h: pick(look?.h, HELMETS), s: pick(look?.s, SHIELDS) };
+}
+
 function finite(n, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
@@ -76,6 +82,7 @@ function spawnPoint(index, count) {
 function newPlayerState(info) {
   return {
     ...info,
+    look: cleanLook(info.look),
     p: [0, 0, 0],
     r: 0,
     a: 0,
@@ -86,6 +93,8 @@ function newPlayerState(info) {
     nextQuick: 0,
     nextHeavy: 0,
     nextParry: 0,
+    nextKick: 0,
+    nextEmote: 0,
     lastParry: -100,
     staggerUntil: 0,
     chargeStart: null,
@@ -102,6 +111,7 @@ function resetForRound(player) {
   player.nextQuick = 0;
   player.nextHeavy = 0;
   player.nextParry = 0;
+  player.nextKick = 0;
   player.lastParry = -100;
   player.staggerUntil = 0;
   player.chargeStart = null;
@@ -119,7 +129,7 @@ function jointAvailable(player, joint) {
 // Avgör om och i så fall vilken led som huggs av vid en träff.
 // aimSegment = kroppsdelen den som slog siktade på (eller null).
 function chooseSever(player, kind, dead, aimSegment = null, random = Math.random) {
-  const damage = kind === "h" ? COMBAT.heavy.damage : COMBAT.quick.damage;
+  const damage = specOf(kind).damage;
 
   // Siktade på en viss kroppsdel som finns kvar
   const aimed = aimSegment && AIM_JOINT[aimSegment];
@@ -133,7 +143,7 @@ function chooseSever(player, kind, dead, aimSegment = null, random = Math.random
   }
 
   // Annars (bålen, bredvid eller redan avhuggen) liten slumpchans som förut
-  const key = (kind === "h" ? "heavy" : "quick") + (dead ? "Kill" : "");
+  const key = (kind === "h" ? "heavy" : "quick") + (dead ? "Kill" : ""); // stöt räknas som snabbt
   if (random() >= COMBAT.randomSever[key]) return null;
   const candidates = LIMB_JOINTS.filter((j) => jointAvailable(player, j));
   if (dead) {
@@ -145,10 +155,14 @@ function chooseSever(player, kind, dead, aimSegment = null, random = Math.random
   return candidates[Math.floor(random() * candidates.length)];
 }
 
+function specOf(kind) {
+  return kind === "h" ? COMBAT.heavy : kind === "t" ? COMBAT.thrust : COMBAT.quick;
+}
+
 // Det som skickas till spelarna om en riddare (inte interna timers)
 function publicPlayer(pl) {
   return {
-    id: pl.id, name: pl.name, color: pl.color, p: pl.p, r: pl.r, a: pl.a,
+    id: pl.id, name: pl.name, color: pl.color, look: pl.look, p: pl.p, r: pl.r, a: pl.a,
     hp: pl.hp, dead: pl.dead, kills: pl.kills, wins: pl.wins, severed: pl.severed,
   };
 }
@@ -246,7 +260,16 @@ export class GameRoom extends DurableObject {
         this.handleCharge(ws, player, msg);
         break;
       case "atk":
-        this.handleAttack(ws, player, msg.k === "h" ? "h" : "q", msg.aim);
+        this.handleAttack(ws, player, msg.k === "h" ? "h" : msg.k === "t" ? "t" : "q", msg.aim);
+        break;
+      case "kick":
+        this.handleKick(ws, player);
+        break;
+      case "emote":
+        this.handleEmote(ws, player, msg.e);
+        break;
+      case "look":
+        this.handleLook(ws, player, msg.look);
         break;
       case "par":
         this.handleParry(ws, player);
@@ -270,7 +293,7 @@ export class GameRoom extends DurableObject {
     let color = Number.isInteger(msg.color) && msg.color >= 0 && msg.color < COLORS.length ? msg.color : 0;
     if (taken.has(color)) color = COLORS.findIndex((_, i) => !taken.has(i));
 
-    const playerInfo = { id: randomId(), name: cleanName(msg.name), color };
+    const playerInfo = { id: randomId(), name: cleanName(msg.name), color, look: cleanLook(msg.look) };
     ws.serializeAttachment(playerInfo);
 
     const player = newPlayerState(playerInfo);
@@ -296,8 +319,26 @@ export class GameRoom extends DurableObject {
     if (!Number.isInteger(color) || color < 0 || color >= COLORS.length) return;
     if ([...this.players.values()].some((p) => p !== player && p.color === color)) return; // upptagen
     player.color = color;
-    ws.serializeAttachment({ id: player.id, name: player.name, color });
+    ws.serializeAttachment({ id: player.id, name: player.name, color, look: player.look });
     this.broadcast({ t: "color", id: player.id, color });
+  }
+
+  // Byt rustning, hjälm eller sköld (bara i lobbyn)
+  handleLook(ws, player, look) {
+    if (this.phase !== "lobby") return;
+    player.look = cleanLook(look);
+    ws.serializeAttachment({ id: player.id, name: player.name, color: player.color, look: player.look });
+    this.broadcast({ t: "look", id: player.id, look: player.look });
+  }
+
+  // Hån-gester: buga, peka och skratta, dansa
+  handleEmote(ws, player, e) {
+    if (![1, 2, 3].includes(e) || player.dead) return;
+    if (this.phase === "countdown" || this.phase === "matchEnd") return;
+    const t = now();
+    if (t < player.nextEmote) return;
+    player.nextEmote = t + COMBAT.emoteCooldown;
+    this.broadcast({ t: "emote", id: player.id, e }, ws);
   }
 
   // Lobbyledaren startar matchen
@@ -418,7 +459,7 @@ export class GameRoom extends DurableObject {
     const t = now();
     if (!this.canFight(player) || t < player.staggerUntil) return;
 
-    const spec = kind === "h" ? COMBAT.heavy : COMBAT.quick;
+    const spec = specOf(kind);
 
     if (kind === "h") {
       if (t < player.nextHeavy - TOLERANCE) return;
@@ -428,7 +469,7 @@ export class GameRoom extends DurableObject {
     }
 
     player.chargeStart = null;
-    player.nextQuick = t + COMBAT.quick.cooldown;
+    player.nextQuick = t + spec.cooldown;
     player.nextHeavy = t + (kind === "h" ? COMBAT.heavy.cooldown : COMBAT.quick.cooldown);
 
     // Vad siktade spelaren på? { id: motståndare, seg: kroppsdel }
@@ -448,23 +489,10 @@ export class GameRoom extends DurableObject {
     const t = now();
     if (t < attacker.staggerUntil) return; // blev själv parerad under tiden
 
-    const spec = kind === "h" ? COMBAT.heavy : COMBAT.quick;
-    const fx = Math.sin(attacker.r);
-    const fz = Math.cos(attacker.r);
-    const minDot = Math.cos((spec.arc * Math.PI) / 180);
+    const spec = specOf(kind);
 
     // Vilka står inom räckhåll och framför den som slår?
-    const targets = [];
-    for (const target of this.players.values()) {
-      if (target === attacker || target.dead) continue;
-      const dx = target.p[0] - attacker.p[0];
-      const dz = target.p[2] - attacker.p[2];
-      const dy = Math.abs(target.p[1] - attacker.p[1]);
-      const dist = Math.hypot(dx, dz);
-      if (dist > spec.reach + BODY_RADIUS || dy > 1.6) continue;
-      if (dist > 0.5 && (fx * dx + fz * dz) / dist < minDot) continue;
-      targets.push(target);
-    }
+    const targets = this.inCone(attacker, spec.reach, spec.arc);
 
     // Parering: tryckte någon av måltavlorna parera precis innan, vänd mot den som slår?
     for (const target of targets) {
@@ -506,6 +534,49 @@ export class GameRoom extends DurableObject {
       });
     }
     this.checkRoundEnd();
+  }
+
+  // Vilka står inom räckhåll och inom vinkeln framför spelaren?
+  inCone(attacker, reach, arc) {
+    const fx = Math.sin(attacker.r);
+    const fz = Math.cos(attacker.r);
+    const minDot = Math.cos((arc * Math.PI) / 180);
+    const result = [];
+    for (const target of this.players.values()) {
+      if (target === attacker || target.dead) continue;
+      const dx = target.p[0] - attacker.p[0];
+      const dz = target.p[2] - attacker.p[2];
+      const dy = Math.abs(target.p[1] - attacker.p[1]);
+      const dist = Math.hypot(dx, dz);
+      // Smala attacker (stöten) får lite extra bredd på nära håll, annars missar man lätt kroppen
+      const bodyAngle = dist > 0.01 ? Math.atan(BODY_RADIUS / dist) : Math.PI;
+      const allowed = Math.cos(Math.min(Math.PI, (arc * Math.PI) / 180 + bodyAngle));
+      if (dist > reach + BODY_RADIUS || dy > 1.6) continue;
+      if (dist > 0.5 && (fx * dx + fz * dz) / dist < Math.min(minDot, allowed)) continue;
+      result.push(target);
+    }
+    return result;
+  }
+
+  // Spark: knuffar bort de som står framför, ingen skada
+  handleKick(ws, player) {
+    const t = now();
+    if (!this.canFight(player) || t < player.staggerUntil || t < player.nextKick - TOLERANCE) return;
+    player.nextKick = t + COMBAT.kick.cooldown;
+    player.chargeStart = null;
+    this.broadcast({ t: "kick", id: player.id }, ws);
+    this.later(COMBAT.kick.windup, this.phaseToken, () => {
+      if (!this.canFight(player) || now() < player.staggerUntil) return;
+      for (const target of this.inCone(player, COMBAT.kick.reach, COMBAT.kick.arc)) {
+        const dx = target.p[0] - player.p[0];
+        const dz = target.p[2] - player.p[2];
+        const len = Math.hypot(dx, dz) || 1;
+        target.staggerUntil = now() + COMBAT.kick.stagger;
+        target.chargeStart = null;
+        target.lastParry = -100; // sparken går inte att parera och bryter en parering
+        this.broadcast({ t: "kicked", id: target.id, by: player.id, dir: [round2(dx / len), round2(dz / len)] });
+      }
+    });
   }
 
   handleParry(ws, player) {

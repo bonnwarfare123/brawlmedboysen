@@ -22,6 +22,43 @@ export class Effects {
       polygonOffsetFactor: -2,
     });
     this.sparkMat = new THREE.MeshBasicMaterial({ color: 0xffd860 });
+
+    // Damm: mjuka runda moln (en liten ritad bild) som växer och tonar bort
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gradient.addColorStop(0, "rgba(255,255,255,1)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+    this.dustTexture = new THREE.CanvasTexture(canvas);
+    this.dustPool = [];
+    this.dustActive = [];
+  }
+
+  // Dammoln vid fötterna (springer, landar, blir sparkad)
+  dust(position, amount = 4, strength = 1) {
+    for (let i = 0; i < amount; i++) {
+      if (this.dustActive.length >= 70) break;
+      let sprite = this.dustPool.pop();
+      if (!sprite) {
+        sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: this.dustTexture, color: 0xc2a27a, transparent: true, depthWrite: false,
+        }));
+      }
+      const angle = Math.random() * Math.PI * 2;
+      sprite.position.set(position.x + Math.cos(angle) * 0.15, 0.12, position.z + Math.sin(angle) * 0.15);
+      sprite.userData = {
+        life: 0,
+        maxLife: 0.6 + Math.random() * 0.5,
+        vx: Math.cos(angle) * (0.4 + Math.random() * 0.6) * strength,
+        vz: Math.sin(angle) * (0.4 + Math.random() * 0.6) * strength,
+        size: (0.3 + Math.random() * 0.25) * Math.sqrt(strength),
+      };
+      this.scene.add(sprite);
+      this.dustActive.push(sprite);
+    }
   }
 
   // Blodstänk från en punkt. amount ≈ hur kraftigt.
@@ -66,6 +103,9 @@ export class Effects {
 
   // Städa bort allt blod (t.ex. när man går tillbaka till lobbyn)
   clear() {
+    this.dustActive.forEach((d) => d.removeFromParent());
+    this.dustPool.push(...this.dustActive);
+    this.dustActive = [];
     this.particles.forEach((p) => p.mesh.removeFromParent());
     this.stains.forEach((m) => m.removeFromParent());
     this.particles = [];
@@ -73,6 +113,24 @@ export class Effects {
   }
 
   update(dt) {
+    for (let i = this.dustActive.length - 1; i >= 0; i--) {
+      const d = this.dustActive[i];
+      const u = d.userData;
+      u.life += dt;
+      const f = u.life / u.maxLife;
+      if (f >= 1) {
+        d.removeFromParent();
+        this.dustPool.push(d);
+        this.dustActive.splice(i, 1);
+        continue;
+      }
+      d.position.x += u.vx * dt;
+      d.position.z += u.vz * dt;
+      d.position.y += dt * 0.25;
+      const size = u.size * (0.6 + f * 1.4);
+      d.scale.set(size, size, size);
+      d.material.opacity = 0.45 * (1 - f);
+    }
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
       p.velocity.y += GRAVITY * dt;

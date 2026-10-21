@@ -23,6 +23,7 @@ const PALETTE = {
 };
 
 const materials = new Map();
+let wavingFlags = []; // flaggdukar som fladdrar i vinden (fylls i när arenan byggs)
 function mat(color) {
   if (!materials.has(color)) {
     materials.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.9, flatShading: true }));
@@ -94,6 +95,7 @@ export function buildArena() {
   const group = new THREE.Group();
   const colliders = [];
   const crowds = []; // publiken på läktarna
+  wavingFlags = [];
 
   const FX = ARENA_RX + 0.7; // staketets radier
   const FZ = ARENA_RZ + 0.7;
@@ -338,22 +340,171 @@ export function buildArena() {
     group.add(hill);
   }
 
-  const trunkGeo = new THREE.CylinderGeometry(0.2, 0.25, 1.4, 6);
-  const crownGeo = new THREE.ConeGeometry(1.3, 3.2, 7);
-  for (let i = 0; i < 40; i++) {
-    const t = rand() * Math.PI * 2;
-    const r = 26 + rand() * 30;
-    const s = 0.8 + rand() * 0.8;
+  // ---------- Natur och en liten by runt arenan ----------
+  // Områden där träd och stenar inte ska stå (stigen, marknaden, stallet)
+  const clearings = [
+    { x: 0, z: FZ + 25, rx: 3, rz: 26 },     // stigen
+    { x: -22, z: 14, rx: 9, rz: 8 },        // marknaden och tälten
+    { x: 22, z: 11, rx: 7, rz: 6 },         // brunnen och hästarna
+  ];
+  const free = (x, z) => clearings.every((c) => ((x - c.x) / c.rx) ** 2 + ((z - c.z) / c.rz) ** 2 > 1);
+  const ringSpot = (minR, maxR) => {
+    for (let tries = 0; tries < 20; tries++) {
+      const t = rand() * Math.PI * 2;
+      const r = minR + rand() * (maxR - minR);
+      const x = Math.sin(t) * r * 1.15;
+      const z = Math.cos(t) * r;
+      if (free(x, z)) return [x, z];
+    }
+    return null;
+  };
+
+  const pineTrunk = new THREE.CylinderGeometry(0.2, 0.25, 1.4, 6);
+  const pineCrown = new THREE.ConeGeometry(1.3, 3.2, 7);
+  const pineTop = new THREE.ConeGeometry(0.9, 2.2, 7);
+  const leafTrunk = new THREE.CylinderGeometry(0.18, 0.28, 2.2, 6);
+  const puff = new THREE.IcosahedronGeometry(1, 1);
+  for (let i = 0; i < 130; i++) {
+    const spot = ringSpot(22, 75);
+    if (!spot) continue;
     const tree = new THREE.Group();
-    const trunk = mesh(trunkGeo, PALETTE.woodDark);
-    trunk.position.y = 0.7;
-    const crown = mesh(crownGeo, PALETTE.tree);
-    crown.position.y = 2.8;
-    tree.add(trunk, crown);
-    tree.scale.setScalar(s);
-    tree.position.set(Math.sin(t) * r, 0, Math.cos(t) * r);
+    const s2 = 0.75 + rand() * 0.8;
+    if (rand() < 0.55) {
+      // Gran i två våningar
+      const trunk = mesh(pineTrunk, PALETTE.woodDark);
+      trunk.position.y = 0.7;
+      const crown = mesh(pineCrown, rand() < 0.5 ? PALETTE.tree : 0x456e33);
+      crown.position.y = 2.6;
+      const top = mesh(pineTop, rand() < 0.5 ? PALETTE.tree : 0x4a7838);
+      top.position.y = 4.0;
+      tree.add(trunk, crown, top);
+    } else {
+      // Lövträd med rundad krona av flera bollar
+      const trunk = mesh(leafTrunk, 0x5e4126);
+      trunk.position.y = 1.1;
+      tree.add(trunk);
+      const shade = [0x5f8a3e, 0x6e9a44, 0x557d36][Math.floor(rand() * 3)];
+      for (let b = 0; b < 4; b++) {
+        const ball = mesh(puff, shade);
+        ball.scale.setScalar(0.9 + rand() * 0.5);
+        ball.position.set((rand() - 0.5) * 1.4, 2.6 + rand() * 0.9, (rand() - 0.5) * 1.4);
+        tree.add(ball);
+      }
+    }
+    tree.scale.setScalar(s2);
+    tree.rotation.y = rand() * Math.PI;
+    tree.position.set(spot[0], 0, spot[1]);
+    tree.traverse((o) => (o.castShadow = false)); // långt utanför skuggområdet: spara prestanda
     group.add(tree);
   }
+
+  // Buskar och stenar
+  const rockGeo = new THREE.DodecahedronGeometry(1, 0);
+  for (let i = 0; i < 70; i++) {
+    const spot = ringSpot(17, 55);
+    if (!spot) continue;
+    if (i % 2) {
+      const bush = mesh(puff, [0x5a8a3a, 0x4f7a34, 0x6a9a46][i % 3]);
+      bush.scale.set(0.7 + rand() * 0.6, 0.45 + rand() * 0.3, 0.7 + rand() * 0.6);
+      bush.position.set(spot[0], 0.25, spot[1]);
+      bush.castShadow = false;
+      group.add(bush);
+    } else {
+      const rock = mesh(rockGeo, [0x8f8a80, 0x7a766d, 0x9b968c][i % 3]);
+      const sz = 0.25 + rand() * 0.7;
+      rock.scale.set(sz * (1 + rand() * 0.5), sz * 0.6, sz);
+      rock.rotation.set(rand(), rand() * 3, rand());
+      rock.position.set(spot[0], sz * 0.2, spot[1]);
+      rock.castShadow = false;
+      group.add(rock);
+    }
+  }
+
+  // Grästuvor och blommor (en ritning var för hundratals stycken)
+  const tufts = [];
+  const flowers = [];
+  for (let i = 0; i < 1100; i++) {
+    const spot = ringSpot(15.5, 60);
+    if (spot) (i % 4 === 0 ? flowers : tufts).push(spot);
+  }
+  const tuftMesh = new THREE.InstancedMesh(new THREE.ConeGeometry(0.07, 0.32, 4), new THREE.MeshStandardMaterial({ roughness: 1 }), tufts.length);
+  tufts.forEach(([x, z], i) => {
+    dummy.position.set(x, 0.14, z);
+    dummy.rotation.set((rand() - 0.5) * 0.4, rand() * 3, (rand() - 0.5) * 0.4);
+    const sz = 0.7 + rand() * 0.9;
+    dummy.scale.set(sz, sz, sz);
+    dummy.updateMatrix();
+    tuftMesh.setMatrixAt(i, dummy.matrix);
+    tuftMesh.setColorAt(i, new THREE.Color([0x6b8f45, 0x7fa352, 0x5c7f3a, 0x8aab5a][i % 4]));
+  });
+  group.add(tuftMesh);
+  const flowerMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.05, 0), new THREE.MeshStandardMaterial({ roughness: 0.8 }), flowers.length);
+  flowers.forEach(([x, z], i) => {
+    dummy.position.set(x, 0.12, z);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    flowerMesh.setMatrixAt(i, dummy.matrix);
+    flowerMesh.setColorAt(i, new THREE.Color([0xf4f0e0, 0xf2d040, 0xd8483a, 0x9a5ac8, 0xf08ab0][i % 5]));
+  });
+  group.add(flowerMesh);
+  dummy.scale.set(1, 1, 1);
+  dummy.rotation.set(0, 0, 0);
+
+  // Stigen in till arenan, med staket på båda sidor
+  const path = new THREE.Mesh(new THREE.PlaneGeometry(3, 46), dirtMat);
+  path.rotation.x = -Math.PI / 2;
+  path.position.set(0, 0.012, FZ + 24);
+  path.receiveShadow = true;
+  group.add(path);
+  for (let z = FZ + 3; z < FZ + 46; z += 2.5) {
+    for (const x of [-2, 2]) {
+      const post = box(0.12, 0.9, 0.12, PALETTE.woodDark);
+      post.position.set(x, 0.45, z);
+      group.add(post);
+      const rail = box(0.06, 0.07, 2.5, PALETTE.wood);
+      rail.position.set(x, 0.65, z + 1.25);
+      group.add(rail);
+    }
+  }
+
+  // Marknad med stånd, tält och lyktor till vänster om stigen
+  [[-17, 9, 0.4], [-21, 15, 0.2], [-26, 10, 0.9]].forEach(([x, z, rot], i) => {
+    const stall = makeMarketStall([PALETTE.red, PALETTE.blue, PALETTE.gold][i]);
+    stall.position.set(x, 0, z);
+    stall.rotation.y = rot;
+    group.add(stall);
+  });
+  [[-25, 19, PALETTE.red], [-29, 15, PALETTE.blue], [-18, 20, PALETTE.gold], [-30, 7, PALETTE.cream]].forEach(([x, z, color]) => {
+    const tent = makeTent(color);
+    tent.position.set(x, 0, z);
+    tent.rotation.y = rand() * Math.PI;
+    group.add(tent);
+  });
+  [[-14.5, 6], [-15.5, 13], [-20, 5.5], [-3, FZ + 8], [3, FZ + 8], [-3, FZ + 18], [3, FZ + 18]].forEach(([x, z]) => {
+    const lantern = makeLantern();
+    lantern.position.set(x, 0, z);
+    group.add(lantern);
+  });
+
+  // Brunn och hästar till höger om stigen
+  const well = makeWell();
+  well.position.set(20, 0, 9);
+  group.add(well);
+  const hitch = box(3.2, 0.1, 0.1, PALETTE.wood);
+  hitch.position.set(24.5, 1.0, 13);
+  group.add(hitch);
+  [-1.3, 1.3].forEach((dx) => {
+    const post = box(0.12, 1.1, 0.12, PALETTE.woodDark);
+    post.position.set(24.5 + dx * 1.15, 0.55, 13);
+    group.add(post);
+  });
+  [[23.6, 14.3, 0.1, 0x6a4a2c], [25.6, 14.5, -0.15, 0xe8e0d0]].forEach(([x, z, rot, color]) => {
+    const horse = makeHorse(color);
+    horse.position.set(x, 0, z);
+    horse.rotation.y = Math.PI + rot;
+    group.add(horse);
+  });
 
   // Slå ihop alla stillastående bitar till några få stora (mycket bättre FPS)
   group.add(mergeStatic(group));
@@ -365,6 +516,17 @@ export function buildArena() {
     time += dt;
     excitement = Math.max(0, excitement - dt * 0.4);
     for (const crowd of crowds) crowd.update(time, excitement);
+    // Flaggor fladdrar i vinden
+    for (const flag of wavingFlags) waveFlag(flag, time);
+    // Vimplarna vajar lite på sina snören
+    flagSpots.forEach((f, i) => {
+      dummy.position.copy(f.pos);
+      dummy.rotation.set(Math.sin(time * 2.2 + i * 0.7) * 0.25, f.angle, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      flagMesh.setMatrixAt(i, dummy.matrix);
+    });
+    flagMesh.instanceMatrix.needsUpdate = true;
   };
   const cheer = (strength = 1) => {
     excitement = Math.min(1.5, excitement + strength);
@@ -378,40 +540,118 @@ export function buildArena() {
 const CROWD_COLORS = [0x8a3b2e, 0x2e5a8a, 0x6b8a2e, 0x8a6b2e, 0x5a2e8a, 0x2e8a7a, 0x9a9a8a, 0x7a4a2a, 0xb07a3a, 0x4a4a5a];
 const SKIN_COLORS = [0xf0c8a0, 0xd9a878, 0xb98058, 0x8a5a3a];
 
-function makeCrowd(spots, seed) {
+// Varje person: kropp (tunika), huvud, två armar och ibland en huvudbonad.
+// Allt ritas med en ritning per kroppsdel och läktare, så hundra personer kostar nästan inget.
+const HAT_COLORS = [0x6a2e22, 0x2e3e6a, 0x3e5a2a, 0x5a4a2a, 0x7a2a5a, 0x2a2a2a];
+
+function makeCrowd(spots, seed, royal = false) {
   const rand = seededRandom(seed);
-  const bodyGeo = new THREE.CapsuleGeometry(0.15, 0.32, 3, 8);
+  const n = spots.length;
+  const material = () => new THREE.MeshStandardMaterial({ roughness: 0.9 });
+  const bodyGeo = new THREE.CapsuleGeometry(0.15, 0.3, 3, 8);
   const headGeo = new THREE.SphereGeometry(0.11, 10, 8);
-  const material = new THREE.MeshStandardMaterial({ roughness: 0.9 });
-  const bodies = new THREE.InstancedMesh(bodyGeo, material, spots.length);
-  const heads = new THREE.InstancedMesh(headGeo, material.clone(), spots.length);
+  const armGeo = new THREE.CapsuleGeometry(0.045, 0.24, 2, 6);
+  armGeo.translate(0, -0.14, 0); // armen hänger från axeln
+  const hoodGeo = new THREE.ConeGeometry(0.14, 0.24, 8);
+  const hatGeo = new THREE.CylinderGeometry(0.11, 0.2, 0.09, 10); // brättad hatt
+  const capGeo = new THREE.SphereGeometry(0.12, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+  const crownGeo = new THREE.CylinderGeometry(0.1, 0.12, 0.09, 6, 1, true);
+
+  const bodies = new THREE.InstancedMesh(bodyGeo, material(), n);
+  const heads = new THREE.InstancedMesh(headGeo, material(), n);
+  const armsL = new THREE.InstancedMesh(armGeo, material(), n);
+  const armsR = new THREE.InstancedMesh(armGeo, material(), n);
+
   const people = spots.map((pos, i) => {
-    bodies.setColorAt(i, new THREE.Color(CROWD_COLORS[Math.floor(rand() * CROWD_COLORS.length)]));
+    const clothes = new THREE.Color(royal ? [0x6a1a8a, 0x8a1a2a][i % 2] : CROWD_COLORS[Math.floor(rand() * CROWD_COLORS.length)]);
+    bodies.setColorAt(i, clothes);
+    armsL.setColorAt(i, clothes);
+    armsR.setColorAt(i, clothes);
     heads.setColorAt(i, new THREE.Color(SKIN_COLORS[Math.floor(rand() * SKIN_COLORS.length)]));
-    return { pos, phase: rand() * Math.PI * 2, speed: 0.8 + rand() * 1.2, jump: 0.6 + rand() * 0.6 };
+    return {
+      pos,
+      phase: rand() * Math.PI * 2,
+      speed: 0.8 + rand() * 1.2,
+      jump: 0.6 + rand() * 0.6,
+      height: 0.88 + rand() * 0.24,
+      hat: royal ? 4 : Math.floor(rand() * 5), // 0 ingen, 1 luva, 2 hatt, 3 mössa
+      style: rand() < 0.3 ? "clap" : "wave",   // klappar händerna eller viftar med armarna
+    };
   });
-  bodies.castShadow = true;
-  const d = new THREE.Object3D();
-  const group = new THREE.Group();
-  group.add(bodies, heads);
-  group.update = (time, excitement) => {
-    people.forEach((p, i) => {
-      const idle = Math.sin(time * p.speed + p.phase) * 0.015;
-      const hop = excitement > 0.05 ? Math.max(0, Math.sin(time * 9 * p.jump + p.phase)) * 0.22 * Math.min(1, excitement) : 0;
-      const sway = Math.sin(time * p.speed * 0.7 + p.phase) * 0.06;
-      d.position.set(p.pos.x, p.pos.y + 0.31 + idle + hop, p.pos.z);
-      d.rotation.set(0, 0, sway);
-      d.updateMatrix();
-      bodies.setMatrixAt(i, d.matrix);
-      d.position.y += 0.37;
-      d.updateMatrix();
-      heads.setMatrixAt(i, d.matrix);
+
+  // Huvudbonader: en ritning per sort, bara för dem som har den sorten
+  const hatTypes = [null, hoodGeo, hatGeo, capGeo, crownGeo];
+  const hatMeshes = hatTypes.map((geo, type) => {
+    if (!geo) return null;
+    const owners = people.filter((p) => p.hat === type);
+    if (!owners.length) return null;
+    const m = type === 4
+      ? new THREE.MeshStandardMaterial({ color: 0xd4a83a, roughness: 0.3, metalness: 0.8, side: THREE.DoubleSide })
+      : material();
+    const im = new THREE.InstancedMesh(geo, m, owners.length);
+    owners.forEach((p, k) => {
+      p.hatIndex = k;
+      if (type !== 4) im.setColorAt(k, new THREE.Color(HAT_COLORS[Math.floor(rand() * HAT_COLORS.length)]));
     });
-    bodies.instanceMatrix.needsUpdate = true;
-    heads.instanceMatrix.needsUpdate = true;
+    return im;
+  });
+
+  bodies.castShadow = true;
+  const group = new THREE.Group();
+  group.add(bodies, heads, armsL, armsR, ...hatMeshes.filter(Boolean));
+
+  // Osynliga hjälpobjekt för att räkna ut var varje kroppsdel hamnar
+  const person = new THREE.Object3D();
+  const headD = new THREE.Object3D();
+  const armLD = new THREE.Object3D();
+  const armRD = new THREE.Object3D();
+  const hatD = new THREE.Object3D();
+  person.add(headD, armLD, armRD);
+  headD.add(hatD);
+  headD.position.set(0, 0.36, 0);
+  armLD.position.set(0.19, 0.17, 0);
+  armRD.position.set(-0.19, 0.17, 0);
+  const hatOffsets = [0, 0.15, 0.09, 0.03, 0.12];
+
+  group.update = (time, excitement) => {
+    const cheer = Math.min(1, excitement);
+    people.forEach((p, i) => {
+      const t = time * p.speed + p.phase;
+      const idle = Math.sin(t) * 0.015;
+      const hop = cheer > 0.05 ? Math.max(0, Math.sin(time * 9 * p.jump + p.phase)) * 0.2 * cheer : 0;
+      person.position.set(p.pos.x, p.pos.y + 0.3 * p.height + idle + hop, p.pos.z);
+      person.rotation.set(0, Math.sin(t * 0.3) * 0.25, Math.sin(t * 0.7) * 0.05);
+      person.scale.set(1, p.height, 1);
+      headD.rotation.set(Math.sin(t * 0.9) * 0.1, Math.sin(t * 0.5) * 0.3, 0);
+
+      // Armarna: hänger i vila, åker upp och viftar (eller klappar) när publiken jublar
+      if (p.style === "wave") {
+        const up = 2.6 + Math.sin(time * 10 + p.phase) * 0.35;
+        armLD.rotation.set(0, 0, lerpN(0.15, up, cheer));
+        armRD.rotation.set(0, 0, -lerpN(0.15, up + Math.sin(time * 11 + p.phase) * 0.2, cheer));
+      } else {
+        const clap = Math.abs(Math.sin(time * 12 + p.phase)) * 0.5;
+        armLD.rotation.set(lerpN(0, -1.3, cheer), 0, lerpN(0.15, 0.2 + clap * 0.6, cheer));
+        armRD.rotation.set(lerpN(0, -1.3, cheer), 0, -lerpN(0.15, 0.2 + clap * 0.6, cheer));
+      }
+      hatD.position.set(0, hatOffsets[p.hat], 0);
+      hatD.rotation.set(p.hat === 1 ? -0.15 : 0, 0, 0);
+
+      person.updateMatrixWorld(true);
+      bodies.setMatrixAt(i, person.matrixWorld);
+      heads.setMatrixAt(i, headD.matrixWorld);
+      armsL.setMatrixAt(i, armLD.matrixWorld);
+      armsR.setMatrixAt(i, armRD.matrixWorld);
+      if (hatMeshes[p.hat]) hatMeshes[p.hat].setMatrixAt(p.hatIndex, hatD.matrixWorld);
+    });
+    for (const im of [bodies, heads, armsL, armsR, ...hatMeshes.filter(Boolean)]) im.instanceMatrix.needsUpdate = true;
   };
   group.update(0, 0);
   return group;
+}
+
+function lerpN(a, b, t) {
+  return a + (b - a) * t;
 }
 
 // ---------- Rekvisita ----------
@@ -478,8 +718,125 @@ function makeWeaponRack() {
   return g;
 }
 
+// Marknadsstånd: disk, stolpar, randigt tak och varor
+function makeMarketStall(color) {
+  const g = new THREE.Group();
+  const counter = box(2.2, 0.9, 0.9, PALETTE.wood);
+  counter.position.y = 0.45;
+  g.add(counter);
+  [[-1.05, -0.4], [1.05, -0.4], [-1.05, 0.4], [1.05, 0.4]].forEach(([x, z]) => {
+    const post = box(0.08, 2.2, 0.08, PALETTE.woodDark);
+    post.position.set(x, 1.1, z);
+    g.add(post);
+  });
+  const roof = makeStripedRoof(2.5, 1.4, color, 6);
+  roof.position.y = 2.25;
+  roof.rotation.x = 0.15;
+  g.add(roof);
+  const goods = [0xc0392b, 0xe67e22, 0x7fa352, 0xd9b45a];
+  for (let i = 0; i < 9; i++) {
+    const item = mesh(new THREE.SphereGeometry(0.08, 6, 5), goods[i % goods.length]);
+    item.position.set(-0.8 + (i % 5) * 0.4, 0.97, -0.1 + Math.floor(i / 5) * 0.25);
+    g.add(item);
+  }
+  const crate = box(0.5, 0.4, 0.5, PALETTE.woodLight);
+  crate.position.set(1.4, 0.2, 0.3);
+  g.add(crate);
+  return g;
+}
+
+// Tält: rund vägg och spetsigt tak med en liten vimpel
+function makeTent(color) {
+  const g = new THREE.Group();
+  const wall = mesh(new THREE.CylinderGeometry(1.6, 1.7, 1.4, 12), PALETTE.cream);
+  wall.position.y = 0.7;
+  const roof = mesh(new THREE.ConeGeometry(1.95, 1.6, 12), color);
+  roof.position.y = 2.2;
+  const door = box(0.7, 1.1, 0.05, 0x3a2a1a);
+  door.position.set(0, 0.55, 1.68);
+  const pole = box(0.05, 0.8, 0.05, PALETTE.woodDark);
+  pole.position.y = 3.3;
+  const pennant = mesh(new THREE.ConeGeometry(0.12, 0.45, 3), color);
+  pennant.rotation.z = -Math.PI / 2;
+  pennant.position.set(0.22, 3.55, 0);
+  g.add(wall, roof, door, pole, pennant);
+  return g;
+}
+
+// Lykta på en stolpe (lyser utan riktigt ljus – billigt för grafikkortet)
+function makeLantern() {
+  const g = new THREE.Group();
+  const pole = box(0.1, 2.0, 0.1, PALETTE.woodDark);
+  pole.position.y = 1.0;
+  const arm = box(0.45, 0.06, 0.06, PALETTE.woodDark);
+  arm.position.set(0.2, 1.95, 0);
+  const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.24, 0.18), new THREE.MeshBasicMaterial({ color: 0xffc860 }));
+  lamp.position.set(0.38, 1.75, 0);
+  const cap = mesh(new THREE.ConeGeometry(0.15, 0.12, 4), PALETTE.woodDark);
+  cap.rotation.y = Math.PI / 4;
+  cap.position.set(0.38, 1.93, 0);
+  g.add(pole, arm, lamp, cap);
+  return g;
+}
+
+function makeWell() {
+  const g = new THREE.Group();
+  const ring = mesh(new THREE.CylinderGeometry(0.8, 0.85, 0.8, 14, 1, true), PALETTE.stone);
+  ring.position.y = 0.4;
+  const rim = mesh(new THREE.TorusGeometry(0.8, 0.09, 6, 16), PALETTE.stone);
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = 0.8;
+  const water = mesh(new THREE.CircleGeometry(0.78, 14), 0x3a5a7a, false);
+  water.rotation.x = -Math.PI / 2;
+  water.position.y = 0.45;
+  g.add(ring, rim, water);
+  [-0.75, 0.75].forEach((x) => {
+    const post = box(0.1, 1.8, 0.1, PALETTE.woodDark);
+    post.position.set(x, 0.9, 0);
+    g.add(post);
+  });
+  const roof = mesh(new THREE.ConeGeometry(1.2, 0.7, 4), PALETTE.red);
+  roof.rotation.y = Math.PI / 4;
+  roof.position.y = 2.1;
+  const bucket = mesh(new THREE.CylinderGeometry(0.12, 0.1, 0.18, 8), PALETTE.wood);
+  bucket.position.set(0, 1.2, 0);
+  g.add(roof, bucket);
+  return g;
+}
+
+// Enkel häst (står och tittar mot sin stolpe)
+function makeHorse(color) {
+  const g = new THREE.Group();
+  const body = mesh(new THREE.CapsuleGeometry(0.32, 0.9, 4, 10), color);
+  body.rotation.x = Math.PI / 2;
+  body.position.y = 1.15;
+  const neck = mesh(new THREE.CapsuleGeometry(0.16, 0.5, 3, 8), color);
+  neck.position.set(0, 1.55, 0.6);
+  neck.rotation.x = 0.6;
+  const head = mesh(new THREE.CapsuleGeometry(0.12, 0.35, 3, 8), color);
+  head.position.set(0, 1.78, 0.92);
+  head.rotation.x = 1.25;
+  const mane = box(0.06, 0.5, 0.25, 0x2a1d12);
+  mane.position.set(0, 1.68, 0.5);
+  mane.rotation.x = 0.6;
+  const tail = mesh(new THREE.ConeGeometry(0.08, 0.6, 6), 0x2a1d12);
+  tail.position.set(0, 1.0, -0.75);
+  tail.rotation.x = -0.4;
+  const saddle = box(0.5, 0.12, 0.45, PALETTE.red);
+  saddle.position.set(0, 1.45, 0.05);
+  g.add(body, neck, head, mane, tail, saddle);
+  [[-0.2, 0.45], [0.2, 0.45], [-0.2, -0.45], [0.2, -0.45]].forEach(([x, z]) => {
+    const leg = mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.9, 6), color);
+    leg.position.set(x, 0.45, z);
+    const hoof = mesh(new THREE.CylinderGeometry(0.075, 0.08, 0.08, 6), 0x2a1d12);
+    hoof.position.set(x, 0.04, z);
+    g.add(leg, hoof);
+  });
+  return g;
+}
+
 // Himmel: stor kupol med färgövergång (djupblå uppåt, ljus vid horisonten)
-function makeSky() {
+export function makeSky() {
   const geo = new THREE.SphereGeometry(300, 24, 12);
   const material = new THREE.ShaderMaterial({
     side: THREE.BackSide,
@@ -658,14 +1015,14 @@ function makeStand(color, crowds) {
 function makeRoyalBox(crowds) {
   const royal = new THREE.Group();
   // Kungen och drottningen i logen
-  const crowd = makeCrowd([new THREE.Vector3(-0.6, 2, 0.2), new THREE.Vector3(0.6, 2, 0.2)], 77);
+  const crowd = makeCrowd([new THREE.Vector3(-0.6, 2, 0.2), new THREE.Vector3(0.6, 2, 0.2)], 77, true);
   royal.add(crowd);
   crowds.push(crowd);
+  // Tronstolar
   [-0.6, 0.6].forEach((x) => {
-    const crown = mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.09, 6, 1, true), PALETTE.gold);
-    crown.position.set(x, 2.8, 0.2);
-    crown.userData.noMerge = true;
-    royal.add(crown);
+    const back = box(0.5, 0.9, 0.08, PALETTE.red);
+    back.position.set(x, 2.45, -0.15);
+    royal.add(back);
   });
   const base = box(4, 2, 3, PALETTE.wood);
   base.position.set(0, 1, -0.5);
@@ -719,15 +1076,38 @@ function makeTower(color, emblemRed) {
   return tower;
 }
 
-// Flaggstång med flagga. Origo = stångens fot.
+// Flaggstång med en tygflagga som fladdrar. Origo = stångens fot.
 function makeFlag(color) {
   const flag = new THREE.Group();
   const pole = box(0.07, 1.6, 0.07, PALETTE.woodDark);
   pole.position.y = 0.8;
-  const cloth = box(0.8, 0.45, 0.02, color);
-  cloth.position.set(0.43, 1.35, 0);
-  flag.add(pole, cloth);
+  const knob = mesh(new THREE.SphereGeometry(0.06, 8, 6), PALETTE.gold);
+  knob.position.y = 1.62;
+  const geo = new THREE.PlaneGeometry(0.85, 0.45, 12, 2);
+  geo.translate(0.425 + 0.035, 0, 0); // vänsterkanten sitter vid stången
+  const cloth = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, roughness: 0.85, side: THREE.DoubleSide }));
+  cloth.position.y = 1.35;
+  cloth.castShadow = true;
+  cloth.userData.noMerge = true;
+  cloth.userData.base = Float32Array.from(geo.attributes.position.array);
+  cloth.userData.phase = Math.random() * 10;
+  wavingFlags.push(cloth);
+  flag.add(pole, knob, cloth);
   return flag;
+}
+
+// Låter en flaggduk böja sig i vågor, mer ju längre från stången
+function waveFlag(cloth, time) {
+  const pos = cloth.geometry.attributes.position;
+  const base = cloth.userData.base;
+  for (let i = 0; i < pos.count; i++) {
+    const x = base[i * 3];
+    const y = base[i * 3 + 1];
+    const away = Math.max(0, x - 0.035);
+    pos.array[i * 3 + 2] = Math.sin(away * 7 - time * 6 + cloth.userData.phase) * 0.07 * away + Math.sin(y * 4 + time * 3) * 0.01;
+  }
+  pos.needsUpdate = true;
+  cloth.geometry.computeVertexNormals();
 }
 
 // Hängande fana med märke, framsidan mot +Z

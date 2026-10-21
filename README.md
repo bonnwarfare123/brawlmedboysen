@@ -1,15 +1,18 @@
-# Brawlmedboysen – v0.6
+# Brawlmedboysen – v0.7
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
-**v0.6 innehåller:** lobby där lobbyledaren startar matchen, rundor (först till 5), skada per kroppsdel – sikta på samma arm eller ben tills den åker av, mjuka rörelser med acceleration, medeltida musik (luta, flöjt, trumma), stridshorn, röster, publik som jublar, ragdolls och avhuggna lemmar. Servern avgör alla träffar.
+**v0.7 innehåller:** lobby där lobbyledaren startar matchen, rundor (först till 5), 5 rustningar, 6 hjälmar och 5 sköldformer att välja mellan, snabbt slag, tungt slag, stöt, spark, parering, hån-gester, skada per kroppsdel och avhuggna lemmar, ragdolls, mjuka rörelser, medeltida musik med volymreglage, och en levande arena med publik, by och natur. Servern avgör alla träffar.
 
 ## Styrning
 
 - **Klicka** i spelet för att styra kameran med musen
 - **Vänster mus:** klicka = snabbt slag, håll in och släpp = tungt slag
+- **Q** eller **mittenknappen:** stöt (lång räckvidd men smal)
+- **F:** spark (knuffar bort, bryter laddning och parering)
 - **Höger mus:** parera (tryck precis innan motståndarens slag träffar)
-- **WASD** gå, **Shift** spring, **Mellanslag** hoppa, **Esc** släpp musen, **G** grafikläge, **M** ljud av/på, **N** musik av/på
+- **1, 2, 3:** buga, peka och skratta, dansa
+- **WASD** gå, **Shift** spring, **Mellanslag** hoppa, **Esc** släpp musen, **G** grafikläge, **M** ljud av/på, **N** musik av/på (volymreglage finns i lobbyn och när du trycker Esc)
 - **Siktet** mitt på skärmen: kroppsdelen du pekar på lyser upp. Träffa den tillräckligt många gånger så åker den av.
 
 ## Mappar och filer
@@ -48,5 +51,3 @@ Därefter publiceras varje ny uppladdning till GitHub automatiskt.
 Allt körs på Cloudflares gratisplan. Räcker kvoten inte till en dag slutar
 servern svara tills gränsen nollställs kl. 01:00 (vintertid) eller 02:00 (sommartid) svensk tid.
 Det kan aldrig bli någon faktura.
- 
- 

@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.6";
+export const VERSION = "0.7";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -9,6 +9,10 @@ export const COMBAT = {
   maxHp: 100,
   quick: { damage: 25, windup: 0.3, cooldown: 0.6, reach: 2.1, arc: 60 },
   heavy: { damage: 50, charge: 0.8, windup: 0.3, cooldown: 1.5, reach: 2.4, arc: 50 },
+  thrust: { damage: 20, windup: 0.22, cooldown: 0.6, reach: 2.8, arc: 22 }, // stöt: lång men smal
+  // Spark: ingen skada, men knuffar bort och får motståndaren att vingla (bryter laddning och parering)
+  kick: { windup: 0.18, cooldown: 1.5, reach: 1.7, arc: 55, push: 7, stagger: 0.6 },
+  emoteCooldown: 1.5,
   parry: { window: 0.35, cooldown: 1.0, stagger: 0.9 },
   respawnSeconds: 4,
 
@@ -26,6 +30,11 @@ export const COMBAT = {
   },
   legLossSpeed: [1, 0.65, 0.4], // fart med 0, 1 eller 2 skadade ben
 };
+
+// UTSEENDE – bara kosmetiskt, alla är lika starka
+export const ARMORS = ["Plåtrustning", "Ringbrynja", "Läderrustning", "Praktrustning", "Bonde"];
+export const HELMETS = ["Tunnhjälm", "Visirhjälm", "Järnhatt", "Hornhjälm", "Plymhjälm", "Kastrull"];
+export const SHIELDS = ["Rund", "Droppformad", "Riddarsköld", "Bucklare", "Pavis"];
 
 // MATCHREGLER
 export const MATCH = {

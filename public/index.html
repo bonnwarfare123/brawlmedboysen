@@ -46,6 +46,11 @@
     <ul id="lobby-players" class="lobby-list"></ul>
     <label>Din färg</label>
     <div id="lobby-colors" class="colors"></div>
+    <label>Utseende</label>
+    <div class="look-row"><span>Rustning</span><button class="small" data-look="a" data-dir="-1">◀</button><b id="look-a"></b><button class="small" data-look="a" data-dir="1">▶</button></div>
+    <div class="look-row"><span>Hjälm</span><button class="small" data-look="h" data-dir="-1">◀</button><b id="look-h"></b><button class="small" data-look="h" data-dir="1">▶</button></div>
+    <div class="look-row"><span>Sköld</span><button class="small" data-look="s" data-dir="-1">◀</button><b id="look-s"></b><button class="small" data-look="s" data-dir="1">▶</button></div>
+    <p class="rules">Tips: tryck 1, 2 eller 3 för att buga, håna eller dansa</p>
     <button id="start-button" class="primary" hidden>Starta matchen</button>
     <p id="lobby-wait" class="subtitle"></p>
     <p class="rules">Sist kvar vinner rundan · Först till <span id="rounds-to-win"></span> rundvinster vinner matchen</p>
@@ -79,7 +84,7 @@
     <div id="spectate" class="status-banner" hidden>Matchen pågår – du är med från nästa runda</div>
 
     <div class="panel bottom-left help">
-      <b>Vänster mus</b> slag (håll = tungt) · <b>Höger mus</b> parera<br>
+      <b>Vänster mus</b> slag (håll = tungt) · <b>Höger mus</b> parera · <b>Q</b> stöt · <b>F</b> spark · <b>1–3</b> gester<br>
       <b>WASD</b> gå · <b>Shift</b> spring · <b>Mellanslag</b> hoppa · <b>Esc</b> släpp musen · <b>G</b> grafik · <b>M</b> ljud · <b>N</b> musik
     </div>
 
@@ -107,6 +112,14 @@
     <div class="panel bottom-right" id="perf"><span id="fps">FPS: –</span> · Grafik: <span id="quality-label">Hög</span> · Ljud: <span id="sound-label">På</span> · Musik: <span id="music-label">På</span></div>
 
     <div id="status" class="status" hidden></div>
+  </div>
+
+  <!-- Volymreglage: syns i lobbyn och när musen är släppt (Esc) under spelet -->
+  <div id="volume-panel" class="panel" hidden>
+    <label for="music-volume">🎵 Musik</label>
+    <input id="music-volume" type="range" min="0" max="100" step="1">
+    <label for="sfx-volume">🔊 Effekter</label>
+    <input id="sfx-volume" type="range" min="0" max="100" step="1">
   </div>
 
   <script type="module" src="js/main.js"></script>

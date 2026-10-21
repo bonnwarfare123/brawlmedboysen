@@ -11,12 +11,13 @@ export class Net {
     this.joined = false;
   }
 
-  connect(roomCode, name, color) {
+  // joinData = { name, color, look } skickas när anslutningen öppnas
+  connect(roomCode, joinData) {
     const protocol = location.protocol === "https:" ? "wss" : "ws";
     this.ws = new WebSocket(`${protocol}://${location.host}/ws/${roomCode}`);
 
     this.ws.addEventListener("open", () => {
-      this.send({ t: "join", name, color });
+      this.send({ t: "join", ...joinData });
     });
 
     this.ws.addEventListener("message", (event) => {
