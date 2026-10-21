@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.1";
+export const VERSION = "0.1.1";
 
 // Max antal spelare i ett rum
 export const MAX_PLAYERS = 6;

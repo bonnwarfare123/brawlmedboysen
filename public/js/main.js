@@ -60,7 +60,7 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, CONFIG.maxPixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = CONFIG.shadows;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap; // snabbare än "mjuka" skuggor
 
 const scene = new THREE.Scene();
 const SKY = 0x9cc3e0;
@@ -73,7 +73,7 @@ scene.add(new THREE.HemisphereLight(0xe4efff, 0x7a6448, 1.4));
 const sun = new THREE.DirectionalLight(0xfff1dc, 2.2);
 sun.position.set(14, 24, 10);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(CONFIG.shadowMapSize, CONFIG.shadowMapSize);
 sun.shadow.camera.left = -22;
 sun.shadow.camera.right = 22;
 sun.shadow.camera.top = 22;
@@ -85,6 +85,28 @@ scene.add(sun);
 
 const arena = buildArena();
 scene.add(arena.group);
+
+// ---------------------------------------------------------------------------
+// Grafikläge: Hög (skuggor, skarp bild) eller Låg (för svagare datorer). Byt med G.
+// ---------------------------------------------------------------------------
+
+let lowQuality = loadSetting("grafik", "hog") === "lag";
+
+function applyQuality() {
+  renderer.setPixelRatio(lowQuality ? 1 : Math.min(window.devicePixelRatio, CONFIG.maxPixelRatio));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  sun.castShadow = CONFIG.shadows && !lowQuality;
+  $("quality-label").textContent = lowQuality ? "Låg" : "Hög";
+  saveSetting("grafik", lowQuality ? "lag" : "hog");
+}
+applyQuality();
+
+window.addEventListener("keydown", (e) => {
+  if (e.code === "KeyG" && me) {
+    lowQuality = !lowQuality;
+    applyQuality();
+  }
+});
 
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -450,9 +472,21 @@ function updateNetwork(dt) {
 // ---------------------------------------------------------------------------
 
 const clock = new THREE.Clock();
+let fpsFrames = 0;
+let fpsStart = performance.now();
 
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1);
+
+  // FPS-mätare (uppdateras varje halv sekund)
+  fpsFrames++;
+  const now = performance.now();
+  if (now - fpsStart >= 500) {
+    $("perf").firstChild.textContent = `FPS: ${Math.round((fpsFrames * 1000) / (now - fpsStart))} · Grafik: `;
+    fpsFrames = 0;
+    fpsStart = now;
+  }
+
   if (me) {
     updateMe(dt);
     updateNetwork(dt);

@@ -3,13 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Riddarbrawl</title>
+  <title>Brawlmedboysen</title>
   <link rel="stylesheet" href="css/style.css">
   <!-- Three.js (3D-motorn) laddas direkt från nätet, ingen installation behövs -->
   <script type="importmap">
     {
       "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
       }
     }
   </script>
@@ -20,7 +21,7 @@
   <!-- Startskärm -->
   <div id="lobby" class="overlay">
     <div class="card">
-      <h1>Riddarbrawl</h1>
+      <h1>Brawlmedboysen</h1>
       <p class="subtitle" id="lobby-subtitle">Skapa ett rum och bjud in dina vänner</p>
 
       <label for="name-input">Ditt riddarnamn</label>
@@ -48,8 +49,10 @@
     <div id="click-hint" class="center-hint">Klicka i spelet för att styra kameran</div>
 
     <div class="panel bottom-left help">
-      <b>WASD</b> gå · <b>Shift</b> spring · <b>Mus</b> titta · <b>Esc</b> släpp musen
+      <b>WASD</b> gå · <b>Shift</b> spring · <b>Mus</b> titta · <b>Esc</b> släpp musen · <b>G</b> grafik
     </div>
+
+    <div class="panel bottom-right" id="perf">FPS: – · Grafik: <span id="quality-label">Hög</span></div>
 
     <div id="status" class="status" hidden></div>
   </div>

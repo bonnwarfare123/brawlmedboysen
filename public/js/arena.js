@@ -2,6 +2,7 @@
 // Inga 3D-filer behövs. Senare kan delar bytas mot riktiga modeller.
 
 import * as THREE from "three";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { ARENA_RX, ARENA_RZ } from "./shared.js";
 import { CONFIG } from "./config.js";
 
@@ -216,7 +217,41 @@ export function buildArena() {
     group.add(tree);
   }
 
+  // Slå ihop alla stillastående bitar till några få stora (mycket bättre FPS)
+  group.add(mergeStatic(group));
+
   return { group, colliders };
+}
+
+// Grafikkortet ritar snabbare EN stor sak än hundratals små.
+// Här slås alla bitar med samma material ihop till en enda.
+function mergeStatic(root) {
+  root.updateMatrixWorld(true);
+  const buckets = new Map();
+  const toRemove = [];
+
+  root.traverse((obj) => {
+    if (!obj.isMesh || obj.isInstancedMesh) return;
+    const key = obj.material.uuid + (obj.castShadow ? ":s" : ":n");
+    const geometry = obj.geometry.index ? obj.geometry.toNonIndexed() : obj.geometry.clone();
+    geometry.applyMatrix4(obj.matrixWorld);
+    if (!buckets.has(key)) buckets.set(key, { material: obj.material, castShadow: obj.castShadow, geometries: [] });
+    buckets.get(key).geometries.push(geometry);
+    toRemove.push(obj);
+  });
+
+  toRemove.forEach((obj) => obj.removeFromParent());
+
+  const merged = new THREE.Group();
+  for (const bucket of buckets.values()) {
+    const geometry = mergeGeometries(bucket.geometries);
+    bucket.geometries.forEach((g) => g.dispose());
+    const m = new THREE.Mesh(geometry, bucket.material);
+    m.castShadow = bucket.castShadow;
+    m.receiveShadow = true;
+    merged.add(m);
+  }
+  return merged;
 }
 
 // En sköld med märke. Framsidan pekar mot +Z (använd lookAt för att vända den).

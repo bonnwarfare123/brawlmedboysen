@@ -1,4 +1,4 @@
-# Riddarbrawl – v0.1
+# Brawlmedboysen – v0.1.1
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
@@ -29,7 +29,8 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
    (`wrangler.jsonc` ska ligga direkt i repot, inte i en undermapp).
 2. Gå till Cloudflare → **Workers & Pages** → **Create** → välj att importera ett
    GitHub-repo (*Import a repository*) och välj ditt repo.
-3. Döp projektet till **riddarbrawl** (måste matcha `name` i `wrangler.jsonc`).
+3. Döp projektet till **riddarbrawl** (måste matcha `name` i `wrangler.jsonc`;
+   det tekniska namnet syns bara i webbadressen, inte i spelet).
    Lämna byggkommandot tomt och låt deploy-kommandot vara `npx wrangler deploy`.
 4. Klicka **Deploy**. Efter en minut får du en länk som slutar på `.workers.dev`.
 
