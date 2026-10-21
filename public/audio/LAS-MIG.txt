@@ -1,0 +1,19 @@
+EGNA LJUD
+=========
+
+Lägg mp3-filer i den här mappen så använder spelet dem i stället för de
+inbyggda ljuden. Filerna måste heta exakt så här:
+
+  aj-1.mp3, aj-2.mp3, aj-3.mp3 ...       stön när man blir träffad
+  skrik-1.mp3, skrik-2.mp3 ...          skrik när man dör
+  musik.mp3                             bakgrundsmusik (spelas om och om igen)
+
+Numreringen måste börja på 1 och inte hoppa över något nummer.
+Har du fler filer väljer spelet en slumpvis varje gång.
+
+Tips: spela in era egna skrik med mobilen! Klipp dem korta (under 1 sekund
+för stön, 1–2 sekunder för skrik) och spara som mp3. Gratisprogram som
+Audacity eller webbsidan audio-converter.com kan klippa och konvertera.
+
+Musik: välj musik som är fri att använda (t.ex. märkt CC0 eller
+"public domain"). Håll filen under ca 5 MB så laddar spelet snabbt.

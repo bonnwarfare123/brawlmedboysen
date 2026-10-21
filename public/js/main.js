@@ -96,7 +96,7 @@ scene.add(arena.group);
 const effects = new Effects(scene);
 const debris = new Debris(30, 45); // döda kroppar och avhuggna delar
 const RAGDOLL_BOUNDS = { rx: ARENA_RX + 0.55, rz: ARENA_RZ + 0.55 }; // staketet
-const sound = new Sound(loadSetting("ljud", "pa") === "av");
+const sound = new Sound(loadSetting("ljud", "pa") === "av", loadSetting("musik", "pa") === "pa");
 
 // ---------------------------------------------------------------------------
 // Spelets tillstånd
@@ -155,7 +155,9 @@ applyQuality();
 
 function applySound() {
   $("sound-label").textContent = sound.muted ? "Av" : "På";
+  $("music-label").textContent = sound.musicOn ? "På" : "Av";
   saveSetting("ljud", sound.muted ? "av" : "pa");
+  saveSetting("musik", sound.musicOn ? "pa" : "av");
 }
 applySound();
 
@@ -283,6 +285,7 @@ const net = new Net({
       knight: null,
       corpse: null,
       pos: new THREE.Vector3(),
+      vel: new THREE.Vector3(), // fart i sidled (mjukas upp för acceleration)
       vy: 0,
       onGround: true,
       yaw: 0,
@@ -301,6 +304,7 @@ const net = new Net({
     hostId = msg.host;
     round = msg.round;
 
+    sound.startMusic(msg.phase !== "lobby");
     history.replaceState(null, "", `?rum=${roomCode}`);
     $("room-code").textContent = roomCode;
     $("lobby-room-code").textContent = roomCode;
@@ -363,6 +367,7 @@ const net = new Net({
 
   countdown(msg) {
     setPhase("countdown");
+    sound.setBattleMusic(true);
     round = msg.round;
     $("match-lobby").hidden = true;
     $("scoreboard").hidden = true;
@@ -380,6 +385,7 @@ const net = new Net({
       rebuildKnight(player);
       if (player === me) {
         me.pos.set(s.p[0], 0, s.p[2]);
+        me.vel.set(0, 0, 0);
         me.vy = 0;
         me.onGround = true;
         me.yaw = s.r;
@@ -404,7 +410,7 @@ const net = new Net({
     for (let i = msg.seconds; i >= 1; i--) {
       countdownTimers.push(setTimeout(() => {
         callout(i === msg.seconds ? `Runda ${round} – ${i}` : String(i), 900);
-        sound.beep(false);
+        sound.countdownBeat();
       }, (msg.seconds - i) * 1000));
     }
   },
@@ -412,8 +418,8 @@ const net = new Net({
   round() {
     setPhase("round");
     callout("STRID!", 900);
-    sound.beep(true);
-    sound.crowd(0.5);
+    sound.battleHorn();
+    arena.cheer(0.8);
     updateRoundBanner();
   },
 
@@ -426,7 +432,8 @@ const net = new Net({
     } else {
       callout("Ingen vann rundan!", 2500);
     }
-    sound.fanfare(false);
+    sound.roundWin();
+    arena.cheer(1);
     renderPlayerList();
     updateRoundBanner();
   },
@@ -458,8 +465,9 @@ const net = new Net({
       });
     $("scoreboard").hidden = false;
     if (document.pointerLockElement) document.exitPointerLock();
-    sound.fanfare(true);
-    sound.crowd(1);
+    sound.matchWin();
+    arena.cheer(1.5);
+    sound.setBattleMusic(false);
     renderPlayerList();
   },
 
@@ -510,6 +518,7 @@ const net = new Net({
       const spot = defender.knight.chestPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.2, 0));
       effects.sparks(spot);
       sound.clang(spot);
+      arena.cheer(0.4);
     }
     if (attacker) attacker.knight.playStagger();
     if (attacker === me) {
@@ -532,10 +541,15 @@ const net = new Net({
 
     victim.hp = msg.hp;
     const knight = victim.knight;
+    knight.setHighlight(null);
+    if (highlightedKnight === knight) highlightedKnight = null;
     knight.flash();
     const chest = knight.chestPosition(new THREE.Vector3());
-    effects.blood(chest, msg.k === "h" ? 26 : 14);
-    sound.hit(chest, msg.k === "h");
+    // Blodet sprutar där träffen landade (den siktade kroppsdelen), annars från bröstet
+    const spot = (msg.seg && knight.segmentPosition(msg.seg, new THREE.Vector3())) || chest;
+    effects.blood(spot, msg.k === "h" ? 26 : 14);
+    sound.hit(spot, msg.k === "h");
+    if (!msg.dead) sound.hurt(spot, voiceOf(victim));
 
     // Åt vilket håll flyger delarna? Bort från den som slog.
     const dir = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5);
@@ -550,6 +564,7 @@ const net = new Net({
       effects.blood(chest, 20);
       sound.sever(chest);
       sound.crowd(msg.sev === "neck" || msg.sev === "waist" ? 1 : 0.6);
+      arena.cheer(msg.sev === "neck" || msg.sev === "waist" ? 1.2 : 0.7);
     }
 
     if (victim === me) {
@@ -563,7 +578,8 @@ const net = new Net({
     if (msg.dead) {
       victim.dead = true;
       effects.blood(chest, 30);
-      sound.death(chest);
+      sound.scream(chest, voiceOf(victim));
+      arena.cheer(1);
       // Kroppen blir en ragdoll; en osynlig ny riddare står kvar tills nästa runda
       const force = msg.k === "h" ? 4 : 2.5;
       const corpse = knight.die([dir.x * force, 2, dir.z * force], scene, RAGDOLL_BOUNDS);
@@ -611,6 +627,7 @@ function addOther(player) {
     corpse: null,
     target: new THREE.Vector3(player.p[0], player.p[1], player.p[2]),
     targetYaw: player.r,
+    vel: new THREE.Vector3(),
     anim: player.a || 0,
     hp: player.hp,
     dead: player.dead,
@@ -627,6 +644,13 @@ function addOther(player) {
   }
 }
 
+// Varje riddare får sin egen röst (ljusare eller mörkare), räknad från spelarens id
+function voiceOf(player) {
+  let h = 0;
+  for (const ch of player.id) h = (h * 31 + ch.charCodeAt(0)) % 997;
+  return h / 997;
+}
+
 function applyWins(wins) {
   for (const [id, w] of Object.entries(wins || {})) {
     const p = playerById(id);
@@ -640,6 +664,7 @@ function applyWins(wins) {
 
 function enterLobby() {
   setPhase("lobby");
+  sound.setBattleMusic(false);
   round = 0;
   countdownTimers.forEach(clearTimeout);
   countdownTimers = [];
@@ -833,6 +858,11 @@ window.addEventListener("keydown", (e) => {
     sound.setMuted(!sound.muted);
     applySound();
   }
+  if (e.code === "KeyN" && !e.repeat) {
+    sound.unlock();
+    sound.setMusic(!sound.musicOn);
+    applySound();
+  }
 });
 window.addEventListener("keyup", (e) => keys.delete(e.code));
 window.addEventListener("blur", () => {
@@ -955,11 +985,14 @@ const raycaster = new THREE.Raycaster();
 raycaster.camera = camera;
 const screenCenter = new THREE.Vector2(0, 0);
 let aim = null; // { id, seg }
+let highlightedKnight = null;
 
 function updateAim() {
   aim = null;
   if (phase !== "round" || !me || me.dead) {
     $("crosshair").classList.remove("on-target");
+    if (highlightedKnight) highlightedKnight.setHighlight(null);
+    highlightedKnight = null;
     return;
   }
   const targets = [...others.values()].filter((o) => !o.dead && o.knight.group.visible).map((o) => o.knight.group);
@@ -983,6 +1016,12 @@ function updateAim() {
     if (aim) break;
   }
   $("crosshair").classList.toggle("on-target", aim !== null);
+
+  // Lys upp kroppsdelen under siktet
+  const knight = aim ? others.get(aim.id)?.knight : null;
+  if (highlightedKnight && highlightedKnight !== knight) highlightedKnight.setHighlight(null);
+  if (knight) knight.setHighlight(aim.seg);
+  highlightedKnight = knight;
 }
 
 // ---------------------------------------------------------------------------
@@ -992,7 +1031,20 @@ function updateAim() {
 const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
 const move = new THREE.Vector3();
+const wantedVel = new THREE.Vector3();
 const PLAYER_RADIUS = 0.4;
+
+// Riddarens fart uttryckt framåt/åt sidan i förhållande till dit den tittar
+function motionOf(vel, yaw, airborne) {
+  const fx = Math.sin(yaw);
+  const fz = Math.cos(yaw);
+  return {
+    speed: Math.hypot(vel.x, vel.z),
+    forward: vel.x * fx + vel.z * fz,
+    side: vel.x * fz - vel.z * fx, // positivt = åt vänster
+    airborne,
+  };
+}
 
 function updateMe(dt) {
   forward.set(Math.sin(camYaw), 0, Math.cos(camYaw));
@@ -1010,16 +1062,21 @@ function updateMe(dt) {
   const t = seconds();
   const moving = move.lengthSq() > 0;
   const running = moving && !charging && (keys.has("ShiftLeft") || keys.has("ShiftRight"));
+  wantedVel.set(0, 0, 0);
   if (moving) {
     let speed = running ? CONFIG.runSpeed : CONFIG.walkSpeed;
     speed *= COMBAT.legLossSpeed[Math.min(2, me.knight.legLoss)]; // avhuggna ben gör en långsam
     if (t < me.staggerUntil) speed *= CONFIG.staggerMoveFactor;
     else if (charging) speed *= CONFIG.chargeMoveFactor;
     else if (t < me.attackUntil) speed *= CONFIG.attackMoveFactor;
-    move.normalize().multiplyScalar(speed * dt);
-    me.pos.add(move);
+    wantedVel.copy(move).normalize().multiplyScalar(speed);
   }
-  me.anim = canMove ? (running ? 2 : moving ? 1 : 0) : 0;
+  // Acceleration och inbromsning (sämre grepp i luften)
+  const accel = me.onGround ? CONFIG.acceleration : CONFIG.airControl;
+  me.vel.lerp(wantedVel, 1 - Math.exp(-dt * accel));
+  me.pos.addScaledVector(me.vel, dt);
+  const groundSpeed = Math.hypot(me.vel.x, me.vel.z);
+  me.anim = canMove ? (groundSpeed > 4.5 ? 2 : groundSpeed > 0.3 ? 1 : 0) : 0;
 
   // Hopp och tyngdkraft
   if (!me.onGround) {
@@ -1079,23 +1136,31 @@ function updateMe(dt) {
 
   me.knight.group.position.copy(me.pos);
   me.knight.group.rotation.y = me.yaw;
-  if (!me.dead) me.knight.animate(dt, me.anim);
+  if (!me.dead) me.knight.animate(dt, motionOf(me.vel, me.yaw, !me.onGround));
 }
 
 let lobbyEmoteTimer = 2;
+const prevPos = new THREE.Vector3();
+const measuredVel = new THREE.Vector3();
 
 function updateOthers(dt) {
   const t = 1 - Math.exp(-dt * 12); // mjuk förflyttning mot senaste kända position
   for (const other of others.values()) {
     const group = other.knight.group;
+    prevPos.copy(group.position);
     if (group.position.distanceTo(other.target) > 5) {
       group.position.copy(other.target); // för långt efter: hoppa direkt
+      other.vel.set(0, 0, 0);
     } else {
       group.position.lerp(other.target, t);
+      // Uppmät farten från hur riddaren faktiskt flyttar sig, så benen hänger med
+      measuredVel.copy(group.position).sub(prevPos).divideScalar(Math.max(dt, 0.001));
+      measuredVel.y = 0;
+      other.vel.lerp(measuredVel, 1 - Math.exp(-dt * 10));
     }
     if (other.dead) continue; // kroppen är en ragdoll, den nya riddaren är osynlig
     group.rotation.y = angleLerp(group.rotation.y, other.targetYaw, t);
-    other.knight.animate(dt, phase === "round" ? other.anim : 0);
+    other.knight.animate(dt, motionOf(other.vel, group.rotation.y, group.position.y > 0.05));
   }
 
   // I lobbyn viftar riddarna med svärdet ibland, för stämningens skull
@@ -1245,6 +1310,7 @@ function frame() {
   updateBleeding(dt);
   debris.update(dt);
   effects.update(dt);
+  arena.update(dt);
   updateCamera(dt);
   updateAim();
   sound.setListener(camera.position.x, camera.position.y, camera.position.z);

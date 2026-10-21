@@ -5,6 +5,8 @@ export const CONFIG = {
   // Rörelse (meter per sekund)
   walkSpeed: 4,
   runSpeed: 6.5,
+  acceleration: 11,        // hur snabbt man kommer upp i fart / bromsar (högre = snabbare)
+  airControl: 2.5,         // hur mycket man kan styra i luften
 
   // Hopp
   jumpSpeed: 5.5,          // hur högt man hoppar

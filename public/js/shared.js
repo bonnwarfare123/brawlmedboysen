@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.5";
+export const VERSION = "0.6";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -12,19 +12,17 @@ export const COMBAT = {
   parry: { window: 0.35, cooldown: 1.0, stagger: 0.9 },
   respawnSeconds: 4,
 
-  // Chans (0–1) att en led huggs av vid en träff
-  sever: {
-    quick: 0.1,        // snabbt slag som inte dödar
-    heavy: 0.5,        // tungt slag som inte dödar
+  // SIKTADE TRÄFFAR: varje arm- och bendel tål så här mycket skada innan den åker av.
+  // (Snabbt slag = 25, tungt = 50. Hand 40 = två snabba eller ett tungt.)
+  // Ett dödande slag hugger alltid av den kroppsdel man siktar på.
+  limbHp: { hand: 40, forearm: 50, upperArm: 75, foot: 40, shin: 50, thigh: 75 },
+
+  // OSIKTADE TRÄFFAR (siktet på bålen eller bredvid): liten chans (0–1) att något slumpmässigt åker
+  randomSever: {
+    quick: 0.05,       // snabbt slag som inte dödar
+    heavy: 0.25,       // tungt slag som inte dödar
     quickKill: 0.4,    // snabbt slag som dödar
     heavyKill: 1.0,    // tungt slag som dödar
-  },
-  // Högre chans när man siktar på en arm eller ett ben
-  severAimed: {
-    quick: 0.2,
-    heavy: 0.7,
-    quickKill: 0.6,
-    heavyKill: 1.0,
   },
   legLossSpeed: [1, 0.65, 0.4], // fart med 0, 1 eller 2 skadade ben
 };
@@ -45,6 +43,7 @@ export const AIM_JOINT = {
   thighL: "hipL", shinL: "kneeL", footL: "ankleL",
   thighR: "hipR", shinR: "kneeR", footR: "ankleR",
   head: "neck",
+  torso: "waist", pelvis: "waist", // bara vid dödande slag: kluven på mitten
 };
 
 // Lederna som kan huggas av, och vilken kroppsdel som lossnar

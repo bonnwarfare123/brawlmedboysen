@@ -373,6 +373,15 @@ export class Knight {
     return ragdoll;
   }
 
+  // Mitten av en kroppsdel i världen (för blod där träffen landade)
+  segmentPosition(segName, target) {
+    const seg = this.seg[segName];
+    if (!seg || seg.userData.detached) return null;
+    this.group.updateMatrixWorld(true);
+    const pts = seg.userData.points;
+    return target.set(pts[1][0] / 2, pts[1][1] / 2, pts[1][2] / 2).applyMatrix4(seg.matrixWorld);
+  }
+
   // Var blöder stumparna? Anropar callback(position) för varje färsk stump.
   forEachBleedingStump(dt, callback) {
     const tmp = new THREE.Vector3();
@@ -382,70 +391,161 @@ export class Knight {
     }
   }
 
-  // ---------- Animation varje bildruta ----------
-  // anim: 0 = står still, 1 = går, 2 = springer
+  // ---------- Markering av kroppsdelen under siktet ----------
 
-  rot(name, x, y = null, z = null) {
-    const s = this.seg[name];
-    if (!s || s.userData.detached) return;
-    s.rotation.x = x;
-    if (y !== null) s.rotation.y = y;
-    if (z !== null) s.rotation.z = z;
+  setHighlight(segName) {
+    if (segName === this.highlighted) return;
+    // Återställ förra (en avhuggen del har redan fått egna material)
+    if (this.highlighted && this.seg[this.highlighted]) {
+      const old = this.seg[this.highlighted];
+      for (const child of old.children) {
+        if (child.isMesh && child.userData.baseMaterial) {
+          if (!old.userData.detached) child.material = child.userData.baseMaterial;
+          delete child.userData.baseMaterial;
+        }
+      }
+    }
+    this.highlighted = segName;
+    const seg = segName && this.seg[segName];
+    if (!seg || seg.userData.detached) return;
+    if (!this.glowMats) this.glowMats = new Map();
+    for (const child of seg.children) {
+      if (!child.isMesh) continue;
+      if (!this.glowMats.has(child.material)) {
+        const glow = child.material.clone();
+        glow.emissive = new THREE.Color(0xffc23a);
+        glow.emissiveIntensity = 0.45;
+        this.glowMats.set(child.material, glow);
+      }
+      child.userData.baseMaterial = child.material;
+      child.material = this.glowMats.get(child.material);
+    }
   }
 
-  animate(dt, anim) {
-    // Gång: lår svänger, knän böjs bakåt
-    const targetAmp = anim === 2 ? 0.85 : anim === 1 ? 0.55 : 0;
-    this.amp += (targetAmp - this.amp) * Math.min(1, dt * 10);
-    if (anim > 0) this.phase += dt * (anim === 2 ? 11 : 8);
-    const swing = Math.sin(this.phase) * this.amp;
+  // ---------- Animation varje bildruta ----------
+  //
+  // motion = { speed, forward, side, airborne }
+  //   speed    = fart i meter/sekund
+  //   forward  = fart framåt (minus = bakåt) i riddarens egen riktning
+  //   side     = fart åt vänster (minus = höger)
+  //   airborne = mitt i ett hopp
+  // Stegen räknas ut från farten så att fötterna inte glider på marken.
 
-    this.rot("thighL", swing * 0.8 - 0.05);
-    this.rot("thighR", -swing * 0.8 - 0.05);
-    const kneeL = Math.max(0, swing) * 1.2 + 0.1;
-    const kneeR = Math.max(0, -swing) * 1.2 + 0.1;
-    this.rot("shinL", kneeL);
-    this.rot("shinR", kneeR);
-    this.rot("footL", -kneeL * 0.4 - 0.05);
-    this.rot("footR", -kneeR * 0.4 - 0.05);
-    if (!this.seg.pelvis.userData.detached) {
-      this.seg.pelvis.position.y = 1.0 + Math.abs(Math.sin(this.phase)) * 0.04 * this.amp - 0.02 * Math.min(1, this.amp * 2);
+  // Mjuk övergång till en ny vinkel (k = hur snabbt, 0–1)
+  ease(name, x, y, z, k) {
+    const s = this.seg[name];
+    if (!s || s.userData.detached) return;
+    s.rotation.x += (x - s.rotation.x) * k;
+    s.rotation.y += (y - s.rotation.y) * k;
+    s.rotation.z += (z - s.rotation.z) * k;
+  }
+
+  animate(dt, motion = { speed: 0, forward: 0, side: 0, airborne: false }) {
+    const k = 1 - Math.exp(-dt * 14);       // vanliga rörelser
+    const kFast = 1 - Math.exp(-dt * 35);   // slag och parering ska vara skarpa
+    this.time = (this.time || 0) + dt;
+
+    // ----- Gångcykel -----
+    const speed = motion.airborne ? 0 : motion.speed;
+    const run = Math.min(1, Math.max(0, (speed - 3.5) / 2.5)); // 0 = gå, 1 = spring
+    const stride = lerp(1.35, 2.0, run);    // meter per hel cykel (två steg)
+    const backwards = motion.forward < -0.3 && Math.abs(motion.forward) > Math.abs(motion.side);
+    if (speed > 0.1) this.phase += ((speed * dt) / stride) * Math.PI * 2 * (backwards ? -1 : 1);
+    const targetAmp = Math.min(1, speed / 3.5) * lerp(0.5, 0.8, run);
+    this.amp += (targetAmp - this.amp) * (1 - Math.exp(-dt * 8));
+    const amp = this.amp;
+
+    // Rörelseriktning i förhållande till dit riddaren tittar
+    let dirFwd = 1;
+    let dirSide = 0;
+    if (speed > 0.1) {
+      const len = Math.hypot(motion.forward, motion.side) || 1;
+      dirFwd = motion.forward / len;
+      dirSide = motion.side / len;
+      if (backwards) {
+        dirFwd = -dirFwd;
+        dirSide = -dirSide;
+      }
     }
 
-    // Svärdsarmen: vila, laddning eller slag
-    let pose = [REST_R[0] + swing * 0.3, REST_R[1], REST_R[2], REST_R[3]];
+    const swing = Math.sin(this.phase) * amp;
+    const liftL = Math.max(0, -Math.cos(this.phase)) * amp; // knät lyfts när benet svingar fram
+    const liftR = Math.max(0, Math.cos(this.phase)) * amp;
+
+    if (motion.airborne) {
+      // Hopp: knäna dras upp
+      this.ease("thighL", -0.55, 0, 0.05, k);
+      this.ease("thighR", -0.35, 0, -0.05, k);
+      this.ease("shinL", 0.9, 0, 0, k);
+      this.ease("shinR", 0.7, 0, 0, k);
+      this.ease("footL", -0.2, 0, 0, k);
+      this.ease("footR", -0.2, 0, 0, k);
+    } else {
+      this.ease("thighL", swing * dirFwd * 0.95 - 0.04, 0, swing * dirSide * 0.45 + 0.03, k);
+      this.ease("thighR", -swing * dirFwd * 0.95 - 0.04, 0, -swing * dirSide * 0.45 - 0.03, k);
+      this.ease("shinL", liftL * 1.5 + 0.08, 0, 0, k);
+      this.ease("shinR", liftR * 1.5 + 0.08, 0, 0, k);
+      this.ease("footL", -swing * dirFwd * 0.3 - liftL * 0.5, 0, 0, k);
+      this.ease("footR", swing * dirFwd * 0.3 - liftR * 0.5, 0, 0, k);
+    }
+
+    // Höfterna: gungar upp och ner (två gånger per cykel), vrids och väger åt sidorna
+    const pelvis = this.seg.pelvis;
+    if (!pelvis.userData.detached) {
+      const bob = Math.abs(Math.cos(this.phase)) * 0.045 * amp;
+      const crouch = motion.airborne ? 0.06 : 0.025 * Math.min(1, amp * 2);
+      pelvis.position.y += (1.0 + bob - crouch - pelvis.position.y) * k;
+      pelvis.rotation.y += (Math.sin(this.phase) * 0.14 * amp * dirFwd - pelvis.rotation.y) * k;
+      pelvis.rotation.z += (Math.sin(this.phase) * 0.05 * amp - pelvis.rotation.z) * k;
+    }
+
+    // ----- Svärdsarmen: vila (svingar med i gången), laddning eller slag -----
+    let pose = [REST_R[0] - swing * 0.35 * dirFwd, REST_R[1], REST_R[2] - Math.abs(swing) * 0.1, REST_R[3]];
     this.chargeAmount += ((this.charging ? 1 : 0) - this.chargeAmount) * Math.min(1, dt * 8);
     pose = pose.map((v, i) => lerp(v, CHARGE_POSE[i], this.chargeAmount));
+    let armK = k;
     if (this.attack) {
       this.attack.t += dt;
       const keys = this.attack.kind === "h" ? HEAVY_KEYS : QUICK_KEYS;
       if (this.attack.t >= keys[keys.length - 1][0]) this.attack = null;
-      else pose = sampleKeys(keys, this.attack.t);
+      else {
+        pose = sampleKeys(keys, this.attack.t);
+        armK = kFast;
+      }
     }
-    this.rot("upperArmR", pose[0], 0, pose[1]);
-    this.rot("forearmR", pose[2]);
+    this.ease("upperArmR", pose[0], 0, pose[1], armK);
+    this.ease("forearmR", pose[2], 0, 0, armK);
 
-    // Sköldarmen: vila eller parering
-    let shield = [REST_L[0] - swing * 0.15, REST_L[1], REST_L[2]];
+    // ----- Sköldarmen: vila eller parering -----
+    let shield = [REST_L[0] + swing * 0.15 * dirFwd, REST_L[1], REST_L[2]];
+    let shieldK = k;
     if (this.parryT >= 0) {
       this.parryT += dt;
       if (this.parryT >= PARRY_KEYS[PARRY_KEYS.length - 1][0]) this.parryT = -1;
-      else shield = sampleKeys(PARRY_KEYS, this.parryT);
+      else {
+        shield = sampleKeys(PARRY_KEYS, this.parryT);
+        shieldK = kFast;
+      }
     }
-    this.rot("upperArmL", shield[0], 0, shield[1]);
-    this.rot("forearmL", shield[2]);
+    if (motion.airborne) shield = [shield[0] - 0.3, shield[1] - 0.2, shield[2]];
+    this.ease("upperArmL", shield[0], 0, shield[1], shieldK);
+    this.ease("forearmL", shield[2], 0, 0, shieldK);
 
-    // Bålen: vridning vid slag, lutar bakåt när man vacklar
-    let lean = 0;
+    // ----- Bålen: lutar in i rörelsen, motvrids mot höfterna, andas, vacklar -----
+    let lean = 0.05 * amp + 0.12 * run * dirFwd + Math.sin(this.time * 2.2) * 0.012;
     if (this.staggerT >= 0) {
       this.staggerT += dt;
       const d = COMBAT.parry.stagger;
       if (this.staggerT >= d) this.staggerT = -1;
-      else lean = -0.35 * Math.sin((this.staggerT / d) * Math.PI);
+      else lean -= 0.4 * Math.sin((this.staggerT / d) * Math.PI);
     }
-    this.rot("torso", lean, pose[3], 0);
+    const counter = -Math.sin(this.phase) * 0.12 * amp * dirFwd;
+    this.ease("torso", lean, pose[3] + counter, -dirSide * 0.06 * amp, this.attack ? kFast : k);
 
-    // Röd blinkning vid träff
+    // Huvudet håller blicken stadig medan kroppen gungar
+    this.ease("head", -lean * 0.5, -counter * 0.7, 0, k);
+
+    // ----- Röd blinkning vid träff -----
     if (this.flashT > 0) this.flashT = Math.max(0, this.flashT - dt);
     const glow = this.flashT / 0.2;
     for (const mat of this.materials) {

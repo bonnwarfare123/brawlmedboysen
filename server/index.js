@@ -89,7 +89,8 @@ function newPlayerState(info) {
     lastParry: -100,
     staggerUntil: 0,
     chargeStart: null,
-    severed: [], // avhuggna leder den här rundan
+    severed: [],     // avhuggna leder den här rundan
+    limbDamage: {},  // samlad skada per kroppsdel den här rundan
   };
 }
 
@@ -97,6 +98,7 @@ function resetForRound(player) {
   player.hp = COMBAT.maxHp;
   player.dead = false;
   player.severed = [];
+  player.limbDamage = {};
   player.nextQuick = 0;
   player.nextHeavy = 0;
   player.nextParry = 0;
@@ -117,17 +119,22 @@ function jointAvailable(player, joint) {
 // Avgör om och i så fall vilken led som huggs av vid en träff.
 // aimSegment = kroppsdelen den som slog siktade på (eller null).
 function chooseSever(player, kind, dead, aimSegment = null, random = Math.random) {
-  const key = (kind === "h" ? "heavy" : "quick") + (dead ? "Kill" : "");
+  const damage = kind === "h" ? COMBAT.heavy.damage : COMBAT.quick.damage;
 
-  // Siktade på en viss kroppsdel: just den leden (om den finns kvar)
+  // Siktade på en viss kroppsdel som finns kvar
   const aimed = aimSegment && AIM_JOINT[aimSegment];
-  if (aimed && jointAvailable(player, aimed)) {
-    if (KILL_ONLY_JOINTS.includes(aimed) && !dead) return null; // hjälmen skyddar tills man dör
-    return random() < COMBAT.severAimed[key] ? aimed : null;
+  const torsoAim = aimed === "waist";
+  if (aimed && jointAvailable(player, aimed) && !(torsoAim && !dead) && !(torsoAim && random() >= 0.5)) {
+    if (KILL_ONLY_JOINTS.includes(aimed)) return dead ? aimed : null; // huvud bara vid dråp
+    if (dead) return aimed;
+    const type = aimSegment.replace(/[LR]$/, "");
+    player.limbDamage[aimSegment] = (player.limbDamage[aimSegment] || 0) + damage;
+    return player.limbDamage[aimSegment] >= COMBAT.limbHp[type] ? aimed : null;
   }
 
-  // Annars slumpmässigt som förut
-  if (random() >= COMBAT.sever[key]) return null;
+  // Annars (bålen, bredvid eller redan avhuggen) liten slumpchans som förut
+  const key = (kind === "h" ? "heavy" : "quick") + (dead ? "Kill" : "");
+  if (random() >= COMBAT.randomSever[key]) return null;
   const candidates = LIMB_JOINTS.filter((j) => jointAvailable(player, j));
   if (dead) {
     for (const j of KILL_ONLY_JOINTS) {
@@ -495,6 +502,7 @@ export class GameRoom extends DurableObject {
         dead,
         kills: attacker.kills,
         sev,
+        seg: aimSeg, // kroppsdelen som träffades (om man siktade)
       });
     }
     this.checkRoundEnd();
