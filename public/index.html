@@ -36,6 +36,33 @@
     </div>
   </div>
 
+  <!-- Lobbyn: väntar på att lobbyledaren startar -->
+  <div id="match-lobby" class="card side-card" hidden>
+    <h2>Lobby</h2>
+    <div class="room-row">
+      Rum <strong id="lobby-room-code"></strong>
+      <button id="lobby-copy-link" class="small">Kopiera inbjudningslänk</button>
+    </div>
+    <ul id="lobby-players" class="lobby-list"></ul>
+    <label>Din färg</label>
+    <div id="lobby-colors" class="colors"></div>
+    <button id="start-button" class="primary" hidden>Starta matchen</button>
+    <p id="lobby-wait" class="subtitle"></p>
+    <p class="rules">Sist kvar vinner rundan · Först till <span id="rounds-to-win"></span> rundvinster vinner matchen</p>
+  </div>
+
+  <!-- Resultattavla när matchen är slut -->
+  <div id="scoreboard" class="overlay" hidden>
+    <div class="card">
+      <h2 id="match-winner"></h2>
+      <table id="score-table">
+        <thead><tr><th>Riddare</th><th>🏆 Rundor</th><th>⚔ Dråp</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="subtitle">Tillbaka till lobbyn strax…</p>
+    </div>
+  </div>
+
   <!-- Spelets gränssnitt -->
   <div id="hud" hidden>
     <div class="panel top-left">
@@ -47,10 +74,13 @@
     </div>
 
     <div id="click-hint" class="center-hint">Klicka i spelet för att styra kameran</div>
+    <div id="crosshair"></div>
+    <div id="round-banner"></div>
+    <div id="spectate" class="status-banner" hidden>Matchen pågår – du är med från nästa runda</div>
 
     <div class="panel bottom-left help">
       <b>Vänster mus</b> slag (håll = tungt) · <b>Höger mus</b> parera<br>
-      <b>WASD</b> gå · <b>Shift</b> spring · <b>Mellanslag</b> hoppa · <b>Esc</b> släpp musen · <b>G</b> grafik
+      <b>WASD</b> gå · <b>Shift</b> spring · <b>Mellanslag</b> hoppa · <b>Esc</b> släpp musen · <b>G</b> grafik · <b>M</b> ljud
     </div>
 
     <!-- Liv och väntetider -->
@@ -74,7 +104,7 @@
 
     <div id="damage-vignette"></div>
 
-    <div class="panel bottom-right" id="perf">FPS: – · Grafik: <span id="quality-label">Hög</span></div>
+    <div class="panel bottom-right" id="perf"><span id="fps">FPS: –</span> · Grafik: <span id="quality-label">Hög</span> · Ljud: <span id="sound-label">På</span></div>
 
     <div id="status" class="status" hidden></div>
   </div>

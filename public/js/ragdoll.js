@@ -280,6 +280,11 @@ export class Debris {
     while (this.items.length > this.maxCount) this.items.shift().dispose();
   }
 
+  clear() {
+    this.items.forEach((r) => r.dispose());
+    this.items = [];
+  }
+
   update(dt) {
     for (let i = this.items.length - 1; i >= 0; i--) {
       const r = this.items[i];

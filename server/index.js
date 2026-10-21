@@ -5,13 +5,16 @@
 //    (Spelets vanliga filer, som index.html, skickas automatiskt av Cloudflare
 //    från mappen "public" utan att passera här.)
 // 2. "GameRoom" är ett Durable Object: en liten server per spelrum. Den håller
-//    koll på spelarna, skickar vidare allas positioner och AVGÖR ALLA TRÄFFAR,
-//    så att alla ser samma sak och ingen kan fuska.
+//    koll på spelarna, lobbyn och rundorna, skickar vidare allas positioner och
+//    AVGÖR ALLA TRÄFFAR, så att alla ser samma sak och ingen kan fuska.
+//
+// Ett rum går igenom faserna:
+//   lobby → countdown (3, 2, 1) → round (strid) → roundEnd → countdown → ... → matchEnd → lobby
 
 import { DurableObject } from "cloudflare:workers";
 import {
-  MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, ARENA_RX, ARENA_RZ,
-  JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS,
+  MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, MATCH, ARENA_RX, ARENA_RZ,
+  JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS, AIM_JOINT,
 } from "../public/js/shared.js";
 
 export default {
@@ -62,10 +65,11 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
-function spawnPoint(index = null) {
-  const angle = index === null ? Math.random() * Math.PI * 2 : (index / MAX_PLAYERS) * Math.PI * 2;
+// Startplatser i en ring runt mitten, alla tittar inåt
+function spawnPoint(index, count) {
+  const angle = (index / Math.max(count, 2)) * Math.PI * 2;
   const p = [round2(Math.sin(angle) * 6), 0, round2(Math.cos(angle) * 6)];
-  const r = round2(angle + Math.PI); // titta mot mitten
+  const r = round2(angle + Math.PI);
   return { p, r };
 }
 
@@ -78,15 +82,28 @@ function newPlayerState(info) {
     hp: COMBAT.maxHp,
     dead: false,
     kills: 0,
+    wins: 0,
     nextQuick: 0,
     nextHeavy: 0,
     nextParry: 0,
     lastParry: -100,
     staggerUntil: 0,
     chargeStart: null,
-    ignoreStateUntil: 0,
-    severed: [], // avhuggna leder sedan senaste återuppståndelse
+    severed: [], // avhuggna leder den här rundan
   };
+}
+
+function resetForRound(player) {
+  player.hp = COMBAT.maxHp;
+  player.dead = false;
+  player.severed = [];
+  player.nextQuick = 0;
+  player.nextHeavy = 0;
+  player.nextParry = 0;
+  player.lastParry = -100;
+  player.staggerUntil = 0;
+  player.chargeStart = null;
+  player.a = 0;
 }
 
 // Finns leden kvar? (varken den eller någon led innanför är avhuggen)
@@ -97,13 +114,22 @@ function jointAvailable(player, joint) {
   return true;
 }
 
-// Slumpa om och i så fall vilken led som huggs av vid en träff
-function chooseSever(player, kind, dead, random = Math.random) {
+// Avgör om och i så fall vilken led som huggs av vid en träff.
+// aimSegment = kroppsdelen den som slog siktade på (eller null).
+function chooseSever(player, kind, dead, aimSegment = null, random = Math.random) {
   const key = (kind === "h" ? "heavy" : "quick") + (dead ? "Kill" : "");
+
+  // Siktade på en viss kroppsdel: just den leden (om den finns kvar)
+  const aimed = aimSegment && AIM_JOINT[aimSegment];
+  if (aimed && jointAvailable(player, aimed)) {
+    if (KILL_ONLY_JOINTS.includes(aimed) && !dead) return null; // hjälmen skyddar tills man dör
+    return random() < COMBAT.severAimed[key] ? aimed : null;
+  }
+
+  // Annars slumpmässigt som förut
   if (random() >= COMBAT.sever[key]) return null;
   const candidates = LIMB_JOINTS.filter((j) => jointAvailable(player, j));
   if (dead) {
-    // Huvud och midja är extra roliga vid dråp: dubbel chans
     for (const j of KILL_ONLY_JOINTS) {
       if (jointAvailable(player, j)) candidates.push(j, j);
     }
@@ -116,7 +142,7 @@ function chooseSever(player, kind, dead, random = Math.random) {
 function publicPlayer(pl) {
   return {
     id: pl.id, name: pl.name, color: pl.color, p: pl.p, r: pl.r, a: pl.a,
-    hp: pl.hp, dead: pl.dead, kills: pl.kills, severed: pl.severed,
+    hp: pl.hp, dead: pl.dead, kills: pl.kills, wins: pl.wins, severed: pl.severed,
   };
 }
 
@@ -124,12 +150,19 @@ export class GameRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.players = new Map();
+    this.phase = "lobby";
+    this.hostId = null;
+    this.round = 0;
+    this.phaseToken = 0; // ökar vid varje fasbyte, så gamla timers inte gör något
 
     // Om rummet "sov" (hibernation) och vaknar igen: återskapa spelarlistan
     // från informationen som sparats på varje anslutning.
     for (const ws of this.ctx.getWebSockets()) {
       const info = ws.deserializeAttachment();
-      if (info && info.id) this.players.set(info.id, newPlayerState(info));
+      if (info && info.id) {
+        this.players.set(info.id, newPlayerState(info));
+        if (!this.hostId) this.hostId = info.id;
+      }
     }
   }
 
@@ -163,6 +196,14 @@ export class GameRoom extends DurableObject {
     }
   }
 
+  winsTable() {
+    return Object.fromEntries([...this.players.values()].map((p) => [p.id, p.wins]));
+  }
+
+  killsTable() {
+    return Object.fromEntries([...this.players.values()].map((p) => [p.id, p.kills]));
+  }
+
   async webSocketMessage(ws, message) {
     if (typeof message !== "string" || message.length > 1000) return;
 
@@ -185,6 +226,12 @@ export class GameRoom extends DurableObject {
     if (!player) return;
 
     switch (msg.t) {
+      case "start":
+        this.handleStart(player);
+        break;
+      case "color":
+        this.handleColor(ws, player, msg.color);
+        break;
       case "s":
         this.handleState(ws, player, msg);
         break;
@@ -192,7 +239,7 @@ export class GameRoom extends DurableObject {
         this.handleCharge(ws, player, msg);
         break;
       case "atk":
-        this.handleAttack(ws, player, msg.k === "h" ? "h" : "q");
+        this.handleAttack(ws, player, msg.k === "h" ? "h" : "q", msg.aim);
         break;
       case "par":
         this.handleParry(ws, player);
@@ -200,7 +247,8 @@ export class GameRoom extends DurableObject {
     }
   }
 
-  // --- En spelare vill gå med ---
+  // ===================== Lobby =====================
+
   handleJoin(ws, info, msg) {
     if (info) return; // redan med
 
@@ -210,27 +258,137 @@ export class GameRoom extends DurableObject {
       return;
     }
 
-    const color = Number.isInteger(msg.color) && msg.color >= 0 && msg.color < COLORS.length ? msg.color : 0;
+    // Unika färger: är den önskade färgen tagen får man första lediga
+    const taken = new Set([...this.players.values()].map((p) => p.color));
+    let color = Number.isInteger(msg.color) && msg.color >= 0 && msg.color < COLORS.length ? msg.color : 0;
+    if (taken.has(color)) color = COLORS.findIndex((_, i) => !taken.has(i));
+
     const playerInfo = { id: randomId(), name: cleanName(msg.name), color };
     ws.serializeAttachment(playerInfo);
 
     const player = newPlayerState(playerInfo);
-    Object.assign(player, spawnPoint(this.players.size));
+    // Kommer man in mitt i en match får man titta på tills nästa runda
+    player.dead = this.phase !== "lobby";
     this.players.set(player.id, player);
+    if (!this.hostId) this.hostId = player.id;
 
     this.send(ws, {
       t: "welcome",
       id: player.id,
       you: publicPlayer(player),
       players: [...this.players.values()].filter((pl) => pl.id !== player.id).map(publicPlayer),
+      phase: this.phase,
+      host: this.hostId,
+      round: this.round,
     });
     this.broadcast({ t: "join", player: publicPlayer(player) }, ws);
   }
 
-  // --- Positionsuppdatering: spara och skicka vidare till de andra ---
+  handleColor(ws, player, color) {
+    if (this.phase !== "lobby") return;
+    if (!Number.isInteger(color) || color < 0 || color >= COLORS.length) return;
+    if ([...this.players.values()].some((p) => p !== player && p.color === color)) return; // upptagen
+    player.color = color;
+    ws.serializeAttachment({ id: player.id, name: player.name, color });
+    this.broadcast({ t: "color", id: player.id, color });
+  }
+
+  // Lobbyledaren startar matchen
+  handleStart(player) {
+    if (player.id !== this.hostId || this.phase !== "lobby") return;
+    if (this.players.size < MATCH.minPlayers) return;
+    for (const p of this.players.values()) {
+      p.wins = 0;
+      p.kills = 0;
+    }
+    this.round = 0;
+    this.startCountdown();
+  }
+
+  // ===================== Rundor =====================
+
+  setPhase(phase) {
+    this.phase = phase;
+    this.phaseToken += 1;
+    return this.phaseToken;
+  }
+
+  // Kör fn efter en stund, men bara om ingen annan fas har hunnit börja
+  later(seconds, token, fn) {
+    setTimeout(() => {
+      if (token === this.phaseToken) fn();
+    }, seconds * 1000);
+  }
+
+  startCountdown() {
+    this.round += 1;
+    const token = this.setPhase("countdown");
+    const list = [...this.players.values()];
+    list.forEach((p, i) => {
+      resetForRound(p);
+      Object.assign(p, spawnPoint(i, list.length));
+    });
+    this.broadcast({
+      t: "countdown",
+      round: this.round,
+      seconds: MATCH.countdown,
+      players: list.map((p) => ({ id: p.id, p: p.p, r: p.r })),
+    });
+    this.later(MATCH.countdown, token, () => {
+      this.setPhase("round");
+      this.broadcast({ t: "round", round: this.round });
+    });
+  }
+
+  // Anropas när någon dör eller lämnar: är det bara en kvar vinner den rundan
+  checkRoundEnd() {
+    if (this.phase === "countdown" && this.players.size < MATCH.minPlayers) {
+      this.toLobby();
+      return;
+    }
+    if (this.phase !== "round") return;
+    const alive = [...this.players.values()].filter((p) => !p.dead);
+    if (alive.length > 1) return;
+
+    const winner = alive[0] || null;
+    if (winner) winner.wins += 1;
+    const token = this.setPhase("roundEnd");
+    this.broadcast({ t: "roundEnd", winner: winner ? winner.id : null, wins: this.winsTable() });
+
+    this.later(MATCH.roundEndDelay, token, () => {
+      if (winner && winner.wins >= MATCH.roundsToWin && this.players.has(winner.id)) {
+        this.matchEnd(winner);
+      } else if (this.players.size >= MATCH.minPlayers) {
+        this.startCountdown();
+      } else {
+        this.toLobby();
+      }
+    });
+  }
+
+  matchEnd(winner) {
+    const token = this.setPhase("matchEnd");
+    this.broadcast({ t: "matchEnd", winner: winner.id, wins: this.winsTable(), kills: this.killsTable() });
+    this.later(MATCH.matchEndDelay, token, () => this.toLobby());
+  }
+
+  toLobby() {
+    this.setPhase("lobby");
+    this.round = 0;
+    for (const p of this.players.values()) resetForRound(p);
+    this.broadcast({ t: "lobby" });
+  }
+
+  // ===================== Strid =====================
+
+  // Bara levande spelare under en pågående runda får röra sig och slåss
+  canFight(player) {
+    return this.phase === "round" && !player.dead;
+  }
+
   handleState(ws, player, msg) {
     if (!Array.isArray(msg.p) || msg.p.length !== 3) return;
-    if (player.dead || now() < player.ignoreStateUntil) return; // liket ligger kvar där det föll
+    if (!this.canFight(player)) return;
 
     // Håll positionen inom arenan (skydd mot konstiga värden)
     const x = Math.max(-ARENA_RX, Math.min(ARENA_RX, finite(msg.p[0])));
@@ -242,24 +400,21 @@ export class GameRoom extends DurableObject {
     this.broadcast({ t: "s", id: player.id, p: player.p, r: player.r, a: player.a }, ws);
   }
 
-  // --- Spelaren börjar/slutar ladda ett tungt slag (syns för de andra) ---
   handleCharge(ws, player, msg) {
-    if (player.dead) return;
+    if (!this.canFight(player)) return;
     const on = msg.on === 1;
     player.chargeStart = on ? now() : null;
     this.broadcast({ t: "ch", id: player.id, on: on ? 1 : 0 }, ws);
   }
 
-  // --- Ett slag ---
-  handleAttack(ws, player, kind) {
+  handleAttack(ws, player, kind, aim) {
     const t = now();
-    if (player.dead || t < player.staggerUntil) return;
+    if (!this.canFight(player) || t < player.staggerUntil) return;
 
     const spec = kind === "h" ? COMBAT.heavy : COMBAT.quick;
 
     if (kind === "h") {
       if (t < player.nextHeavy - TOLERANCE) return;
-      // Det tunga slaget måste ha laddats tillräckligt länge
       if (player.chargeStart === null || t - player.chargeStart < COMBAT.heavy.charge - 0.2) return;
     } else if (t < player.nextQuick - TOLERANCE) {
       return;
@@ -269,15 +424,19 @@ export class GameRoom extends DurableObject {
     player.nextQuick = t + COMBAT.quick.cooldown;
     player.nextHeavy = t + (kind === "h" ? COMBAT.heavy.cooldown : COMBAT.quick.cooldown);
 
-    this.broadcast({ t: "atk", id: player.id, k: kind }, ws);
+    // Vad siktade spelaren på? { id: motståndare, seg: kroppsdel }
+    const aimInfo = aim && typeof aim.id === "string" && typeof aim.seg === "string" && AIM_JOINT[aim.seg]
+      ? { id: aim.id, seg: aim.seg }
+      : null;
 
-    // Träffen avgörs när svärdet faktiskt når fram (efter "windup")
-    setTimeout(() => this.resolveAttack(player.id, kind), spec.windup * 1000);
+    this.broadcast({ t: "atk", id: player.id, k: kind }, ws);
+    const token = this.phaseToken;
+    this.later(spec.windup, token, () => this.resolveAttack(player.id, kind, aimInfo));
   }
 
-  resolveAttack(attackerId, kind) {
+  resolveAttack(attackerId, kind, aimInfo) {
     const attacker = this.players.get(attackerId);
-    if (!attacker || attacker.dead) return;
+    if (!attacker || !this.canFight(attacker)) return;
 
     const t = now();
     if (t < attacker.staggerUntil) return; // blev själv parerad under tiden
@@ -307,26 +466,25 @@ export class GameRoom extends DurableObject {
       const tx = Math.sin(target.r);
       const tz = Math.cos(target.r);
       const facing = tx * (attacker.p[0] - target.p[0]) + tz * (attacker.p[2] - target.p[2]);
-      if (facing <= 0) continue; // stod med ryggen till
+      if (facing <= 0) continue;
 
       attacker.staggerUntil = t + COMBAT.parry.stagger;
       attacker.chargeStart = null;
-      target.nextParry = t; // belöning: kan parera igen direkt
+      target.nextParry = t;
       this.broadcast({ t: "parried", id: target.id, by: attacker.id });
-      return; // slaget stoppas helt
+      return;
     }
 
-    // Skada alla som träffades (ett slag kan träffa flera i en brawl)
     for (const target of targets) {
       target.hp = Math.max(0, target.hp - spec.damage);
       const dead = target.hp === 0;
-      const sev = chooseSever(target, kind, dead);
+      const aimSeg = aimInfo && aimInfo.id === target.id ? aimInfo.seg : null;
+      const sev = chooseSever(target, kind, dead, aimSeg);
       if (sev) target.severed.push(sev);
       if (dead) {
         target.dead = true;
         target.chargeStart = null;
         attacker.kills += 1;
-        setTimeout(() => this.respawn(target.id), COMBAT.respawnSeconds * 1000);
       }
       this.broadcast({
         t: "hit",
@@ -336,31 +494,21 @@ export class GameRoom extends DurableObject {
         hp: target.hp,
         dead,
         kills: attacker.kills,
-        sev, // led som höggs av, eller null
+        sev,
       });
     }
+    this.checkRoundEnd();
   }
 
-  // --- Parera ---
   handleParry(ws, player) {
     const t = now();
-    if (player.dead || t < player.nextParry - TOLERANCE) return;
+    if (!this.canFight(player) || t < player.nextParry - TOLERANCE) return;
     player.lastParry = t;
     player.nextParry = t + COMBAT.parry.cooldown;
     this.broadcast({ t: "par", id: player.id }, ws);
   }
 
-  respawn(id) {
-    const player = this.players.get(id);
-    if (!player) return; // har lämnat spelet
-    player.hp = COMBAT.maxHp;
-    player.dead = false;
-    player.staggerUntil = 0;
-    player.severed = [];
-    player.ignoreStateUntil = now() + 0.5; // ignorera gamla positioner som är på väg
-    Object.assign(player, spawnPoint());
-    this.broadcast({ t: "respawn", id, p: player.p, r: player.r, hp: player.hp });
-  }
+  // ===================== Anslutning bryts =====================
 
   async webSocketClose(ws, code, reason) {
     this.removePlayer(ws);
@@ -380,5 +528,25 @@ export class GameRoom extends DurableObject {
     if (!info || !this.players.has(info.id)) return;
     this.players.delete(info.id);
     this.broadcast({ t: "leave", id: info.id }, ws);
+
+    // Ny lobbyledare om ledaren gick
+    if (this.hostId === info.id) {
+      const next = this.players.keys().next();
+      this.hostId = next.done ? null : next.value;
+      if (this.hostId) this.broadcast({ t: "host", id: this.hostId });
+    }
+
+    if (this.players.size === 0) {
+      this.setPhase("lobby");
+      this.round = 0;
+      return;
+    }
+    if (this.phase === "matchEnd" || this.phase === "roundEnd") return;
+    if (this.phase !== "lobby" && this.players.size < MATCH.minPlayers) {
+      // Inte nog med spelare kvar: tillbaka till lobbyn (den som är kvar vinner inget)
+      this.toLobby();
+      return;
+    }
+    this.checkRoundEnd();
   }
 }

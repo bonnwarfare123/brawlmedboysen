@@ -64,6 +64,14 @@ export class Effects {
     this.stains.push(mesh);
   }
 
+  // Städa bort allt blod (t.ex. när man går tillbaka till lobbyn)
+  clear() {
+    this.particles.forEach((p) => p.mesh.removeFromParent());
+    this.stains.forEach((m) => m.removeFromParent());
+    this.particles = [];
+    this.stains = [];
+  }
+
   update(dt) {
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];

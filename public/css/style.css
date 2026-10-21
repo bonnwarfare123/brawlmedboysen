@@ -315,3 +315,104 @@ button.small {
 
 .kills { margin-left: auto; padding-left: 12px; color: #6b4a2b; font-weight: bold; }
 .dead-name { text-decoration: line-through; opacity: 0.6; }
+
+/* ---------- Lobby, sikte, rundor ---------- */
+.side-card {
+  position: fixed;
+  left: 32px;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: 360px;
+  width: calc(100% - 64px);
+  z-index: 5;
+}
+
+.side-card h2, #scoreboard h2 { margin: 0 0 8px; text-align: center; }
+
+.lobby-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+}
+
+.lobby-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(107, 74, 43, 0.25);
+}
+
+.swatch:disabled { opacity: 0.2; cursor: not-allowed; }
+
+.rules { margin: 12px 0 0; font-size: 13px; text-align: center; color: #6b4a2b; }
+
+#crosshair {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border: 2px solid rgba(255, 248, 232, 0.85);
+  border-radius: 50%;
+  box-shadow: 0 0 2px #000;
+  pointer-events: none;
+  transition: border-color 0.08s, transform 0.08s;
+}
+
+#crosshair::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 2px;
+  margin: -1px 0 0 -1px;
+  background: rgba(255, 248, 232, 0.9);
+  border-radius: 50%;
+}
+
+#crosshair.on-target { border-color: #e04a3a; transform: scale(1.25); }
+#crosshair.on-target::after { background: #e04a3a; }
+
+#round-banner {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(30, 22, 12, 0.7);
+  color: #fff8e8;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 15px;
+  pointer-events: none;
+}
+
+#round-banner:empty { display: none; }
+
+.status-banner {
+  position: fixed;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(30, 22, 12, 0.8);
+  color: #fff8e8;
+  padding: 8px 16px;
+  border-radius: 6px;
+}
+
+#score-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+#score-table th, #score-table td { padding: 6px 8px; border-bottom: 1px solid rgba(107, 74, 43, 0.3); text-align: center; }
+#score-table td:first-child, #score-table th:first-child { text-align: left; }
+#score-table tr.winner td { font-weight: bold; background: rgba(217, 165, 33, 0.25); }
+
+/* Det som inte behövs i lobbyn döljs */
+body[data-phase="lobby"] #combat-hud,
+body[data-phase="lobby"] .help,
+body[data-phase="lobby"] #crosshair,
+body[data-phase="lobby"] #click-hint,
+body[data-phase="lobby"] .top-left,
+body[data-phase="lobby"] #round-banner { display: none; }
+body[data-phase="matchEnd"] #crosshair,
+body[data-phase="matchEnd"] #click-hint { display: none; }

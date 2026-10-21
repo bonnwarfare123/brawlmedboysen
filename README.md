@@ -1,15 +1,16 @@
-# Brawlmedboysen – v0.4
+# Brawlmedboysen – v0.5
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
-**v0.3 innehåller:** arena, enkla riddare, rum med inbjudningslänk, multiplayer, snabbt och tungt slag, parering, hopp, liv, död, återuppståndelse, blod och dråpräkning. Riddare med riktiga leder: armar, ben, huvud och midja kan huggas av, och döda riddare blir ragdolls. Servern avgör alla träffar.
+**v0.5 innehåller:** lobby med inbjudningslänk där lobbyledaren startar matchen, rundor (sist kvar vinner, först till 5), sikte som avgör vilken kroppsdel som huggs av, ljud, unika färger, riddare med leder som kan huggas av, ragdolls, snabbt och tungt slag, parering och hopp. Servern avgör alla träffar.
 
 ## Styrning
 
 - **Klicka** i spelet för att styra kameran med musen
 - **Vänster mus:** klicka = snabbt slag, håll in och släpp = tungt slag
 - **Höger mus:** parera (tryck precis innan motståndarens slag träffar)
-- **WASD** gå, **Shift** spring, **Mellanslag** hoppa, **Esc** släpp musen, **G** grafikläge
+- **WASD** gå, **Shift** spring, **Mellanslag** hoppa, **Esc** släpp musen, **G** grafikläge, **M** ljud av/på
+- **Siktet** mitt på skärmen avgör vilken kroppsdel som flyger
 
 ## Mappar och filer
 
@@ -22,8 +23,9 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 | `public/js/net.js` | Pratar med servern |
 | `public/js/effects.js` | Blodstänk och gnistor |
 | `public/js/ragdoll.js` | Egen fysik för döda kroppar och avhuggna delar |
+| `public/js/sound.js` | Alla ljud, skapade direkt i koden |
 | `public/js/config.js` | **Inställningar** – fart, kamera, hopp m.m. Ändra här! |
-| `public/js/shared.js` | **Stridsregler** (skada, räckvidd, väntetider) som både spel och server använder |
+| `public/js/shared.js` | **Strids- och matchregler** (skada, räckvidd, väntetider, rundor) som både spel och server använder |
 | `server/index.js` | Servern (Cloudflare Worker + Durable Object) |
 | `wrangler.jsonc` | Talar om för Cloudflare hur allt ska publiceras |
 

@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.4";
+export const VERSION = "0.5";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -19,7 +19,32 @@ export const COMBAT = {
     quickKill: 0.4,    // snabbt slag som dödar
     heavyKill: 1.0,    // tungt slag som dödar
   },
+  // Högre chans när man siktar på en arm eller ett ben
+  severAimed: {
+    quick: 0.2,
+    heavy: 0.7,
+    quickKill: 0.6,
+    heavyKill: 1.0,
+  },
   legLossSpeed: [1, 0.65, 0.4], // fart med 0, 1 eller 2 skadade ben
+};
+
+// MATCHREGLER
+export const MATCH = {
+  roundsToWin: 5,      // först till så många rundvinster vinner matchen
+  minPlayers: 2,       // minst så många för att kunna starta
+  countdown: 3,        // sekunder innan rundan börjar
+  roundEndDelay: 4,    // sekunder mellan rundor
+  matchEndDelay: 8,    // sekunder resultattavlan visas innan alla går tillbaka till lobbyn
+};
+
+// Vilken led huggs av om man siktar på en viss kroppsdel?
+export const AIM_JOINT = {
+  upperArmL: "shoulderL", forearmL: "elbowL", handL: "wristL",
+  upperArmR: "shoulderR", forearmR: "elbowR", handR: "wristR",
+  thighL: "hipL", shinL: "kneeL", footL: "ankleL",
+  thighR: "hipR", shinR: "kneeR", footR: "ankleR",
+  head: "neck",
 };
 
 // Lederna som kan huggas av, och vilken kroppsdel som lossnar

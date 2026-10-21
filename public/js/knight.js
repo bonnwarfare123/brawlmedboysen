@@ -166,6 +166,7 @@ export class Knight {
     sword.add(this.shape(new THREE.SphereGeometry(0.03, 8, 6), m.dark, [0, -0.08, 0]));       // knapp
     sword.position.set(0, -0.06, 0.01);
     sword.rotation.x = 2.0;
+    sword.userData.equipment = true; // siktet ska inte räkna svärdet som kroppsdel
     this.seg.handR.add(sword);
 
     // Sköld i vänster hand (vänd framåt i vila)
@@ -179,6 +180,7 @@ export class Knight {
     shield.add(this.shape(new THREE.SphereGeometry(0.05, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), m.dark, [0, 0, 0.02], [1, 1, 1], [Math.PI / 2, 0, 0])); // buckla
     shield.position.set(0.03, -0.08, 0);
     shield.rotation.x = 1.6;
+    shield.userData.equipment = true;
     this.seg.handL.add(shield);
 
     this.group.traverse((obj) => {
