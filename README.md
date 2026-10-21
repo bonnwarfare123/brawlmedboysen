@@ -1,8 +1,8 @@
-# Brawlmedboysen – v0.3
+# Brawlmedboysen – v0.4
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
-**v0.3 innehåller:** arena, enkla riddare, rum med inbjudningslänk, multiplayer, snabbt och tungt slag, parering, hopp, liv, död, återuppståndelse, blod och dråpräkning. Servern avgör alla träffar.
+**v0.3 innehåller:** arena, enkla riddare, rum med inbjudningslänk, multiplayer, snabbt och tungt slag, parering, hopp, liv, död, återuppståndelse, blod och dråpräkning. Riddare med riktiga leder: armar, ben, huvud och midja kan huggas av, och döda riddare blir ragdolls. Servern avgör alla träffar.
 
 ## Styrning
 
@@ -18,9 +18,10 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 | `public/index.html` | Själva webbsidan |
 | `public/js/main.js` | Startskärm, styrning, kamera, spel-loop |
 | `public/js/arena.js` | Bygger arenan av enkla former |
-| `public/js/knight.js` | Bygger riddaren och gånganimationen |
+| `public/js/knight.js` | Bygger riddaren (15 kroppsdelar med leder), animationer och kapning |
 | `public/js/net.js` | Pratar med servern |
 | `public/js/effects.js` | Blodstänk och gnistor |
+| `public/js/ragdoll.js` | Egen fysik för döda kroppar och avhuggna delar |
 | `public/js/config.js` | **Inställningar** – fart, kamera, hopp m.m. Ändra här! |
 | `public/js/shared.js` | **Stridsregler** (skada, räckvidd, väntetider) som både spel och server använder |
 | `server/index.js` | Servern (Cloudflare Worker + Durable Object) |
@@ -32,7 +33,7 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
    (`wrangler.jsonc` ska ligga direkt i repot, inte i en undermapp).
 2. Gå till Cloudflare → **Workers & Pages** → **Create** → välj att importera ett
    GitHub-repo (*Import a repository*) och välj ditt repo.
-3. Döp projektet till **riddarbrawl** (måste matcha `name` i `wrangler.jsonc`;
+3. Döp projektet till **brawlmedboysen** (måste matcha `name` i `wrangler.jsonc`;
    det tekniska namnet syns bara i webbadressen, inte i spelet).
    Lämna byggkommandot tomt och låt deploy-kommandot vara `npx wrangler deploy`.
 4. Klicka **Deploy**. Efter en minut får du en länk som slutar på `.workers.dev`.

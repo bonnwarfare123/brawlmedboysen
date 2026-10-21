@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.3";
+export const VERSION = "0.4";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -11,7 +11,41 @@ export const COMBAT = {
   heavy: { damage: 50, charge: 0.8, windup: 0.3, cooldown: 1.5, reach: 2.4, arc: 50 },
   parry: { window: 0.35, cooldown: 1.0, stagger: 0.9 },
   respawnSeconds: 4,
+
+  // Chans (0–1) att en led huggs av vid en träff
+  sever: {
+    quick: 0.1,        // snabbt slag som inte dödar
+    heavy: 0.5,        // tungt slag som inte dödar
+    quickKill: 0.4,    // snabbt slag som dödar
+    heavyKill: 1.0,    // tungt slag som dödar
+  },
+  legLossSpeed: [1, 0.65, 0.4], // fart med 0, 1 eller 2 skadade ben
 };
+
+// Lederna som kan huggas av, och vilken kroppsdel som lossnar
+export const JOINT_SEGMENT = {
+  wristL: "handL", elbowL: "forearmL", shoulderL: "upperArmL",
+  wristR: "handR", elbowR: "forearmR", shoulderR: "upperArmR",
+  ankleL: "footL", kneeL: "shinL", hipL: "thighL",
+  ankleR: "footR", kneeR: "shinR", hipR: "thighR",
+  neck: "head", waist: "torso",
+};
+
+// Vilken led sitter innanför? (är den avhuggen finns inte leden längre ut kvar)
+export const JOINT_PARENT = {
+  wristL: "elbowL", elbowL: "shoulderL", shoulderL: "waist",
+  wristR: "elbowR", elbowR: "shoulderR", shoulderR: "waist",
+  ankleL: "kneeL", kneeL: "hipL", hipL: null,
+  ankleR: "kneeR", kneeR: "hipR", hipR: null,
+  neck: "waist", waist: null,
+};
+
+export const LIMB_JOINTS = [
+  "wristL", "elbowL", "shoulderL", "wristR", "elbowR", "shoulderR",
+  "ankleL", "kneeL", "hipL", "ankleR", "kneeR", "hipR",
+];
+export const LEG_JOINTS = ["ankleL", "kneeL", "hipL", "ankleR", "kneeR", "hipR"];
+export const KILL_ONLY_JOINTS = ["neck", "waist"]; // kan bara huggas av med ett dödande slag
 
 // Max antal spelare i ett rum
 export const MAX_PLAYERS = 6;

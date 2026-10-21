@@ -9,7 +9,10 @@
 //    så att alla ser samma sak och ingen kan fuska.
 
 import { DurableObject } from "cloudflare:workers";
-import { MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, ARENA_RX, ARENA_RZ } from "../public/js/shared.js";
+import {
+  MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, ARENA_RX, ARENA_RZ,
+  JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS,
+} from "../public/js/shared.js";
 
 export default {
   async fetch(request, env) {
@@ -82,12 +85,39 @@ function newPlayerState(info) {
     staggerUntil: 0,
     chargeStart: null,
     ignoreStateUntil: 0,
+    severed: [], // avhuggna leder sedan senaste återuppståndelse
   };
+}
+
+// Finns leden kvar? (varken den eller någon led innanför är avhuggen)
+function jointAvailable(player, joint) {
+  for (let j = joint; j; j = JOINT_PARENT[j]) {
+    if (player.severed.includes(j)) return false;
+  }
+  return true;
+}
+
+// Slumpa om och i så fall vilken led som huggs av vid en träff
+function chooseSever(player, kind, dead, random = Math.random) {
+  const key = (kind === "h" ? "heavy" : "quick") + (dead ? "Kill" : "");
+  if (random() >= COMBAT.sever[key]) return null;
+  const candidates = LIMB_JOINTS.filter((j) => jointAvailable(player, j));
+  if (dead) {
+    // Huvud och midja är extra roliga vid dråp: dubbel chans
+    for (const j of KILL_ONLY_JOINTS) {
+      if (jointAvailable(player, j)) candidates.push(j, j);
+    }
+  }
+  if (candidates.length === 0) return null;
+  return candidates[Math.floor(random() * candidates.length)];
 }
 
 // Det som skickas till spelarna om en riddare (inte interna timers)
 function publicPlayer(pl) {
-  return { id: pl.id, name: pl.name, color: pl.color, p: pl.p, r: pl.r, a: pl.a, hp: pl.hp, dead: pl.dead, kills: pl.kills };
+  return {
+    id: pl.id, name: pl.name, color: pl.color, p: pl.p, r: pl.r, a: pl.a,
+    hp: pl.hp, dead: pl.dead, kills: pl.kills, severed: pl.severed,
+  };
 }
 
 export class GameRoom extends DurableObject {
@@ -290,6 +320,8 @@ export class GameRoom extends DurableObject {
     for (const target of targets) {
       target.hp = Math.max(0, target.hp - spec.damage);
       const dead = target.hp === 0;
+      const sev = chooseSever(target, kind, dead);
+      if (sev) target.severed.push(sev);
       if (dead) {
         target.dead = true;
         target.chargeStart = null;
@@ -304,6 +336,7 @@ export class GameRoom extends DurableObject {
         hp: target.hp,
         dead,
         kills: attacker.kills,
+        sev, // led som höggs av, eller null
       });
     }
   }
@@ -323,6 +356,7 @@ export class GameRoom extends DurableObject {
     player.hp = COMBAT.maxHp;
     player.dead = false;
     player.staggerUntil = 0;
+    player.severed = [];
     player.ignoreStateUntil = now() + 0.5; // ignorera gamla positioner som är på väg
     Object.assign(player, spawnPoint());
     this.broadcast({ t: "respawn", id, p: player.p, r: player.r, hp: player.hp });

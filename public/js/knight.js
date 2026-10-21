@@ -1,51 +1,67 @@
-// RIDDAREN – byggd av enkla former tills vi byter till en riktig 3D-modell.
-// Riddaren tittar mot +Z. Origo (0,0,0) är mellan fötterna.
+// RIDDAREN – byggd av rundade former med riktiga leder.
+// Riddaren tittar mot +Z. Origo (0,0,0) är mellan fötterna. Längd ca 1,8 m.
 //
-// Uppbyggnad:  group (position + vridning)
-//                └ pose (lutning när man faller)
-//                    ├ ben
-//                    └ upper (överkropp, armar, hjälm)
+// Kroppen består av 15 delar som sitter ihop i leder:
+//
+//   pelvis (höfter)
+//    ├ torso (bål)            ← midja
+//    │  ├ head (huvud)        ← hals
+//    │  ├ upperArmL/R         ← axel
+//    │  │  └ forearmL/R       ← armbåge
+//    │  │     └ handL/R       ← handled   (sköld i vänster, svärd i höger)
+//    ├ thighL/R (lår)         ← höft
+//    │  └ shinL/R (underben)  ← knä
+//    │     └ footL/R (fot)    ← fotled
+//
+// Varje led kan huggas av. Då blir delen (och allt som sitter längre ut)
+// en egen ragdoll som flyger iväg.
 
 import * as THREE from "three";
-import { COMBAT } from "./shared.js";
+import { COMBAT, JOINT_SEGMENT, LEG_JOINTS } from "./shared.js";
+import { Ragdoll } from "./ragdoll.js";
 
-const METAL = 0x8d939b;
-const METAL_DARK = 0x5d636b;
+const METAL = 0x9aa1aa;
+const METAL_DARK = 0x60666f;
 const LEATHER = 0x5a3c24;
-const VISOR = 0x1c1c1e;
+const VISOR = 0x15151a;
+const BLOOD = 0x7a0a0a;
 
-// Rörelsekurvor för slagen: [tid, armens vinkel framåt, armens vinkel i sidled, överkroppens vridning]
+// Rörelsekurvor: [tid, överarm framåt, överarm i sidled, underarm böj, bålens vridning]
+const REST_R = [-0.3, 0, -0.9, 0];
 const QUICK_KEYS = [
-  [0.0, -0.5, 0.0, 0.0],
-  [0.12, -2.3, -0.5, -0.4],
-  [0.3, -0.1, 0.3, 0.35],
-  [0.5, -0.5, 0.0, 0.0],
+  [0.0, -0.3, 0.0, -0.9, 0.0],
+  [0.12, -2.4, -0.4, -1.0, -0.4],
+  [0.3, -0.6, 0.3, -0.2, 0.4],
+  [0.5, -0.3, 0.0, -0.9, 0.0],
 ];
 const HEAVY_KEYS = [
-  [0.0, -2.9, 0.0, -0.3],
-  [0.15, -3.0, 0.0, -0.35],
-  [0.32, 0.15, 0.0, 0.3],
-  [0.7, -0.5, 0.0, 0.0],
+  [0.0, -2.9, 0.0, -0.6, -0.3],
+  [0.15, -3.0, 0.0, -0.7, -0.35],
+  [0.32, -0.5, 0.0, -0.1, 0.3],
+  [0.7, -0.3, 0.0, -0.9, 0.0],
 ];
+const CHARGE_POSE = [-2.9, 0, -0.6, -0.3];
+// Sköldarmen: [tid, överarm framåt, överarm i sidled, underarm böj]
+const REST_L = [-0.2, 0, -1.4];
 const PARRY_KEYS = [
-  [0.0, -0.9, 0.0],
-  [0.07, -1.75, -0.4],
-  [0.3, -1.75, -0.4],
-  [0.45, -0.9, 0.0],
+  [0.0, -0.2, 0.0, -1.4],
+  [0.07, -0.9, -0.3, -1.2],
+  [0.3, -0.9, -0.3, -1.2],
+  [0.45, -0.2, 0.0, -1.4],
 ];
 
 function sampleKeys(keys, t) {
-  if (t <= keys[0][0]) return keys[0];
+  if (t <= keys[0][0]) return keys[0].slice(1);
   for (let i = 1; i < keys.length; i++) {
     if (t <= keys[i][0]) {
       const a = keys[i - 1];
       const b = keys[i];
       let k = (t - a[0]) / (b[0] - a[0]);
       k = k * k * (3 - 2 * k); // mjuk övergång
-      return a.map((v, j) => v + (b[j] - v) * k);
+      return a.slice(1).map((v, j) => v + (b[j + 1] - v) * k);
     }
   }
-  return keys[keys.length - 1];
+  return keys[keys.length - 1].slice(1);
 }
 
 function lerp(a, b, t) {
@@ -55,74 +71,115 @@ function lerp(a, b, t) {
 export class Knight {
   constructor(colorHex, name = null) {
     this.group = new THREE.Group();
-    this.pose = new THREE.Group();
-    this.group.add(this.pose);
+    this.materials = [];
+    this.seg = {};
+    this.stumps = [];
+    this.legLoss = 0;
 
     this.phase = 0;
     this.amp = 0;
-    this.materials = [];
-    this.geometries = [];
-
-    // Stridstillstånd (bara utseende – servern bestämmer vad som händer)
-    this.attack = null;   // { kind, t }
+    this.attack = null;
     this.charging = false;
     this.chargeAmount = 0;
     this.parryT = -1;
     this.staggerT = -1;
-    this.dead = false;
-    this.fall = 0;
     this.flashT = 0;
 
-    const metal = this.mat(METAL);
-    const metalDark = this.mat(METAL_DARK);
-    const leather = this.mat(LEATHER);
-    const cloth = this.mat(colorHex);
-    const visor = this.mat(VISOR);
-    const white = this.mat(0xf2efe6);
+    const m = {
+      metal: this.mat(METAL, 0.45, 0.35),
+      dark: this.mat(METAL_DARK, 0.5, 0.3),
+      leather: this.mat(LEATHER, 0.85, 0),
+      cloth: this.mat(colorHex, 0.8, 0),
+      visor: this.mat(VISOR, 0.6, 0.2),
+      white: this.mat(0xf2efe6, 0.8, 0),
+      blade: this.mat(0xd3d8de, 0.3, 0.6),
+      blood: this.mat(BLOOD, 0.5, 0),
+    };
+    m.cloth.side = THREE.DoubleSide; // kjolen är öppen nedtill
+    this.m = m;
 
-    // Ben (vrids vid höften)
-    this.legL = this.limb(0.13, 0.85, 0.2, 0.85, metal, leather);
-    this.legR = this.limb(-0.13, 0.85, 0.2, 0.85, metal, leather);
-    this.pose.add(this.legL, this.legR);
+    // ---------- Kroppsdelarna ----------
+    // segment(namn, förälder, ledens position i förälderns koordinater, punkter för fysiken, radie)
 
-    // Överkropp
-    this.upper = new THREE.Group();
-    this.pose.add(this.upper);
+    const pelvis = this.segment("pelvis", this.group, [0, 1.0, 0],
+      [[0, 0, 0], [0.1, -0.08, 0], [-0.1, -0.08, 0]], 0.1);
+    pelvis.add(this.shape(new THREE.SphereGeometry(1, 14, 10), m.dark, [0, -0.04, 0], [0.16, 0.11, 0.12]));
+    pelvis.add(this.shape(new THREE.CylinderGeometry(0.155, 0.2, 0.32, 14, 1, true), m.cloth, [0, -0.15, 0], [1, 1, 0.75])); // vapenrockens kjol
+    pelvis.add(this.shape(new THREE.CylinderGeometry(0.16, 0.16, 0.05, 14), m.leather, [0, 0.0, 0], [1, 1, 0.8]));        // bälte
 
-    this.upper.add(this.box(0.5, 0.6, 0.3, metal, 0, 1.2, 0));        // bröst
-    this.upper.add(this.box(0.55, 0.72, 0.34, cloth, 0, 1.08, 0));    // vapenrock
-    this.upper.add(this.box(0.57, 0.07, 0.36, leather, 0, 0.92, 0));  // bälte
+    const torso = this.segment("torso", pelvis, [0, 0, 0],
+      [[0, 0, 0], [0, 0.44, 0], [0.19, 0.4, 0], [-0.19, 0.4, 0], [0, 0.25, 0.12]], 0.13);
+    torso.add(this.shape(new THREE.CapsuleGeometry(0.15, 0.2, 6, 14), m.cloth, [0, 0.24, 0], [1.25, 1, 0.78]));  // bröst med vapenrock
+    torso.add(this.shape(new THREE.CylinderGeometry(0.09, 0.11, 0.08, 12), m.metal, [0, 0.44, 0]));              // halsskydd
+    torso.add(this.shape(new THREE.BoxGeometry(0.05, 0.22, 0.01), m.white, [0, 0.26, 0.122]));                  // kors på bröstet
+    torso.add(this.shape(new THREE.BoxGeometry(0.16, 0.05, 0.01), m.white, [0, 0.3, 0.12]));
 
-    // Hjälm
-    this.upper.add(this.cylinder(0.18, 0.18, 0.32, 10, metal, 0, 1.66, 0));
-    this.upper.add(this.box(0.24, 0.04, 0.03, visor, 0, 1.7, 0.175)); // ögonspringa
-    this.upper.add(this.box(0.05, 0.1, 0.32, cloth, 0, 1.86, 0));     // hjälmkam i spelarens färg
+    const head = this.segment("head", torso, [0, 0.46, 0],
+      [[0, 0, 0], [0, 0.28, 0], [0, 0.12, 0.12]], 0.12);
+    head.add(this.shape(new THREE.CylinderGeometry(0.115, 0.11, 0.2, 16), m.metal, [0, 0.13, 0]));                     // hjälm
+    head.add(this.shape(new THREE.SphereGeometry(0.115, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), m.metal, [0, 0.23, 0])); // hjälmens topp
+    head.add(this.shape(new THREE.BoxGeometry(0.16, 0.025, 0.02), m.visor, [0, 0.16, 0.108]));                          // ögonspringa
+    head.add(this.shape(new THREE.BoxGeometry(0.012, 0.08, 0.02), m.visor, [0, 0.1, 0.112]));                           // andningsspringa
+    head.add(this.shape(new THREE.BoxGeometry(0.035, 0.07, 0.22), m.cloth, [0, 0.36, -0.01]));                          // hjälmkam
 
-    // Axelskydd
-    this.upper.add(this.box(0.2, 0.12, 0.24, metalDark, 0.34, 1.46, 0));
-    this.upper.add(this.box(0.2, 0.12, 0.24, metalDark, -0.34, 1.46, 0));
+    for (const side of ["L", "R"]) {
+      const s = side === "L" ? 1 : -1;
+      // Arm
+      const upper = this.segment("upperArm" + side, torso, [0.2 * s, 0.41, 0],
+        [[0, 0, 0], [0, -0.29, 0], [0.05 * s, -0.14, 0]], 0.055);
+      upper.add(this.limbShape(0.056, 0.29, m.metal));
+      upper.add(this.shape(new THREE.SphereGeometry(0.085, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), m.dark, [0.01 * s, -0.01, 0], [1.05, 0.85, 1.15])); // axelskydd
 
-    // Höger arm med svärd
-    this.armR = this.limb(-0.34, 1.42, 0.15, 0.6, metal, metalDark);
+      const fore = this.segment("forearm" + side, upper, [0, -0.29, 0],
+        [[0, 0, 0], [0, -0.26, 0], [0.05 * s, -0.13, 0]], 0.05);
+      fore.add(this.limbShape(0.05, 0.26, m.metal));
+      fore.add(this.shape(new THREE.SphereGeometry(0.058, 12, 8), m.dark, [0, 0, 0.01]));                     // armbågsskydd
+      fore.add(this.shape(new THREE.CylinderGeometry(0.06, 0.052, 0.08, 12), m.dark, [0, -0.21, 0]));         // handskens krage
+
+      const hand = this.segment("hand" + side, fore, [0, -0.26, 0],
+        [[0, 0, 0], [0, -0.1, 0], [0.04 * s, -0.05, 0]], 0.045);
+      hand.add(this.shape(new THREE.SphereGeometry(1, 12, 8), m.dark, [0, -0.05, 0.005], [0.045, 0.058, 0.05]));
+
+      // Ben
+      const thigh = this.segment("thigh" + side, pelvis, [0.1 * s, -0.08, 0],
+        [[0, 0, 0], [0, -0.42, 0], [0.06 * s, -0.21, 0]], 0.075);
+      thigh.add(this.limbShape(0.076, 0.42, m.metal));
+
+      const shin = this.segment("shin" + side, thigh, [0, -0.42, 0],
+        [[0, 0, 0], [0, -0.4, 0], [0.05 * s, -0.2, 0]], 0.06);
+      shin.add(this.limbShape(0.06, 0.4, m.metal));
+      shin.add(this.shape(new THREE.SphereGeometry(0.07, 12, 8), m.dark, [0, 0, 0.025], [1, 1, 1.15]));       // knäskydd
+
+      const foot = this.segment("foot" + side, shin, [0, -0.4, 0],
+        [[0, 0, 0], [0, -0.06, 0.18], [0.05 * s, -0.06, 0]], 0.05);
+      const sabaton = this.shape(new THREE.CapsuleGeometry(0.045, 0.15, 4, 10), m.dark, [0, -0.055, 0.05], [1.1, 1, 1]);
+      sabaton.rotation.x = Math.PI / 2;
+      foot.add(sabaton);
+    }
+
+    // Svärd i höger hand (klingan längs +Y, vinklad så den pekar framåt-uppåt i vila)
     const sword = new THREE.Group();
-    sword.add(this.box(0.06, 0.9, 0.02, this.mat(0xc9ced4), 0, 0.55, 0)); // klinga
-    sword.add(this.box(0.26, 0.04, 0.05, metalDark, 0, 0.09, 0));        // parerstång
-    sword.add(this.box(0.04, 0.16, 0.04, leather, 0, 0, 0));             // fäste
-    sword.position.set(0, -0.6, 0);
-    sword.rotation.x = 1.3;
-    this.armR.add(sword);
-    this.upper.add(this.armR);
+    sword.add(this.shape(new THREE.BoxGeometry(0.05, 0.85, 0.012), m.blade, [0, 0.52, 0]));   // klinga
+    sword.add(this.shape(new THREE.ConeGeometry(0.025, 0.08, 4), m.blade, [0, 0.985, 0], [1, 1, 0.25])); // spets
+    sword.add(this.shape(new THREE.BoxGeometry(0.24, 0.035, 0.045), m.dark, [0, 0.085, 0]));  // parerstång
+    sword.add(this.shape(new THREE.CylinderGeometry(0.018, 0.018, 0.14, 8), m.leather, [0, 0, 0])); // fäste
+    sword.add(this.shape(new THREE.SphereGeometry(0.03, 8, 6), m.dark, [0, -0.08, 0]));       // knapp
+    sword.position.set(0, -0.06, 0.01);
+    sword.rotation.x = 2.0;
+    this.seg.handR.add(sword);
 
-    // Vänster arm med sköld
-    this.armL = this.limb(0.34, 1.42, 0.15, 0.6, metal, metalDark);
+    // Sköld i vänster hand (vänd framåt i vila)
     const shield = new THREE.Group();
-    shield.add(this.cylinder(0.34, 0.34, 0.05, 12, cloth, 0, 0, 0, Math.PI / 2));
-    shield.add(this.box(0.08, 0.42, 0.02, white, 0, 0, 0.035));
-    shield.add(this.box(0.32, 0.08, 0.02, white, 0, 0.04, 0.035));
-    shield.position.set(0.04, -0.5, 0.12);
-    shield.rotation.x = 0.9;
-    this.armL.add(shield);
-    this.upper.add(this.armL);
+    const shieldGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.04, 20);
+    shieldGeo.rotateX(Math.PI / 2);
+    shield.add(this.shape(shieldGeo, m.cloth));
+    shield.add(this.shape(new THREE.TorusGeometry(0.3, 0.018, 6, 24), m.dark));               // kant
+    shield.add(this.shape(new THREE.BoxGeometry(0.07, 0.4, 0.01), m.white, [0, 0, 0.025]));   // kors
+    shield.add(this.shape(new THREE.BoxGeometry(0.3, 0.07, 0.01), m.white, [0, 0.04, 0.025]));
+    shield.add(this.shape(new THREE.SphereGeometry(0.05, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), m.dark, [0, 0, 0.02], [1, 1, 1], [Math.PI / 2, 0, 0])); // buckla
+    shield.position.set(0.03, -0.08, 0);
+    shield.rotation.x = 1.6;
+    this.seg.handL.add(shield);
 
     this.group.traverse((obj) => {
       if (obj.isMesh) {
@@ -136,38 +193,36 @@ export class Knight {
     if (name) this.createLabel();
   }
 
-  mat(color) {
-    const m = new THREE.MeshStandardMaterial({ color, roughness: 0.75, metalness: 0.1, flatShading: true });
+  // ---------- Byggverktyg ----------
+
+  mat(color, roughness, metalness) {
+    const m = new THREE.MeshStandardMaterial({ color, roughness, metalness });
     m.emissive = new THREE.Color(0xaa1010);
     m.emissiveIntensity = 0;
     this.materials.push(m);
     return m;
   }
 
-  box(w, h, d, material, x, y, z) {
-    const g = new THREE.BoxGeometry(w, h, d);
-    this.geometries.push(g);
-    const m = new THREE.Mesh(g, material);
-    m.position.set(x, y, z);
-    return m;
+  shape(geometry, material, pos = [0, 0, 0], scale = [1, 1, 1], rot = [0, 0, 0]) {
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(pos[0], pos[1], pos[2]);
+    mesh.scale.set(scale[0], scale[1], scale[2]);
+    mesh.rotation.set(rot[0], rot[1], rot[2]);
+    return mesh;
   }
 
-  cylinder(rTop, rBottom, h, segments, material, x, y, z, rotX = 0) {
-    const g = new THREE.CylinderGeometry(rTop, rBottom, h, segments);
-    this.geometries.push(g);
-    const m = new THREE.Mesh(g, material);
-    m.position.set(x, y, z);
-    m.rotation.x = rotX;
-    return m;
+  // En rundad arm- eller bendel som hänger nedåt från leden
+  limbShape(radius, length, material) {
+    return this.shape(new THREE.CapsuleGeometry(radius, Math.max(0.01, length - radius), 4, 12), material, [0, -length / 2, 0]);
   }
 
-  // En arm eller ett ben: ledpunkt överst, hänger nedåt
-  limb(x, y, thickness, length, material, endMaterial) {
-    const pivot = new THREE.Group();
-    pivot.position.set(x, y, 0);
-    pivot.add(this.box(thickness, length, thickness, material, 0, -length / 2, 0));
-    pivot.add(this.box(thickness + 0.03, 0.12, thickness + 0.06, endMaterial, 0, -length + 0.06, 0.02));
-    return pivot;
+  segment(name, parent, pivot, points, radius) {
+    const g = new THREE.Group();
+    g.position.set(pivot[0], pivot[1], pivot[2]);
+    g.userData = { segment: name, points, radius, detached: false };
+    parent.add(g);
+    this.seg[name] = g;
+    return g;
   }
 
   // ---------- Namnskylt med livmätare ----------
@@ -180,10 +235,10 @@ export class Knight {
     this.labelTexture.colorSpace = THREE.SRGBColorSpace;
     const material = new THREE.SpriteMaterial({ map: this.labelTexture, depthWrite: false });
     this.materials.push(material);
-    const sprite = new THREE.Sprite(material);
-    sprite.scale.set(2.4, 0.6, 1);
-    sprite.position.y = 2.35;
-    this.group.add(sprite);
+    this.label = new THREE.Sprite(material);
+    this.label.scale.set(2.4, 0.6, 1);
+    this.label.position.y = 2.3;
+    this.group.add(this.label);
     this.setHp(COMBAT.maxHp);
   }
 
@@ -200,7 +255,6 @@ export class Knight {
     ctx.fillStyle = "#" + new THREE.Color(this.colorHex).lerp(new THREE.Color(0xffffff), 0.55).getHexString();
     ctx.fillText(this.name, 256, 42);
 
-    // Livmätare
     const w = 260;
     const x = 256 - w / 2;
     ctx.fillStyle = "rgba(20, 14, 8, 0.8)";
@@ -237,100 +291,170 @@ export class Knight {
     this.flashT = 0.2;
   }
 
-  setDead(dead) {
-    this.dead = dead;
-    if (dead) {
-      this.attack = null;
-      this.charging = false;
-    } else {
-      this.fall = 0;
-    }
+  chestPosition(target) {
+    this.group.updateMatrixWorld(true);
+    return target.set(0, 0.25, 0).applyMatrix4(this.seg.torso.matrixWorld);
   }
 
-  // Ungefärlig position för svärdsspetsen/kroppen, för effekter
-  chestPosition(target) {
-    return target.set(0, 1.2, 0).applyMatrix4(this.group.matrixWorld);
+  // ---------- Hugga av och ragdoll ----------
+
+  // Alla anslutna kroppsdelar från och med "root" och utåt
+  subtree(root) {
+    const list = [];
+    root.traverse((obj) => {
+      if (obj.userData && obj.userData.segment && !obj.userData.detached) list.push(obj);
+    });
+    return list;
+  }
+
+  makeRagdoll(segments, velocity, scene, bounds, spinAmount) {
+    this.group.updateMatrixWorld(true);
+    const tmp = new THREE.Vector3();
+    const bodies = segments.map((s) => {
+      const world = s.userData.points.map((p) => tmp.set(p[0], p[1], p[2]).applyMatrix4(s.matrixWorld).toArray());
+      const jitter = () => (Math.random() - 0.5) * 1.5;
+      return {
+        object: s,
+        local: s.userData.points,
+        world,
+        radius: s.userData.radius,
+        velocity: [velocity[0] + jitter(), velocity[1] + jitter() * 0.5, velocity[2] + jitter()],
+        spin: [jitter() * spinAmount, jitter() * spinAmount, jitter() * spinAmount],
+      };
+    });
+    for (const s of segments) {
+      s.userData.detached = true;
+      scene.attach(s); // behåll positionen i världen men lossa från kroppen
+      // Lösa delar får egna material, så de inte blinkar rött när riddaren träffas
+      s.children.forEach((child) => {
+        child.traverse((obj) => {
+          if (obj.isMesh && !obj.userData?.segment) obj.material = this.calmMaterial(obj.material);
+        });
+      });
+    }
+    return new Ragdoll(bodies, bounds);
+  }
+
+  calmMaterial(material) {
+    if (!this.calm) this.calm = new Map();
+    if ([...this.calm.values()].includes(material)) return material; // redan lugn
+    if (!this.calm.has(material)) {
+      const copy = material.clone();
+      copy.emissiveIntensity = 0;
+      this.calm.set(material, copy);
+    }
+    return this.calm.get(material);
+  }
+
+  // Hugg av en led. Returnerar en ragdoll för den avhuggna delen (eller null).
+  sever(joint, velocity, scene, bounds) {
+    const segName = JOINT_SEGMENT[joint];
+    const seg = segName && this.seg[segName];
+    if (!seg || seg.userData.detached) return null;
+
+    // Blodig stump på kroppen och på den lösa delen
+    const parent = seg.parent;
+    const stump = this.shape(new THREE.SphereGeometry(0.055, 10, 8), this.m.blood, seg.position.toArray());
+    parent.add(stump);
+    seg.add(this.shape(new THREE.SphereGeometry(0.05, 10, 8), this.m.blood));
+    this.stumps.push({ object: parent, local: seg.position.clone(), time: 0 });
+    if (LEG_JOINTS.includes(joint)) this.legLoss += 1;
+
+    return this.makeRagdoll(this.subtree(seg), velocity, scene, bounds, 6);
+  }
+
+  // Hela riddaren blir en ragdoll (vid död). Riddaren själv ska inte användas efter detta.
+  die(velocity, scene, bounds) {
+    if (this.label) this.label.removeFromParent();
+    const ragdoll = this.makeRagdoll(this.subtree(this.seg.pelvis), velocity, scene, bounds, 2);
+    this.group.removeFromParent();
+    return ragdoll;
+  }
+
+  // Var blöder stumparna? Anropar callback(position) för varje färsk stump.
+  forEachBleedingStump(dt, callback) {
+    const tmp = new THREE.Vector3();
+    for (const s of this.stumps) {
+      s.time += dt;
+      if (s.time < 3) callback(tmp.copy(s.local).applyMatrix4(s.object.matrixWorld), s.time);
+    }
   }
 
   // ---------- Animation varje bildruta ----------
   // anim: 0 = står still, 1 = går, 2 = springer
 
+  rot(name, x, y = null, z = null) {
+    const s = this.seg[name];
+    if (!s || s.userData.detached) return;
+    s.rotation.x = x;
+    if (y !== null) s.rotation.y = y;
+    if (z !== null) s.rotation.z = z;
+  }
+
   animate(dt, anim) {
-    // Gång
-    const targetAmp = this.dead ? 0 : anim === 2 ? 0.85 : anim === 1 ? 0.55 : 0;
+    // Gång: lår svänger, knän böjs bakåt
+    const targetAmp = anim === 2 ? 0.85 : anim === 1 ? 0.55 : 0;
     this.amp += (targetAmp - this.amp) * Math.min(1, dt * 10);
-    if (anim > 0 && !this.dead) this.phase += dt * (anim === 2 ? 11 : 8);
+    if (anim > 0) this.phase += dt * (anim === 2 ? 11 : 8);
     const swing = Math.sin(this.phase) * this.amp;
 
-    this.legL.rotation.x = swing;
-    this.legR.rotation.x = -swing;
-    this.upper.position.y = Math.abs(Math.sin(this.phase)) * 0.06 * this.amp;
+    this.rot("thighL", swing * 0.8 - 0.05);
+    this.rot("thighR", -swing * 0.8 - 0.05);
+    const kneeL = Math.max(0, swing) * 1.2 + 0.1;
+    const kneeR = Math.max(0, -swing) * 1.2 + 0.1;
+    this.rot("shinL", kneeL);
+    this.rot("shinR", kneeR);
+    this.rot("footL", -kneeL * 0.4 - 0.05);
+    this.rot("footR", -kneeR * 0.4 - 0.05);
+    if (!this.seg.pelvis.userData.detached) {
+      this.seg.pelvis.position.y = 1.0 + Math.abs(Math.sin(this.phase)) * 0.04 * this.amp - 0.02 * Math.min(1, this.amp * 2);
+    }
 
     // Svärdsarmen: vila, laddning eller slag
-    let armX = -0.5 + swing * 0.4;
-    let armZ = 0;
-    let twist = 0;
-
+    let pose = [REST_R[0] + swing * 0.3, REST_R[1], REST_R[2], REST_R[3]];
     this.chargeAmount += ((this.charging ? 1 : 0) - this.chargeAmount) * Math.min(1, dt * 8);
-    armX = lerp(armX, -2.9, this.chargeAmount);
-    twist = lerp(twist, -0.3, this.chargeAmount);
-
+    pose = pose.map((v, i) => lerp(v, CHARGE_POSE[i], this.chargeAmount));
     if (this.attack) {
       this.attack.t += dt;
       const keys = this.attack.kind === "h" ? HEAVY_KEYS : QUICK_KEYS;
-      if (this.attack.t >= keys[keys.length - 1][0]) {
-        this.attack = null;
-      } else {
-        [, armX, armZ, twist] = sampleKeys(keys, this.attack.t);
-      }
+      if (this.attack.t >= keys[keys.length - 1][0]) this.attack = null;
+      else pose = sampleKeys(keys, this.attack.t);
     }
-    this.armR.rotation.x = armX;
-    this.armR.rotation.z = armZ;
-    this.upper.rotation.y = twist;
+    this.rot("upperArmR", pose[0], 0, pose[1]);
+    this.rot("forearmR", pose[2]);
 
     // Sköldarmen: vila eller parering
-    let shieldX = -0.9 - swing * 0.15;
-    let shieldZ = 0;
+    let shield = [REST_L[0] - swing * 0.15, REST_L[1], REST_L[2]];
     if (this.parryT >= 0) {
       this.parryT += dt;
-      if (this.parryT >= PARRY_KEYS[PARRY_KEYS.length - 1][0]) {
-        this.parryT = -1;
-      } else {
-        [, shieldX, shieldZ] = sampleKeys(PARRY_KEYS, this.parryT);
-      }
+      if (this.parryT >= PARRY_KEYS[PARRY_KEYS.length - 1][0]) this.parryT = -1;
+      else shield = sampleKeys(PARRY_KEYS, this.parryT);
     }
-    this.armL.rotation.x = shieldX;
-    this.armL.rotation.z = shieldZ;
+    this.rot("upperArmL", shield[0], 0, shield[1]);
+    this.rot("forearmL", shield[2]);
 
-    // Vacklar bakåt efter att ha blivit parerad
+    // Bålen: vridning vid slag, lutar bakåt när man vacklar
     let lean = 0;
     if (this.staggerT >= 0) {
       this.staggerT += dt;
       const d = COMBAT.parry.stagger;
-      if (this.staggerT >= d) {
-        this.staggerT = -1;
-      } else {
-        lean = -0.35 * Math.sin((this.staggerT / d) * Math.PI);
-      }
+      if (this.staggerT >= d) this.staggerT = -1;
+      else lean = -0.35 * Math.sin((this.staggerT / d) * Math.PI);
     }
-    this.upper.rotation.x = lean;
-
-    // Faller omkull när man dör (riktig ragdoll kommer i v0.4)
-    const fallTarget = this.dead ? 1 : 0;
-    this.fall += (fallTarget - this.fall) * Math.min(1, dt * 6);
-    this.pose.rotation.x = -Math.PI / 2 * this.fall;
-    this.pose.position.y = 0.15 * this.fall;
+    this.rot("torso", lean, pose[3], 0);
 
     // Röd blinkning vid träff
     if (this.flashT > 0) this.flashT = Math.max(0, this.flashT - dt);
     const glow = this.flashT / 0.2;
-    for (const m of this.materials) {
-      if (m.emissive) m.emissiveIntensity = glow;
+    for (const mat of this.materials) {
+      if (mat.emissive) mat.emissiveIntensity = glow;
     }
   }
 
   dispose() {
-    this.geometries.forEach((g) => g.dispose());
+    this.group.traverse((obj) => {
+      if (obj.isMesh && obj.geometry) obj.geometry.dispose();
+    });
     this.materials.forEach((m) => m.dispose());
     if (this.labelTexture) this.labelTexture.dispose();
     this.group.removeFromParent();

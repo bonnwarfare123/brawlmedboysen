@@ -6,6 +6,7 @@ import { COLORS, ARENA_RX, ARENA_RZ, ROOM_CODE_RE, VERSION, COMBAT } from "./sha
 import { buildArena } from "./arena.js";
 import { Knight } from "./knight.js";
 import { Effects } from "./effects.js";
+import { Debris } from "./ragdoll.js";
 import { Net } from "./net.js";
 
 // ---------------------------------------------------------------------------
@@ -92,6 +93,8 @@ const arena = buildArena();
 scene.add(arena.group);
 
 const effects = new Effects(scene);
+const debris = new Debris(30, 45); // döda kroppar och avhuggna delar
+const RAGDOLL_BOUNDS = { rx: ARENA_RX + 0.55, rz: ARENA_RZ + 0.55 }; // staketet
 
 // ---------------------------------------------------------------------------
 // Spelets tillstånd
@@ -201,6 +204,7 @@ const net = new Net({
       color: you.color,
       kills: you.kills,
       knight: new Knight(colorHex(you.color)),
+      corpse: null,
       pos: new THREE.Vector3(you.p[0], 0, you.p[2]),
       vy: 0,
       onGround: true,
@@ -298,21 +302,43 @@ const net = new Net({
     if (!victim) return;
 
     victim.hp = msg.hp;
-    victim.knight.flash();
-    effects.blood(victim.knight.chestPosition(tmpVec), msg.k === "h" ? 26 : 14);
+    const knight = victim.knight;
+    knight.flash();
+    const chest = knight.chestPosition(new THREE.Vector3());
+    effects.blood(chest, msg.k === "h" ? 26 : 14);
+
+    // Åt vilket håll flyger delarna? Bort från den som slog.
+    const dir = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5);
+    if (attacker) dir.copy(positionOf(victim)).sub(positionOf(attacker));
+    dir.y = 0;
+    dir.normalize();
+
+    if (msg.sev) {
+      const speed = msg.k === "h" ? 5 : 3;
+      const up = msg.sev === "neck" || msg.sev === "waist" ? 4.5 : 3.5;
+      debris.add(knight.sever(msg.sev, [dir.x * speed, up, dir.z * speed], scene, RAGDOLL_BOUNDS));
+      effects.blood(chest, 20);
+    }
 
     if (victim === me) {
       shake = msg.k === "h" ? 0.35 : 0.2;
       flashVignette();
       renderHp();
     } else {
-      victim.knight.setHp(msg.hp);
+      knight.setHp(msg.hp);
     }
 
     if (msg.dead) {
       victim.dead = true;
-      victim.knight.setDead(true);
-      effects.blood(victim.knight.chestPosition(tmpVec), 30);
+      effects.blood(chest, 30);
+      // Kroppen blir en ragdoll; en ny (osynlig) riddare väntar på återuppståndelsen
+      const force = msg.k === "h" ? 4 : 2.5;
+      const corpse = knight.die([dir.x * force, 2, dir.z * force], scene, RAGDOLL_BOUNDS);
+      debris.add(corpse);
+      victim.corpse = corpse;
+      victim.knight = createKnight(victim);
+      victim.knight.group.visible = false;
+
       addKill(attacker ? attacker.name : "?", victim.name);
       if (victim === me) {
         me.respawnAt = seconds() + COMBAT.respawnSeconds;
@@ -330,7 +356,8 @@ const net = new Net({
     if (!player) return;
     player.hp = msg.hp;
     player.dead = false;
-    player.knight.setDead(false);
+    player.corpse = null;
+    player.knight.group.visible = true;
     if (player === me) {
       me.pos.set(msg.p[0], 0, msg.p[2]);
       me.vy = 0;
@@ -369,8 +396,12 @@ function addOther(player) {
   knight.group.position.set(player.p[0], player.p[1], player.p[2]);
   knight.group.rotation.y = player.r;
   knight.setHp(player.hp);
-  if (player.dead) knight.setDead(true);
   scene.add(knight.group);
+  if (player.dead) knight.group.visible = false;
+  // Kroppsdelar som redan är avhuggna ramlar till marken
+  for (const joint of player.severed || []) {
+    debris.add(knight.sever(joint, [0, 0, 0], scene, RAGDOLL_BOUNDS));
+  }
   others.set(player.id, {
     id: player.id,
     name: player.name,
@@ -382,7 +413,21 @@ function addOther(player) {
     anim: player.a || 0,
     hp: player.hp,
     dead: player.dead,
+    corpse: null,
   });
+}
+
+// Ny riddare för en spelare (används vid död: den gamla kroppen blir ragdoll)
+function createKnight(player) {
+  const knight = new Knight(colorHex(player.color), player === me ? null : player.name);
+  knight.group.position.copy(positionOf(player));
+  knight.group.rotation.y = player === me ? me.yaw : player.targetYaw;
+  scene.add(knight.group);
+  return knight;
+}
+
+function positionOf(player) {
+  return player === me ? me.pos : player.knight.group.position;
 }
 
 // ---------------------------------------------------------------------------
@@ -645,6 +690,7 @@ function updateMe(dt) {
   const running = moving && !charging && (keys.has("ShiftLeft") || keys.has("ShiftRight"));
   if (moving) {
     let speed = running ? CONFIG.runSpeed : CONFIG.walkSpeed;
+    speed *= COMBAT.legLossSpeed[Math.min(2, me.knight.legLoss)]; // avhuggna ben gör en långsam
     if (t < me.staggerUntil) speed *= CONFIG.staggerMoveFactor;
     else if (charging) speed *= CONFIG.chargeMoveFactor;
     else if (t < me.attackUntil) speed *= CONFIG.attackMoveFactor;
@@ -709,7 +755,7 @@ function updateMe(dt) {
 
   me.knight.group.position.copy(me.pos);
   me.knight.group.rotation.y = me.yaw;
-  me.knight.animate(dt, me.anim);
+  if (!me.dead) me.knight.animate(dt, me.anim);
 }
 
 function updateOthers(dt) {
@@ -721,8 +767,9 @@ function updateOthers(dt) {
     } else {
       group.position.lerp(other.target, t);
     }
-    if (!other.dead) group.rotation.y = angleLerp(group.rotation.y, other.targetYaw, t);
-    other.knight.animate(dt, other.dead ? 0 : other.anim);
+    if (other.dead) continue; // kroppen är en ragdoll, den nya riddaren är osynlig
+    group.rotation.y = angleLerp(group.rotation.y, other.targetYaw, t);
+    other.knight.animate(dt, other.anim);
   }
 }
 
@@ -744,8 +791,14 @@ function updateCamera(dt) {
   forward.set(Math.sin(camYaw), 0, Math.cos(camYaw));
   right.set(-Math.cos(camYaw), 0, Math.sin(camYaw));
 
-  camTarget.copy(me.pos).addScaledVector(right, CONFIG.cameraShoulder);
-  camTarget.y = me.pos.y * 0.6 + CONFIG.cameraHeight;
+  if (me.dead && me.corpse) {
+    // Död: kameran följer den egna kroppen
+    const c = me.corpse.center();
+    camTarget.set(c[0], c[1] + 0.6, c[2]);
+  } else {
+    camTarget.copy(me.pos).addScaledVector(right, CONFIG.cameraShoulder);
+    camTarget.y = me.pos.y * 0.6 + CONFIG.cameraHeight;
+  }
 
   // Död: kameran drar sig bakåt och tittar ner på kroppen
   const d = CONFIG.cameraDistance + (me.dead ? 2.5 : 0);
@@ -802,6 +855,16 @@ function updateNetwork(dt) {
   if (changed || heartbeatTimer >= CONFIG.heartbeatSeconds) sendStateNow();
 }
 
+// Stumparna sprutar blod en stund efter att en kroppsdel huggits av
+function updateBleeding(dt) {
+  const knights = [me, ...others.values()].filter((p) => p && !p.dead).map((p) => p.knight);
+  for (const knight of knights) {
+    knight.forEachBleedingStump(dt, (pos, age) => {
+      if (Math.random() < dt * 14 * (1 - age / 3)) effects.blood(pos, 2);
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Spel-loopen: körs varje bildruta
 // ---------------------------------------------------------------------------
@@ -829,6 +892,8 @@ function frame() {
     renderCooldowns();
   }
   updateOthers(dt);
+  updateBleeding(dt);
+  debris.update(dt);
   effects.update(dt);
   updateCamera(dt);
   renderer.render(scene, camera);
