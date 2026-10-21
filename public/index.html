@@ -49,8 +49,30 @@
     <div id="click-hint" class="center-hint">Klicka i spelet för att styra kameran</div>
 
     <div class="panel bottom-left help">
-      <b>WASD</b> gå · <b>Shift</b> spring · <b>Mus</b> titta · <b>Esc</b> släpp musen · <b>G</b> grafik
+      <b>Vänster mus</b> slag (håll = tungt) · <b>Höger mus</b> parera<br>
+      <b>WASD</b> gå · <b>Shift</b> spring · <b>Mellanslag</b> hoppa · <b>Esc</b> släpp musen · <b>G</b> grafik
     </div>
+
+    <!-- Liv och väntetider -->
+    <div id="combat-hud">
+      <div id="hp-bar"><div id="hp-fill"></div><span id="hp-text">100</span></div>
+      <div class="cooldowns">
+        <div class="cd" id="cd-q"><div class="cd-fill"></div><span>Snabbt</span></div>
+        <div class="cd" id="cd-h"><div class="cd-fill"></div><span>Tungt</span></div>
+        <div class="cd" id="cd-p"><div class="cd-fill"></div><span>Parera</span></div>
+      </div>
+    </div>
+
+    <div id="killfeed"></div>
+    <div id="callout"></div>
+
+    <div id="death" hidden>
+      <div class="death-title">Nedhuggen!</div>
+      <div>av <b id="killer"></b></div>
+      <div id="respawn-timer"></div>
+    </div>
+
+    <div id="damage-vignette"></div>
 
     <div class="panel bottom-right" id="perf">FPS: – · Grafik: <span id="quality-label">Hög</span></div>
 

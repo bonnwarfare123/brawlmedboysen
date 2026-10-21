@@ -1,13 +1,15 @@
-# Brawlmedboysen – v0.1.1
+# Brawlmedboysen – v0.3
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
-**v0.1 innehåller:** arena, enkla riddare, tredjepersonskamera, rum med inbjudningslänk och multiplayer i realtid. Ingen strid ännu – det kommer i v0.3.
+**v0.3 innehåller:** arena, enkla riddare, rum med inbjudningslänk, multiplayer, snabbt och tungt slag, parering, hopp, liv, död, återuppståndelse, blod och dråpräkning. Servern avgör alla träffar.
 
 ## Styrning
 
 - **Klicka** i spelet för att styra kameran med musen
-- **WASD** gå, **Shift** spring, **Esc** släpp musen
+- **Vänster mus:** klicka = snabbt slag, håll in och släpp = tungt slag
+- **Höger mus:** parera (tryck precis innan motståndarens slag träffar)
+- **WASD** gå, **Shift** spring, **Mellanslag** hoppa, **Esc** släpp musen, **G** grafikläge
 
 ## Mappar och filer
 
@@ -18,8 +20,9 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 | `public/js/arena.js` | Bygger arenan av enkla former |
 | `public/js/knight.js` | Bygger riddaren och gånganimationen |
 | `public/js/net.js` | Pratar med servern |
-| `public/js/config.js` | **Inställningar** – fart, kamera m.m. Ändra här! |
-| `public/js/shared.js` | Regler som både spel och server använder |
+| `public/js/effects.js` | Blodstänk och gnistor |
+| `public/js/config.js` | **Inställningar** – fart, kamera, hopp m.m. Ändra här! |
+| `public/js/shared.js` | **Stridsregler** (skada, räckvidd, väntetider) som både spel och server använder |
 | `server/index.js` | Servern (Cloudflare Worker + Durable Object) |
 | `wrangler.jsonc` | Talar om för Cloudflare hur allt ska publiceras |
 

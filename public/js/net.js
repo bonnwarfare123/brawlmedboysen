@@ -1,9 +1,12 @@
 // NÄTVERK – pratar med spelrummet på servern via en WebSocket
 // (en öppen "telefonlinje" mellan webbläsaren och servern).
+//
+// Varje meddelande från servern har en typ (t). Spelet registrerar en funktion
+// per typ, t.ex. handlers.hit = (msg) => {...}.
 
 export class Net {
   constructor(handlers) {
-    this.handlers = handlers; // { onWelcome, onJoin, onLeave, onState, onFull, onClose }
+    this.handlers = handlers;
     this.ws = null;
     this.joined = false;
   }
@@ -23,28 +26,13 @@ export class Net {
       } catch {
         return;
       }
-      switch (msg.t) {
-        case "welcome":
-          this.joined = true;
-          this.handlers.onWelcome(msg);
-          break;
-        case "join":
-          this.handlers.onJoin(msg.player);
-          break;
-        case "leave":
-          this.handlers.onLeave(msg.id);
-          break;
-        case "s":
-          this.handlers.onState(msg);
-          break;
-        case "full":
-          this.handlers.onFull();
-          break;
-      }
+      if (msg.t === "welcome") this.joined = true;
+      const handler = this.handlers[msg.t];
+      if (handler) handler(msg);
     });
 
     this.ws.addEventListener("close", () => {
-      this.handlers.onClose(this.joined);
+      if (this.handlers.close) this.handlers.close(this.joined);
       this.joined = false;
     });
   }

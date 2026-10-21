@@ -1,10 +1,11 @@
-// HUVUDFILEN – startskärm, 3D-scen, styrning, kamera och spel-loop.
+// HUVUDFILEN – startskärm, 3D-scen, styrning, strid, kamera och spel-loop.
 
 import * as THREE from "three";
 import { CONFIG } from "./config.js";
-import { COLORS, ARENA_RX, ARENA_RZ, ROOM_CODE_RE, VERSION } from "./shared.js";
+import { COLORS, ARENA_RX, ARENA_RZ, ROOM_CODE_RE, VERSION, COMBAT } from "./shared.js";
 import { buildArena } from "./arena.js";
 import { Knight } from "./knight.js";
+import { Effects } from "./effects.js";
 import { Net } from "./net.js";
 
 // ---------------------------------------------------------------------------
@@ -51,6 +52,10 @@ function cssColor(index) {
   return "#" + colorHex(index).toString(16).padStart(6, "0");
 }
 
+function seconds() {
+  return performance.now() / 1000;
+}
+
 // ---------------------------------------------------------------------------
 // 3D-scenen
 // ---------------------------------------------------------------------------
@@ -86,6 +91,29 @@ scene.add(sun);
 const arena = buildArena();
 scene.add(arena.group);
 
+const effects = new Effects(scene);
+
+// ---------------------------------------------------------------------------
+// Spelets tillstånd
+// ---------------------------------------------------------------------------
+
+// me = min egen riddare
+// { id, name, color, kills, knight, pos, vy, onGround, yaw, anim, hp, dead,
+//   nextQuick, nextHeavy, nextParry, staggerUntil, attackUntil, respawnAt }
+let me = null;
+const others = new Map(); // id -> { id, name, color, kills, knight, target, targetYaw, anim, hp, dead }
+let roomCode = null;
+let wasFull = false;
+
+let camYaw = 0;
+let camPitch = 0.25;
+let shake = 0;
+
+function playerById(id) {
+  if (me && me.id === id) return me;
+  return others.get(id) || null;
+}
+
 // ---------------------------------------------------------------------------
 // Grafikläge: Hög (skuggor, skarp bild) eller Låg (för svagare datorer). Byt med G.
 // ---------------------------------------------------------------------------
@@ -101,30 +129,11 @@ function applyQuality() {
 }
 applyQuality();
 
-window.addEventListener("keydown", (e) => {
-  if (e.code === "KeyG" && me) {
-    lowQuality = !lowQuality;
-    applyQuality();
-  }
-});
-
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
-
-// ---------------------------------------------------------------------------
-// Spelets tillstånd
-// ---------------------------------------------------------------------------
-
-let me = null;               // { id, name, color, knight, pos, yaw, anim }
-const others = new Map();    // id -> { id, name, color, knight, target, targetYaw, anim }
-let roomCode = null;
-let wasFull = false;
-
-let camYaw = 0;
-let camPitch = 0.25;
 
 // ---------------------------------------------------------------------------
 // Startskärm
@@ -180,20 +189,31 @@ nameInput.addEventListener("keydown", (e) => {
 });
 
 // ---------------------------------------------------------------------------
-// Nätverk
+// Nätverk: vad som händer när servern skickar något
 // ---------------------------------------------------------------------------
 
 const net = new Net({
-  onWelcome(msg) {
+  welcome(msg) {
     const you = msg.you;
     me = {
       id: you.id,
       name: you.name,
       color: you.color,
+      kills: you.kills,
       knight: new Knight(colorHex(you.color)),
       pos: new THREE.Vector3(you.p[0], 0, you.p[2]),
+      vy: 0,
+      onGround: true,
       yaw: you.r,
       anim: 0,
+      hp: you.hp,
+      dead: false,
+      nextQuick: 0,
+      nextHeavy: 0,
+      nextParry: 0,
+      staggerUntil: 0,
+      attackUntil: 0,
+      respawnAt: 0,
     };
     camYaw = you.r;
     scene.add(me.knight.group);
@@ -204,23 +224,24 @@ const net = new Net({
     $("lobby").hidden = true;
     $("hud").hidden = false;
     renderPlayerList();
+    renderHp();
   },
 
-  onJoin(player) {
-    addOther(player);
+  join(msg) {
+    addOther(msg.player);
     renderPlayerList();
   },
 
-  onLeave(id) {
-    const other = others.get(id);
+  leave(msg) {
+    const other = others.get(msg.id);
     if (other) {
       other.knight.dispose();
-      others.delete(id);
+      others.delete(msg.id);
       renderPlayerList();
     }
   },
 
-  onState(msg) {
+  s(msg) {
     const other = others.get(msg.id);
     if (!other) return;
     other.target.set(msg.p[0], msg.p[1], msg.p[2]);
@@ -228,12 +249,110 @@ const net = new Net({
     other.anim = msg.a;
   },
 
-  onFull() {
+  // Någon annan börjar/slutar ladda ett tungt slag
+  ch(msg) {
+    const other = others.get(msg.id);
+    if (other) other.knight.setCharging(msg.on === 1);
+  },
+
+  // Någon annan slår
+  atk(msg) {
+    const other = others.get(msg.id);
+    if (other) other.knight.playAttack(msg.k);
+  },
+
+  // Någon annan parerar
+  par(msg) {
+    const other = others.get(msg.id);
+    if (other) other.knight.playParry();
+  },
+
+  // Servern säger: ett slag pareredes
+  parried(msg) {
+    const defender = playerById(msg.id);
+    const attacker = playerById(msg.by);
+    if (defender) {
+      defender.knight.playParry();
+      effects.sparks(defender.knight.chestPosition(tmpVec).add(new THREE.Vector3(0, 0.2, 0)));
+    }
+    if (attacker) attacker.knight.playStagger();
+    if (attacker === me) {
+      me.staggerUntil = seconds() + COMBAT.parry.stagger;
+      me.attackUntil = 0;
+      stopCharging(false);
+      callout("Parerad!");
+    }
+    if (defender === me) {
+      me.nextParry = 0;
+      callout("Parerat!");
+    }
+  },
+
+  // Servern säger: någon blev träffad
+  hit(msg) {
+    const victim = playerById(msg.id);
+    const attacker = playerById(msg.by);
+    if (attacker) {
+      attacker.kills = msg.kills;
+    }
+    if (!victim) return;
+
+    victim.hp = msg.hp;
+    victim.knight.flash();
+    effects.blood(victim.knight.chestPosition(tmpVec), msg.k === "h" ? 26 : 14);
+
+    if (victim === me) {
+      shake = msg.k === "h" ? 0.35 : 0.2;
+      flashVignette();
+      renderHp();
+    } else {
+      victim.knight.setHp(msg.hp);
+    }
+
+    if (msg.dead) {
+      victim.dead = true;
+      victim.knight.setDead(true);
+      effects.blood(victim.knight.chestPosition(tmpVec), 30);
+      addKill(attacker ? attacker.name : "?", victim.name);
+      if (victim === me) {
+        me.respawnAt = seconds() + COMBAT.respawnSeconds;
+        stopCharging(false);
+        $("killer").textContent = attacker ? attacker.name : "okänd";
+        $("death").hidden = false;
+      }
+      if (attacker === me) callout("Du högg ner " + victim.name + "!");
+    }
+    renderPlayerList();
+  },
+
+  respawn(msg) {
+    const player = playerById(msg.id);
+    if (!player) return;
+    player.hp = msg.hp;
+    player.dead = false;
+    player.knight.setDead(false);
+    if (player === me) {
+      me.pos.set(msg.p[0], 0, msg.p[2]);
+      me.vy = 0;
+      camYaw = msg.r;
+      me.staggerUntil = 0;
+      $("death").hidden = true;
+      renderHp();
+    } else {
+      player.target.set(msg.p[0], msg.p[1], msg.p[2]);
+      player.knight.group.position.copy(player.target);
+      player.targetYaw = msg.r;
+      player.knight.setHp(msg.hp);
+    }
+    renderPlayerList();
+  },
+
+  full() {
     wasFull = true;
     showLobbyError("Rummet är fullt (max 6 riddare).");
   },
 
-  onClose(wasJoined) {
+  close(wasJoined) {
     if (wasJoined) {
       showStatus("Anslutningen till servern bröts.", true);
     } else if (!wasFull) {
@@ -242,27 +361,38 @@ const net = new Net({
   },
 });
 
+const tmpVec = new THREE.Vector3();
+
 function addOther(player) {
   if (others.has(player.id)) return;
   const knight = new Knight(colorHex(player.color), player.name);
   knight.group.position.set(player.p[0], player.p[1], player.p[2]);
   knight.group.rotation.y = player.r;
+  knight.setHp(player.hp);
+  if (player.dead) knight.setDead(true);
   scene.add(knight.group);
   others.set(player.id, {
     id: player.id,
     name: player.name,
     color: player.color,
+    kills: player.kills || 0,
     knight,
     target: new THREE.Vector3(player.p[0], player.p[1], player.p[2]),
     targetYaw: player.r,
     anim: player.a || 0,
+    hp: player.hp,
+    dead: player.dead,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Gränssnitt (HUD)
+// ---------------------------------------------------------------------------
 
 function renderPlayerList() {
   const list = $("player-list");
   list.innerHTML = "";
-  const all = [me, ...others.values()].filter(Boolean);
+  const all = [me, ...others.values()].filter(Boolean).sort((a, b) => b.kills - a.kills);
   all.forEach((p) => {
     const li = document.createElement("li");
     const dot = document.createElement("span");
@@ -270,9 +400,73 @@ function renderPlayerList() {
     dot.style.background = cssColor(p.color);
     const label = document.createElement("span");
     label.textContent = p.name + (p === me ? " (du)" : "");
-    li.append(dot, label);
+    if (p.dead) label.className = "dead-name";
+    const kills = document.createElement("span");
+    kills.className = "kills";
+    kills.textContent = p.kills + " ⚔";
+    li.append(dot, label, kills);
     list.appendChild(li);
   });
+}
+
+function renderHp() {
+  const pct = Math.max(0, (me.hp / COMBAT.maxHp) * 100);
+  $("hp-fill").style.width = pct + "%";
+  $("hp-fill").style.backgroundColor = pct > 50 ? "#4caf50" : pct > 25 ? "#e0a020" : "#d0302a";
+  $("hp-text").textContent = Math.max(0, me.hp);
+}
+
+function setCooldown(id, readyAt, total, extraClass = null) {
+  const el = $(id);
+  const remaining = Math.max(0, readyAt - seconds());
+  const fraction = total > 0 ? 1 - remaining / total : 1;
+  el.querySelector(".cd-fill").style.width = Math.min(100, fraction * 100) + "%";
+  el.classList.toggle("ready", remaining <= 0);
+  el.classList.toggle("charged", extraClass === "charged");
+}
+
+function renderCooldowns() {
+  if (!me) return;
+  setCooldown("cd-q", me.nextQuick, COMBAT.quick.cooldown);
+  if (charging) {
+    const progress = Math.min(1, (seconds() - mouseDownAt) / COMBAT.heavy.charge);
+    const el = $("cd-h");
+    el.querySelector(".cd-fill").style.width = progress * 100 + "%";
+    el.classList.toggle("charged", progress >= 1);
+    el.classList.remove("ready");
+  } else {
+    setCooldown("cd-h", me.nextHeavy, COMBAT.heavy.cooldown);
+  }
+  setCooldown("cd-p", me.nextParry, COMBAT.parry.cooldown);
+
+  if (me.dead) {
+    $("respawn-timer").textContent = `Återuppstår om ${Math.max(0, Math.ceil(me.respawnAt - seconds()))}…`;
+  }
+}
+
+let calloutTimer = null;
+function callout(text) {
+  const el = $("callout");
+  el.textContent = text;
+  el.classList.add("show");
+  clearTimeout(calloutTimer);
+  calloutTimer = setTimeout(() => el.classList.remove("show"), 900);
+}
+
+function flashVignette() {
+  const el = $("damage-vignette");
+  el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 80);
+}
+
+function addKill(killer, victim) {
+  const el = document.createElement("div");
+  el.className = "kill";
+  el.textContent = `${killer} ⚔ ${victim}`;
+  $("killfeed").prepend(el);
+  setTimeout(() => (el.style.opacity = "0"), 5000);
+  setTimeout(() => el.remove(), 5600);
+  while ($("killfeed").children.length > 5) $("killfeed").lastChild.remove();
 }
 
 function showStatus(text, withReload = false) {
@@ -304,24 +498,126 @@ $("copy-link").addEventListener("click", async () => {
 // ---------------------------------------------------------------------------
 
 const keys = new Set();
-window.addEventListener("keydown", (e) => keys.add(e.code));
+window.addEventListener("keydown", (e) => {
+  keys.add(e.code);
+  if (!me) return;
+  if (e.code === "Space") {
+    e.preventDefault();
+    if (!e.repeat) tryJump();
+  }
+  if (e.code === "KeyG" && !e.repeat) {
+    lowQuality = !lowQuality;
+    applyQuality();
+  }
+});
 window.addEventListener("keyup", (e) => keys.delete(e.code));
-window.addEventListener("blur", () => keys.clear());
-
-canvas.addEventListener("click", () => {
-  if (me && document.pointerLockElement !== canvas) canvas.requestPointerLock();
+window.addEventListener("blur", () => {
+  keys.clear();
+  if (charging) stopCharging(true);
 });
 
+const locked = () => document.pointerLockElement === canvas;
+
+canvas.addEventListener("click", () => {
+  if (me && !locked()) canvas.requestPointerLock();
+});
+
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
 document.addEventListener("pointerlockchange", () => {
-  $("click-hint").hidden = document.pointerLockElement === canvas;
+  $("click-hint").hidden = locked();
+  if (!locked() && charging) stopCharging(true);
 });
 
 document.addEventListener("mousemove", (e) => {
-  if (document.pointerLockElement !== canvas) return;
+  if (!locked()) return;
   camYaw -= e.movementX * CONFIG.mouseSensitivity;
   camPitch += e.movementY * CONFIG.mouseSensitivity;
   camPitch = Math.max(CONFIG.pitchMin, Math.min(CONFIG.pitchMax, camPitch));
 });
+
+// --- Strid ---
+let mouseDown = false;
+let mouseDownAt = 0;
+let charging = false;
+
+function canAct() {
+  return me && !me.dead && seconds() >= me.staggerUntil;
+}
+
+document.addEventListener("mousedown", (e) => {
+  if (!locked() || !me) return;
+  if (e.button === 0) {
+    mouseDown = true;
+    mouseDownAt = seconds();
+  } else if (e.button === 2) {
+    tryParry();
+  }
+});
+
+document.addEventListener("mouseup", (e) => {
+  if (e.button !== 0 || !mouseDown) return;
+  mouseDown = false;
+  if (!me) return;
+
+  if (charging) {
+    const held = seconds() - mouseDownAt;
+    if (held >= COMBAT.heavy.charge) {
+      stopCharging(false);
+      tryAttack("h");
+    } else {
+      stopCharging(true); // släppte för tidigt: blir ett snabbt slag i stället
+      tryAttack("q");
+    }
+  } else {
+    tryAttack("q");
+  }
+});
+
+// Anropas varje bildruta: håller man inne tillräckligt länge börjar laddningen
+function updateCharging() {
+  if (!mouseDown || charging || !canAct()) return;
+  if (seconds() - mouseDownAt < CONFIG.holdForHeavy) return;
+  if (seconds() < me.nextHeavy) return;
+  charging = true;
+  me.knight.setCharging(true);
+  net.send({ t: "ch", on: 1 });
+}
+
+function stopCharging(tellServer) {
+  if (!charging) return;
+  charging = false;
+  if (me) me.knight.setCharging(false);
+  if (tellServer) net.send({ t: "ch", on: 0 });
+}
+
+function tryAttack(kind) {
+  if (!canAct()) return;
+  const t = seconds();
+  if (kind === "h" ? t < me.nextHeavy : t < me.nextQuick) return;
+
+  const spec = kind === "h" ? COMBAT.heavy : COMBAT.quick;
+  me.nextQuick = t + COMBAT.quick.cooldown;
+  me.nextHeavy = t + (kind === "h" ? COMBAT.heavy.cooldown : COMBAT.quick.cooldown);
+  me.attackUntil = t + spec.windup + 0.15;
+  me.knight.playAttack(kind); // visa slaget direkt, servern avgör om det träffar
+  sendStateNow(); // se till att servern har exakt var vi står och tittar
+  net.send({ t: "atk", k: kind });
+}
+
+function tryParry() {
+  if (!canAct() || seconds() < me.nextParry) return;
+  me.nextParry = seconds() + COMBAT.parry.cooldown;
+  me.knight.playParry();
+  sendStateNow();
+  net.send({ t: "par" });
+}
+
+function tryJump() {
+  if (!me || me.dead || !me.onGround) return;
+  me.vy = CONFIG.jumpSpeed;
+  me.onGround = false;
+}
 
 // ---------------------------------------------------------------------------
 // Rörelse och kollision
@@ -337,24 +633,43 @@ function updateMe(dt) {
   right.set(-Math.cos(camYaw), 0, Math.sin(camYaw));
 
   move.set(0, 0, 0);
-  if (keys.has("KeyW") || keys.has("ArrowUp")) move.add(forward);
-  if (keys.has("KeyS") || keys.has("ArrowDown")) move.sub(forward);
-  if (keys.has("KeyD") || keys.has("ArrowRight")) move.add(right);
-  if (keys.has("KeyA") || keys.has("ArrowLeft")) move.sub(right);
+  if (!me.dead) {
+    if (keys.has("KeyW") || keys.has("ArrowUp")) move.add(forward);
+    if (keys.has("KeyS") || keys.has("ArrowDown")) move.sub(forward);
+    if (keys.has("KeyD") || keys.has("ArrowRight")) move.add(right);
+    if (keys.has("KeyA") || keys.has("ArrowLeft")) move.sub(right);
+  }
 
+  const t = seconds();
   const moving = move.lengthSq() > 0;
-  const running = moving && (keys.has("ShiftLeft") || keys.has("ShiftRight"));
+  const running = moving && !charging && (keys.has("ShiftLeft") || keys.has("ShiftRight"));
   if (moving) {
-    move.normalize().multiplyScalar((running ? CONFIG.runSpeed : CONFIG.walkSpeed) * dt);
+    let speed = running ? CONFIG.runSpeed : CONFIG.walkSpeed;
+    if (t < me.staggerUntil) speed *= CONFIG.staggerMoveFactor;
+    else if (charging) speed *= CONFIG.chargeMoveFactor;
+    else if (t < me.attackUntil) speed *= CONFIG.attackMoveFactor;
+    move.normalize().multiplyScalar(speed * dt);
     me.pos.add(move);
   }
-  me.anim = running ? 2 : moving ? 1 : 0;
+  me.anim = me.dead ? 0 : running ? 2 : moving ? 1 : 0;
 
-  // Riddaren tittar alltid åt samma håll som kameran (bra för närstrid senare)
-  me.yaw = camYaw;
+  // Hopp och tyngdkraft
+  if (!me.onGround) {
+    me.vy -= CONFIG.gravity * dt;
+    me.pos.y += me.vy * dt;
+    if (me.pos.y <= 0) {
+      me.pos.y = 0;
+      me.vy = 0;
+      me.onGround = true;
+    }
+  }
 
-  // Knuffa bort från andra riddare
+  // Riddaren tittar alltid åt samma håll som kameran (så man slår dit man tittar)
+  if (!me.dead) me.yaw = camYaw;
+
+  // Knuffa bort från andra levande riddare
   for (const other of others.values()) {
+    if (other.dead) continue;
     const dx = me.pos.x - other.knight.group.position.x;
     const dz = me.pos.z - other.knight.group.position.z;
     const dist = Math.hypot(dx, dz);
@@ -372,12 +687,12 @@ function updateMe(dt) {
     const dx = me.pos.x - cx;
     const dz = me.pos.z - cz;
     const dist = Math.hypot(dx, dz);
-    if (dist < PLAYER_RADIUS) {
+    if (dist < PLAYER_RADIUS && me.pos.y < 1.1) {
       if (dist > 0.0001) {
         me.pos.x = cx + (dx / dist) * PLAYER_RADIUS;
         me.pos.z = cz + (dz / dist) * PLAYER_RADIUS;
       } else {
-        me.pos.z = c.maxZ + PLAYER_RADIUS; // står mitt i: knuffa ut framåt
+        me.pos.z = c.maxZ + PLAYER_RADIUS;
       }
     }
   }
@@ -406,8 +721,8 @@ function updateOthers(dt) {
     } else {
       group.position.lerp(other.target, t);
     }
-    group.rotation.y = angleLerp(group.rotation.y, other.targetYaw, t);
-    other.knight.animate(dt, other.anim);
+    if (!other.dead) group.rotation.y = angleLerp(group.rotation.y, other.targetYaw, t);
+    other.knight.animate(dt, other.dead ? 0 : other.anim);
   }
 }
 
@@ -418,7 +733,7 @@ function updateOthers(dt) {
 const camTarget = new THREE.Vector3();
 const camPos = new THREE.Vector3();
 
-function updateCamera() {
+function updateCamera(dt) {
   if (!me) {
     // Startskärm: kameran svävar långsamt runt arenan
     const t = performance.now() * 0.00005;
@@ -430,12 +745,23 @@ function updateCamera() {
   right.set(-Math.cos(camYaw), 0, Math.sin(camYaw));
 
   camTarget.copy(me.pos).addScaledVector(right, CONFIG.cameraShoulder);
-  camTarget.y += CONFIG.cameraHeight;
+  camTarget.y = me.pos.y * 0.6 + CONFIG.cameraHeight;
 
-  const d = CONFIG.cameraDistance;
-  camPos.copy(camTarget).addScaledVector(forward, -Math.cos(camPitch) * d);
-  camPos.y += Math.sin(camPitch) * d;
+  // Död: kameran drar sig bakåt och tittar ner på kroppen
+  const d = CONFIG.cameraDistance + (me.dead ? 2.5 : 0);
+  const pitch = me.dead ? Math.max(camPitch, 0.6) : camPitch;
+  camPos.copy(camTarget).addScaledVector(forward, -Math.cos(pitch) * d);
+  camPos.y += Math.sin(pitch) * d;
   camPos.y = Math.max(0.3, camPos.y);
+
+  // Skakning vid träff
+  if (shake > 0) {
+    shake = Math.max(0, shake - dt);
+    const s = shake * 0.35;
+    camPos.x += (Math.random() - 0.5) * s;
+    camPos.y += (Math.random() - 0.5) * s;
+    camPos.z += (Math.random() - 0.5) * s;
+  }
 
   camera.position.copy(camPos);
   camera.lookAt(camTarget);
@@ -447,24 +773,33 @@ function updateCamera() {
 
 let sendTimer = 0;
 let heartbeatTimer = 0;
-let lastSent = { x: NaN, z: NaN, r: NaN, a: -1 };
+let lastSent = { x: NaN, y: NaN, z: NaN, r: NaN, a: -1 };
+
+function sendStateNow() {
+  const x = Math.round(me.pos.x * 100) / 100;
+  const y = Math.round(me.pos.y * 100) / 100;
+  const z = Math.round(me.pos.z * 100) / 100;
+  const r = Math.round(me.yaw * 100) / 100;
+  net.send({ t: "s", p: [x, y, z], r, a: me.anim });
+  lastSent = { x, y, z, r, a: me.anim };
+  heartbeatTimer = 0;
+  sendTimer = 0;
+}
 
 function updateNetwork(dt) {
   sendTimer += dt;
   heartbeatTimer += dt;
   if (sendTimer < 1 / CONFIG.sendRate) return;
   sendTimer = 0;
+  if (me.dead) return; // servern ignorerar ändå positioner medan man är död
 
   const x = Math.round(me.pos.x * 100) / 100;
+  const y = Math.round(me.pos.y * 100) / 100;
   const z = Math.round(me.pos.z * 100) / 100;
   const r = Math.round(me.yaw * 100) / 100;
-  const changed = x !== lastSent.x || z !== lastSent.z || r !== lastSent.r || me.anim !== lastSent.a;
+  const changed = x !== lastSent.x || y !== lastSent.y || z !== lastSent.z || r !== lastSent.r || me.anim !== lastSent.a;
 
-  if (changed || heartbeatTimer >= CONFIG.heartbeatSeconds) {
-    net.send({ t: "s", p: [x, 0, z], r, a: me.anim });
-    lastSent = { x, z, r, a: me.anim };
-    heartbeatTimer = 0;
-  }
+  if (changed || heartbeatTimer >= CONFIG.heartbeatSeconds) sendStateNow();
 }
 
 // ---------------------------------------------------------------------------
@@ -488,11 +823,14 @@ function frame() {
   }
 
   if (me) {
+    updateCharging();
     updateMe(dt);
     updateNetwork(dt);
+    renderCooldowns();
   }
   updateOthers(dt);
-  updateCamera();
+  effects.update(dt);
+  updateCamera(dt);
   renderer.render(scene, camera);
 }
 

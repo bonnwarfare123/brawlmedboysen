@@ -1,7 +1,17 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.1.1";
+export const VERSION = "0.3";
+
+// STRIDSREGLER – servern använder dessa för att avgöra träffar.
+// Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
+export const COMBAT = {
+  maxHp: 100,
+  quick: { damage: 25, windup: 0.3, cooldown: 0.6, reach: 2.1, arc: 60 },
+  heavy: { damage: 50, charge: 0.8, windup: 0.3, cooldown: 1.5, reach: 2.4, arc: 50 },
+  parry: { window: 0.35, cooldown: 1.0, stagger: 0.9 },
+  respawnSeconds: 4,
+};
 
 // Max antal spelare i ett rum
 export const MAX_PLAYERS = 6;

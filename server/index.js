@@ -4,11 +4,12 @@
 // 1. "Workern" tar emot anslutningar och skickar dem till rätt spelrum.
 //    (Spelets vanliga filer, som index.html, skickas automatiskt av Cloudflare
 //    från mappen "public" utan att passera här.)
-// 2. "GameRoom" är ett Durable Object: en liten server per spelrum som håller
-//    koll på vilka som är med och skickar vidare allas positioner.
+// 2. "GameRoom" är ett Durable Object: en liten server per spelrum. Den håller
+//    koll på spelarna, skickar vidare allas positioner och AVGÖR ALLA TRÄFFAR,
+//    så att alla ser samma sak och ingen kan fuska.
 
 import { DurableObject } from "cloudflare:workers";
-import { MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE } from "../public/js/shared.js";
+import { MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, ARENA_RX, ARENA_RZ } from "../public/js/shared.js";
 
 export default {
   async fetch(request, env) {
@@ -34,6 +35,13 @@ export default {
 
 // ---------------------------------------------------------------------------
 
+const TOLERANCE = 0.1;   // sekunder: tillåt lite ojämn nätverkstajming
+const BODY_RADIUS = 0.4; // meter: en riddares "tjocklek" vid träffkontroll
+
+function now() {
+  return Date.now() / 1000;
+}
+
 function randomId() {
   return Math.random().toString(36).slice(2, 8);
 }
@@ -51,19 +59,47 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
+function spawnPoint(index = null) {
+  const angle = index === null ? Math.random() * Math.PI * 2 : (index / MAX_PLAYERS) * Math.PI * 2;
+  const p = [round2(Math.sin(angle) * 6), 0, round2(Math.cos(angle) * 6)];
+  const r = round2(angle + Math.PI); // titta mot mitten
+  return { p, r };
+}
+
+function newPlayerState(info) {
+  return {
+    ...info,
+    p: [0, 0, 0],
+    r: 0,
+    a: 0,
+    hp: COMBAT.maxHp,
+    dead: false,
+    kills: 0,
+    nextQuick: 0,
+    nextHeavy: 0,
+    nextParry: 0,
+    lastParry: -100,
+    staggerUntil: 0,
+    chargeStart: null,
+    ignoreStateUntil: 0,
+  };
+}
+
+// Det som skickas till spelarna om en riddare (inte interna timers)
+function publicPlayer(pl) {
+  return { id: pl.id, name: pl.name, color: pl.color, p: pl.p, r: pl.r, a: pl.a, hp: pl.hp, dead: pl.dead, kills: pl.kills };
+}
+
 export class GameRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
-    // id -> { id, name, color, p:[x,y,z], r, a }
     this.players = new Map();
 
     // Om rummet "sov" (hibernation) och vaknar igen: återskapa spelarlistan
     // från informationen som sparats på varje anslutning.
     for (const ws of this.ctx.getWebSockets()) {
       const info = ws.deserializeAttachment();
-      if (info && info.id) {
-        this.players.set(info.id, { ...info, p: [0, 0, 0], r: 0, a: 0 });
-      }
+      if (info && info.id) this.players.set(info.id, newPlayerState(info));
     }
   }
 
@@ -109,35 +145,8 @@ export class GameRoom extends DurableObject {
 
     const info = ws.deserializeAttachment();
 
-    // --- En spelare vill gå med ---
     if (msg.t === "join") {
-      if (info) return; // redan med
-
-      if (this.players.size >= MAX_PLAYERS) {
-        this.send(ws, { t: "full" });
-        ws.close(4001, "Rummet är fullt");
-        return;
-      }
-
-      const color = Number.isInteger(msg.color) && msg.color >= 0 && msg.color < COLORS.length ? msg.color : 0;
-
-      // Placera ut spelaren på en cirkel runt mitten
-      const slot = this.players.size;
-      const angle = (slot / MAX_PLAYERS) * Math.PI * 2;
-      const p = [round2(Math.sin(angle) * 6), 0, round2(Math.cos(angle) * 6)];
-      const r = round2(angle + Math.PI); // titta mot mitten
-
-      const player = { id: randomId(), name: cleanName(msg.name), color, p, r, a: 0 };
-      ws.serializeAttachment({ id: player.id, name: player.name, color: player.color });
-      this.players.set(player.id, player);
-
-      this.send(ws, {
-        t: "welcome",
-        id: player.id,
-        you: player,
-        players: [...this.players.values()].filter((pl) => pl.id !== player.id),
-      });
-      this.broadcast({ t: "join", player }, ws);
+      this.handleJoin(ws, info, msg);
       return;
     }
 
@@ -145,13 +154,178 @@ export class GameRoom extends DurableObject {
     const player = this.players.get(info.id);
     if (!player) return;
 
-    // --- Positionsuppdatering: spara och skicka vidare till de andra ---
-    if (msg.t === "s" && Array.isArray(msg.p) && msg.p.length === 3) {
-      player.p = [round2(finite(msg.p[0])), round2(finite(msg.p[1])), round2(finite(msg.p[2]))];
-      player.r = round2(finite(msg.r));
-      player.a = msg.a === 1 || msg.a === 2 ? msg.a : 0;
-      this.broadcast({ t: "s", id: player.id, p: player.p, r: player.r, a: player.a }, ws);
+    switch (msg.t) {
+      case "s":
+        this.handleState(ws, player, msg);
+        break;
+      case "ch":
+        this.handleCharge(ws, player, msg);
+        break;
+      case "atk":
+        this.handleAttack(ws, player, msg.k === "h" ? "h" : "q");
+        break;
+      case "par":
+        this.handleParry(ws, player);
+        break;
     }
+  }
+
+  // --- En spelare vill gå med ---
+  handleJoin(ws, info, msg) {
+    if (info) return; // redan med
+
+    if (this.players.size >= MAX_PLAYERS) {
+      this.send(ws, { t: "full" });
+      ws.close(4001, "Rummet är fullt");
+      return;
+    }
+
+    const color = Number.isInteger(msg.color) && msg.color >= 0 && msg.color < COLORS.length ? msg.color : 0;
+    const playerInfo = { id: randomId(), name: cleanName(msg.name), color };
+    ws.serializeAttachment(playerInfo);
+
+    const player = newPlayerState(playerInfo);
+    Object.assign(player, spawnPoint(this.players.size));
+    this.players.set(player.id, player);
+
+    this.send(ws, {
+      t: "welcome",
+      id: player.id,
+      you: publicPlayer(player),
+      players: [...this.players.values()].filter((pl) => pl.id !== player.id).map(publicPlayer),
+    });
+    this.broadcast({ t: "join", player: publicPlayer(player) }, ws);
+  }
+
+  // --- Positionsuppdatering: spara och skicka vidare till de andra ---
+  handleState(ws, player, msg) {
+    if (!Array.isArray(msg.p) || msg.p.length !== 3) return;
+    if (player.dead || now() < player.ignoreStateUntil) return; // liket ligger kvar där det föll
+
+    // Håll positionen inom arenan (skydd mot konstiga värden)
+    const x = Math.max(-ARENA_RX, Math.min(ARENA_RX, finite(msg.p[0])));
+    const y = Math.max(0, Math.min(5, finite(msg.p[1])));
+    const z = Math.max(-ARENA_RZ, Math.min(ARENA_RZ, finite(msg.p[2])));
+    player.p = [round2(x), round2(y), round2(z)];
+    player.r = round2(finite(msg.r));
+    player.a = msg.a === 1 || msg.a === 2 ? msg.a : 0;
+    this.broadcast({ t: "s", id: player.id, p: player.p, r: player.r, a: player.a }, ws);
+  }
+
+  // --- Spelaren börjar/slutar ladda ett tungt slag (syns för de andra) ---
+  handleCharge(ws, player, msg) {
+    if (player.dead) return;
+    const on = msg.on === 1;
+    player.chargeStart = on ? now() : null;
+    this.broadcast({ t: "ch", id: player.id, on: on ? 1 : 0 }, ws);
+  }
+
+  // --- Ett slag ---
+  handleAttack(ws, player, kind) {
+    const t = now();
+    if (player.dead || t < player.staggerUntil) return;
+
+    const spec = kind === "h" ? COMBAT.heavy : COMBAT.quick;
+
+    if (kind === "h") {
+      if (t < player.nextHeavy - TOLERANCE) return;
+      // Det tunga slaget måste ha laddats tillräckligt länge
+      if (player.chargeStart === null || t - player.chargeStart < COMBAT.heavy.charge - 0.2) return;
+    } else if (t < player.nextQuick - TOLERANCE) {
+      return;
+    }
+
+    player.chargeStart = null;
+    player.nextQuick = t + COMBAT.quick.cooldown;
+    player.nextHeavy = t + (kind === "h" ? COMBAT.heavy.cooldown : COMBAT.quick.cooldown);
+
+    this.broadcast({ t: "atk", id: player.id, k: kind }, ws);
+
+    // Träffen avgörs när svärdet faktiskt når fram (efter "windup")
+    setTimeout(() => this.resolveAttack(player.id, kind), spec.windup * 1000);
+  }
+
+  resolveAttack(attackerId, kind) {
+    const attacker = this.players.get(attackerId);
+    if (!attacker || attacker.dead) return;
+
+    const t = now();
+    if (t < attacker.staggerUntil) return; // blev själv parerad under tiden
+
+    const spec = kind === "h" ? COMBAT.heavy : COMBAT.quick;
+    const fx = Math.sin(attacker.r);
+    const fz = Math.cos(attacker.r);
+    const minDot = Math.cos((spec.arc * Math.PI) / 180);
+
+    // Vilka står inom räckhåll och framför den som slår?
+    const targets = [];
+    for (const target of this.players.values()) {
+      if (target === attacker || target.dead) continue;
+      const dx = target.p[0] - attacker.p[0];
+      const dz = target.p[2] - attacker.p[2];
+      const dy = Math.abs(target.p[1] - attacker.p[1]);
+      const dist = Math.hypot(dx, dz);
+      if (dist > spec.reach + BODY_RADIUS || dy > 1.6) continue;
+      if (dist > 0.5 && (fx * dx + fz * dz) / dist < minDot) continue;
+      targets.push(target);
+    }
+
+    // Parering: tryckte någon av måltavlorna parera precis innan, vänd mot den som slår?
+    for (const target of targets) {
+      const sinceParry = t - target.lastParry;
+      if (sinceParry < 0 || sinceParry > COMBAT.parry.window) continue;
+      const tx = Math.sin(target.r);
+      const tz = Math.cos(target.r);
+      const facing = tx * (attacker.p[0] - target.p[0]) + tz * (attacker.p[2] - target.p[2]);
+      if (facing <= 0) continue; // stod med ryggen till
+
+      attacker.staggerUntil = t + COMBAT.parry.stagger;
+      attacker.chargeStart = null;
+      target.nextParry = t; // belöning: kan parera igen direkt
+      this.broadcast({ t: "parried", id: target.id, by: attacker.id });
+      return; // slaget stoppas helt
+    }
+
+    // Skada alla som träffades (ett slag kan träffa flera i en brawl)
+    for (const target of targets) {
+      target.hp = Math.max(0, target.hp - spec.damage);
+      const dead = target.hp === 0;
+      if (dead) {
+        target.dead = true;
+        target.chargeStart = null;
+        attacker.kills += 1;
+        setTimeout(() => this.respawn(target.id), COMBAT.respawnSeconds * 1000);
+      }
+      this.broadcast({
+        t: "hit",
+        id: target.id,
+        by: attacker.id,
+        k: kind,
+        hp: target.hp,
+        dead,
+        kills: attacker.kills,
+      });
+    }
+  }
+
+  // --- Parera ---
+  handleParry(ws, player) {
+    const t = now();
+    if (player.dead || t < player.nextParry - TOLERANCE) return;
+    player.lastParry = t;
+    player.nextParry = t + COMBAT.parry.cooldown;
+    this.broadcast({ t: "par", id: player.id }, ws);
+  }
+
+  respawn(id) {
+    const player = this.players.get(id);
+    if (!player) return; // har lämnat spelet
+    player.hp = COMBAT.maxHp;
+    player.dead = false;
+    player.staggerUntil = 0;
+    player.ignoreStateUntil = now() + 0.5; // ignorera gamla positioner som är på väg
+    Object.assign(player, spawnPoint());
+    this.broadcast({ t: "respawn", id, p: player.p, r: player.r, hp: player.hp });
   }
 
   async webSocketClose(ws, code, reason) {

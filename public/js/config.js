@@ -6,6 +6,16 @@ export const CONFIG = {
   walkSpeed: 4,
   runSpeed: 6.5,
 
+  // Hopp
+  jumpSpeed: 5.5,          // hur högt man hoppar
+  gravity: 18,
+
+  // Strid (skada, räckvidd och väntetider finns i shared.js, eftersom servern behöver dem)
+  holdForHeavy: 0.2,       // så länge man håller vänster musknapp innan det blir ett tungt slag
+  chargeMoveFactor: 0.6,   // fart när man laddar ett tungt slag
+  attackMoveFactor: 0.7,   // fart medan man slår
+  staggerMoveFactor: 0.35, // fart när man blivit parerad
+
   // Kamera
   cameraDistance: 5,       // hur långt bakom riddaren
   cameraHeight: 1.6,       // höjden kameran siktar på
