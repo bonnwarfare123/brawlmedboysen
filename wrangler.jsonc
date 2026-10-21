@@ -1,7 +1,7 @@
 // Inställningar som talar om för Cloudflare hur spelet ska publiceras.
 // "name" måste vara exakt samma som namnet på din Worker i Cloudflare.
 {
-  "name": "riddarbrawl",
+  "name": "brawlmedboysen",
   "main": "server/index.js",
   "compatibility_date": "2025-06-01",
 
