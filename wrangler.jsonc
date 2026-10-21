@@ -1,0 +1,25 @@
+// Inställningar som talar om för Cloudflare hur spelet ska publiceras.
+// "name" måste vara exakt samma som namnet på din Worker i Cloudflare.
+{
+  "name": "riddarbrawl",
+  "main": "server/index.js",
+  "compatibility_date": "2025-06-01",
+
+  // Spelets filer (HTML, JavaScript, bilder) ligger i mappen "public"
+  "assets": {
+    "directory": "./public"
+  },
+
+  // Ett Durable Object per spelrum
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOMS", "class_name": "GameRoom" }
+    ]
+  },
+
+  // Krävs första gången ett Durable Object skapas. Ta inte bort.
+  // (new_sqlite_classes är det som fungerar på gratisplanen.)
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["GameRoom"] }
+  ]
+}

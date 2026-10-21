@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Riddarbrawl</title>
+  <link rel="stylesheet" href="css/style.css">
+  <!-- Three.js (3D-motorn) laddas direkt från nätet, ingen installation behövs -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- Startskärm -->
+  <div id="lobby" class="overlay">
+    <div class="card">
+      <h1>Riddarbrawl</h1>
+      <p class="subtitle" id="lobby-subtitle">Skapa ett rum och bjud in dina vänner</p>
+
+      <label for="name-input">Ditt riddarnamn</label>
+      <input id="name-input" type="text" maxlength="20" placeholder="Sir Klumpig" autocomplete="off">
+
+      <label>Din färg</label>
+      <div id="color-picker" class="colors"></div>
+
+      <button id="join-button" class="primary">Skapa nytt rum</button>
+      <p id="lobby-error" class="error" hidden></p>
+      <p class="version">v<span id="version"></span></p>
+    </div>
+  </div>
+
+  <!-- Spelets gränssnitt -->
+  <div id="hud" hidden>
+    <div class="panel top-left">
+      <div class="room-row">
+        Rum <strong id="room-code"></strong>
+        <button id="copy-link" class="small">Kopiera inbjudningslänk</button>
+      </div>
+      <ul id="player-list"></ul>
+    </div>
+
+    <div id="click-hint" class="center-hint">Klicka i spelet för att styra kameran</div>
+
+    <div class="panel bottom-left help">
+      <b>WASD</b> gå · <b>Shift</b> spring · <b>Mus</b> titta · <b>Esc</b> släpp musen
+    </div>
+
+    <div id="status" class="status" hidden></div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
