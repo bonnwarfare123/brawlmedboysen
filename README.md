@@ -53,3 +53,4 @@ Därefter publiceras varje ny uppladdning till GitHub automatiskt.
 Allt körs på Cloudflares gratisplan. Räcker kvoten inte till en dag slutar
 servern svara tills gränsen nollställs kl. 01:00 (vintertid) eller 02:00 (sommartid) svensk tid.
 Det kan aldrig bli någon faktura.
+ 
