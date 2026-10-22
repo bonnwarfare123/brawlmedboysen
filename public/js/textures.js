@@ -611,3 +611,74 @@ export function glowTexture() {
     ctx.fillRect(0, 0, n, n);
   });
 }
+
+// Fina sandkorn och små gropar (används som höjdkarta så sanden får struktur i ljuset)
+export function sandGrainTexture() {
+  return makeTexture("sandGrain", 256, (ctx, n) => {
+    const rand = seeded(57);
+    const img = ctx.createImageData(n, n);
+    for (let i = 0; i < n * n; i++) {
+      const v = 110 + rand() * 60;
+      img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+      img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    // Små gropar och kullar (fotsteg, hovar, klumpar)
+    for (let i = 0; i < 70; i++) {
+      const x = rand() * n;
+      const y = rand() * n;
+      const r = 3 + rand() * 9;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      const dark = rand() < 0.5;
+      g.addColorStop(0, dark ? "rgba(40,40,40,0.5)" : "rgba(230,230,230,0.45)");
+      g.addColorStop(1, "rgba(128,128,128,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    // Krattspår som höjdskillnad
+    for (let k = 0; k < 10; k++) {
+      ctx.strokeStyle = k % 2 ? "rgba(60,60,60,0.35)" : "rgba(210,210,210,0.3)";
+      ctx.lineWidth = 3;
+      const y = (k / 10) * n;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.bezierCurveTo(n * 0.3, y + 6, n * 0.6, y - 6, n, y);
+      ctx.stroke();
+    }
+  }, [1, 1], false);
+}
+
+// Siffra på prispallen: tyg i en färg med guldkant och en stor siffra.
+// aspect = höjd/bredd för stegets framsida, så siffran inte blir hoptryckt.
+export function podiumTexture(color, number, aspect = 1) {
+  const w = 256;
+  const h = Math.max(64, Math.round(w * aspect));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, w, h);
+  const rand = seeded(5 + number);
+  for (let i = 0; i < 900; i++) {
+    ctx.fillStyle = rand() < 0.5 ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.05)";
+    ctx.fillRect(rand() * w, rand() * h, 1 + rand() * 3, 1);
+  }
+  ctx.strokeStyle = "#d9a521";
+  ctx.lineWidth = 10;
+  ctx.strokeRect(7, 7, w - 14, h - 14);
+  ctx.lineWidth = 2.5;
+  ctx.strokeRect(20, 20, w - 40, h - 40);
+  const size = Math.min(150, h * 0.62);
+  ctx.font = `bold ${Math.round(size)}px Georgia, serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.fillText(String(number), w / 2 + 4, h / 2 + size * 0.06 + 4);
+  ctx.fillStyle = "#f0c53a";
+  ctx.fillText(String(number), w / 2, h / 2 + size * 0.06);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}

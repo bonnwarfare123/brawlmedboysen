@@ -22,9 +22,9 @@
 
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { COMBAT, JOINT_SEGMENT, LEG_JOINTS } from "./shared.js";
+import { COMBAT, JOINT_SEGMENT, LEG_JOINTS, weaponSpec } from "./shared.js";
 import { Ragdoll } from "./ragdoll.js";
-import { FootPlanner, solveLeg, gaitStride } from "./ik.js";
+import { FootPlanner, solveLeg, solveArm, gaitStride } from "./ik.js";
 import { Cloth, Chain } from "./cloth.js";
 import {
   chainmailTexture, leatherTexture, quiltTexture, wrapTexture, strawTexture, metalWearTexture, heraldryTexture,
@@ -121,13 +121,18 @@ const HEAVY_KEYS = [
   [0.32, -0.5, 0.0, -0.1, 0.45, 0],
   [0.7, -0.55, -0.12, -1.25, 0.12, 0.35],
 ];
+// Stöten: dra tillbaka vapnet (vrid bålen bakåt), sedan ett utfall med armen rakt fram och axeln med
 const THRUST_KEYS = [
   [0.0, -0.55, -0.12, -1.25, 0.12, 0.35],
-  [0.1, -0.7, -0.25, -1.7, -0.45, 0.65],
-  [0.22, -1.45, 0.0, -0.05, 0.45, 1.0],
-  [0.32, -1.45, 0.0, -0.05, 0.4, 1.0],
-  [0.5, -0.55, -0.12, -1.25, 0.12, 0.35],
+  [0.13, -0.75, -0.3, -2.0, -0.6, 0.75],
+  [0.27, -1.5, 0.05, -0.02, 0.7, 1.1],
+  [0.42, -1.5, 0.05, -0.02, 0.62, 1.1],
+  [0.65, -0.55, -0.12, -1.25, 0.12, 0.35],
 ];
+// Tvåhandsvapen: parera genom att lyfta vapnet på tvären framför kroppen
+const PARRY_2H = [-1.35, -0.25, -1.15, -0.2, 1.45];
+// Zweihändern släpas efter riddaren med spetsen i sanden när man går
+const DRAG_R = [0.3, -0.3, -0.15, 0, 2.15]; // klingan pekar bakåt och neråt
 const CHARGE_POSE = [-2.9, 0, -0.6, -0.3, 0];
 // Sköldarmen: [tid, överarm framåt, överarm i sidled, underarm böj]
 const STANCE_L = [-0.45, -0.12, -1.5];
@@ -267,6 +272,13 @@ export class Knight {
 
     const style = ARMOR_STYLES[look.a] || ARMOR_STYLES[0];
     this.style = style;
+    const wspec = weaponSpec(look.w);
+    this.weaponKey = wspec.key;
+    this.twoHanded = !!wspec.twoHanded; // tvåhandsvapen: ingen sköld, vänster hand på greppet
+    this.victory = 0;  // placering på prispallen (1–3) när matchen är slut
+    this.groundY = 0;  // markens höjd under fötterna (prispallen)
+    this.spinT = -1;   // zweihändern: snurrar runt efter ett bom
+    this.wobbleT = -1;
     const isPlate = style === "plate" || style === "gilded";
     const gilded = style === "gilded";
     this.isMetal = isPlate;
@@ -373,11 +385,13 @@ export class Knight {
     this.weapon = weapon;
     this.sword = weapon; // gammalt namn
 
-    const shield = this.buildShield(look.s, m, colorHex);
+    // Sköld (inte med tvåhandsvapen)
+    const shield = this.twoHanded ? new THREE.Group() : this.buildShield(look.s, m, colorHex);
     shield.position.set(0.03, -0.115, 0);
     shield.rotation.x = 1.6;
     shield.userData.equipment = true;
     this.seg.handL.add(shield);
+    this.shield = shield;
 
     // Slå ihop småbitarna i varje kroppsdel (färre ritanrop = högre FPS)
     for (const seg of Object.values(this.seg)) this.mergeChildren(seg);
@@ -867,15 +881,7 @@ export class Knight {
       add(new THREE.CylinderGeometry(0.022, 0.02, 0.03, 8), fit, [0, -0.125, 0]);  // ändbeslag
       add(new THREE.CylinderGeometry(0.024, 0.024, 0.11, 10), m.iron, [0, 0.6, 0]);  // holk
       for (const s of [1, -1]) add(new THREE.BoxGeometry(0.006, 0.16, 0.024), m.iron, [0.019 * s, 0.48, 0]); // skenor längs skaftet
-      const s = new THREE.Shape();
-      s.moveTo(0, 0.05);
-      s.lineTo(0.06, 0.045);
-      s.quadraticCurveTo(0.12, 0.06, 0.175, 0.1);   // övre hornet
-      s.quadraticCurveTo(0.22, -0.01, 0.165, -0.13); // den böjda eggen
-      s.quadraticCurveTo(0.09, -0.09, 0.045, -0.045); // skägget tillbaka mot skaftet
-      s.lineTo(0, -0.045);
-      s.lineTo(0, 0.05);
-      const blade = new THREE.ExtrudeGeometry(s, { depth: 0.01, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 1 });
+      const blade = new THREE.ExtrudeGeometry(this.axeShape(1), { depth: 0.01, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 1 });
       blade.translate(0, 0, -0.005);
       blade.rotateY(-Math.PI / 2); // formens X blir framåt (+Z)
       add(blade, m.steel, [0, 0.6, 0]);
@@ -895,6 +901,72 @@ export class Knight {
       add(new THREE.TorusGeometry(0.014, 0.004, 4, 10), m.iron, [0, 0.35, 0]);      // ögla
       this.buildFlailChain(m);
       g.userData.anchor = [0, 0.35, 0];
+    } else if (kind === 3) {
+      // Tvåhandssvärd: lång klinga, långt grepp för två händer
+      const hilt = gilded ? m.gold : m.steelDark;
+      add(new THREE.BoxGeometry(0.056, 1.15, 0.011), m.blade, [0, 0.7, 0]);
+      add(new THREE.BoxGeometry(0.014, 0.9, 0.015), m.steelDark, [0, 0.6, 0]);
+      add(new THREE.ConeGeometry(0.028, 0.1, 4), m.blade, [0, 1.325, 0], [1, 1, 0.22]);
+      add(new THREE.BoxGeometry(0.28, 0.035, 0.045), hilt, [0, 0.11, 0]);
+      for (const s of [1, -1]) add(new THREE.SphereGeometry(0.024, 8, 6), hilt, [0.14 * s, 0.12, 0]);
+      add(new THREE.CylinderGeometry(0.018, 0.02, 0.36, 8), m.leatherDark, [0, -0.07, 0]);
+      for (let i = 0; i < 9; i++) add(new THREE.TorusGeometry(0.02, 0.003, 3, 8), m.leather, [0, -0.22 + i * 0.035, 0], [1, 1, 1], [Math.PI / 2, 0, 0.4]);
+      add(new THREE.SphereGeometry(0.035, 10, 8), hilt, [0, -0.27, 0], [1, 0.8, 0.6]);
+      g.userData.trail = { tip: [0, 1.36, 0], base: [0, 0.45, 0] };
+      g.userData.blood = { w: 0.06, len: 0.8, y: 0.85 };
+      g.userData.grip2 = [0, -0.2, 0];
+    } else if (kind === 4) {
+      // Stridsyxa (dansk yxa): långt skaft och ett stort, böjt blad
+      add(new THREE.CylinderGeometry(0.019, 0.022, 1.55, 8), m.wood, [0, 0.2, 0]);
+      for (let i = 0; i < 6; i++) add(new THREE.TorusGeometry(0.023, 0.003, 3, 8), m.leatherDark, [0, -0.32 + i * 0.024, 0], [1, 1, 1], [Math.PI / 2, 0, 0.4]);
+      add(new THREE.CylinderGeometry(0.025, 0.022, 0.04, 8), m.iron, [0, -0.57, 0]);
+      add(new THREE.CylinderGeometry(0.027, 0.027, 0.13, 10), m.iron, [0, 0.9, 0]);
+      for (const s of [1, -1]) add(new THREE.BoxGeometry(0.006, 0.22, 0.026), m.iron, [0.021 * s, 0.76, 0]);
+      const blade = new THREE.ExtrudeGeometry(this.axeShape(1.65), { depth: 0.011, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 1 });
+      blade.translate(0, 0, -0.0055);
+      blade.rotateY(-Math.PI / 2);
+      add(blade, m.steel, [0, 0.9, 0]);
+      this.weaponBloodGeo = blade.clone();
+      this.weaponBloodPos = [0, 0.9, 0];
+      add(new THREE.BoxGeometry(0.004, 0.36, 0.012), m.blade, [0, 0.87, 0.29], [1, 1, 1], [0.1, 0, 0]);
+      g.userData.trail = { tip: [0, 1.03, 0.32], base: [0, 0.72, 0.26] };
+      g.userData.grip2 = [0, -0.3, 0];
+    } else if (kind === 5) {
+      // Hillebard: lång stång med yxblad, krok bakåt och en spets för stötar
+      add(new THREE.CylinderGeometry(0.017, 0.02, 2.1, 8), m.wood, [0, 0.33, 0]);
+      add(new THREE.CylinderGeometry(0.022, 0.02, 0.05, 8), m.iron, [0, -0.72, 0]);
+      for (let i = 0; i < 5; i++) add(new THREE.TorusGeometry(0.021, 0.003, 3, 8), m.leatherDark, [0, -0.36 + i * 0.024, 0], [1, 1, 1], [Math.PI / 2, 0, 0.4]);
+      add(new THREE.CylinderGeometry(0.024, 0.024, 0.22, 10), m.iron, [0, 1.3, 0]);
+      const blade = new THREE.ExtrudeGeometry(this.axeShape(0.95), { depth: 0.008, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 1 });
+      blade.translate(0, 0, -0.004);
+      blade.rotateY(-Math.PI / 2);
+      add(blade, m.steel, [0, 1.3, 0]);
+      this.weaponBloodGeo = blade.clone();
+      this.weaponBloodPos = [0, 1.3, 0];
+      add(new THREE.ConeGeometry(0.022, 0.32, 4), m.steel, [0, 1.56, 0]);                                     // spets
+      add(new THREE.ConeGeometry(0.018, 0.14, 4), m.steel, [0, 1.32, -0.09], [1, 1, 1], [-Math.PI / 2 - 0.3, 0, 0]); // krok bakåt
+      add(new THREE.SphereGeometry(0.03, 8, 6), m.cloth, [0, 1.15, 0], [1, 0.7, 1]);                          // tofs i spelarens färg
+      g.userData.trail = { tip: [0, 1.7, 0], base: [0, 1.2, 0.18] };
+      g.userData.grip2 = [0, -0.4, 0];
+    } else if (kind === 6) {
+      // Zweihänder: komiskt stort svärd med enorm parerstång, läderklädd ricasso med parerhakar
+      const hilt = gilded ? m.gold : m.steelDark;
+      add(new THREE.BoxGeometry(0.075, 1.5, 0.013), m.blade, [0, 1.07, 0]);
+      add(new THREE.BoxGeometry(0.018, 1.2, 0.017), m.steelDark, [0, 0.95, 0]);
+      add(new THREE.ConeGeometry(0.038, 0.14, 4), m.blade, [0, 1.89, 0], [1, 1, 0.22]);
+      add(new THREE.BoxGeometry(0.05, 0.2, 0.03), m.leatherDark, [0, 0.22, 0]);                     // ricasso
+      for (const s of [1, -1]) {
+        add(new THREE.ConeGeometry(0.014, 0.08, 5), hilt, [0.045 * s, 0.33, 0], [1, 1, 1], [0, 0, -1.2 * s]); // parerhakar
+        add(new THREE.TorusGeometry(0.05, 0.012, 5, 10, Math.PI), hilt, [0.25 * s, 0.14, 0], [1, 1, 1], [0, 0, s > 0 ? 0 : Math.PI]); // böjda ändar
+      }
+      add(new THREE.BoxGeometry(0.5, 0.04, 0.05), hilt, [0, 0.11, 0]);                            // enorm parerstång
+      add(new THREE.TorusGeometry(0.035, 0.009, 5, 12), hilt, [0, 0.11, 0.03], [1, 1, 1], [0, 0, 0]); // ring
+      add(new THREE.CylinderGeometry(0.021, 0.024, 0.46, 8), m.leatherDark, [0, -0.13, 0]);
+      for (let i = 0; i < 12; i++) add(new THREE.TorusGeometry(0.023, 0.003, 3, 8), m.leather, [0, -0.33 + i * 0.035, 0], [1, 1, 1], [Math.PI / 2, 0, 0.4]);
+      add(new THREE.SphereGeometry(0.045, 10, 8), hilt, [0, -0.39, 0], [1, 0.85, 0.7]);
+      g.userData.trail = { tip: [0, 1.95, 0], base: [0, 0.7, 0] };
+      g.userData.blood = { w: 0.08, len: 1.0, y: 1.2 };
+      g.userData.grip2 = [0, -0.25, 0];
     } else {
       // Svärd
       const hilt = gilded ? m.gold : m.steelDark;
@@ -910,6 +982,19 @@ export class Knight {
     }
     g.userData.kind = kind;
     return g;
+  }
+
+  // Ett yxblad med "skägg" (formens X = framåt mot eggen, Y = uppåt). k = storlek.
+  axeShape(k) {
+    const s = new THREE.Shape();
+    s.moveTo(0, 0.05 * k);
+    s.lineTo(0.06 * k, 0.045 * k);
+    s.quadraticCurveTo(0.12 * k, 0.06 * k, 0.175 * k, 0.1 * k);   // övre hornet
+    s.quadraticCurveTo(0.22 * k, -0.01 * k, 0.165 * k, -0.13 * k); // den böjda eggen
+    s.quadraticCurveTo(0.09 * k, -0.09 * k, 0.045 * k, -0.045 * k); // skägget tillbaka mot skaftet
+    s.lineTo(0, -0.045 * k);
+    s.lineTo(0, 0.05 * k);
+    return s;
   }
 
   // Kedjans länkar och spikbollen ligger direkt i riddarens grupp och flyttas varje bildruta
@@ -944,7 +1029,8 @@ export class Knight {
 
   addWeaponBlood(kind) {
     let mesh;
-    if (kind === 1 && this.weaponBloodGeo) {
+    const bloodBox = this.weapon.userData.blood;
+    if (this.weaponBloodGeo && kind !== 2) {
       mesh = new THREE.Mesh(this.weaponBloodGeo, this.bladeBloodMat);
       mesh.position.set(...this.weaponBloodPos);
       mesh.scale.set(1.25, 1.02, 1.02);
@@ -952,6 +1038,10 @@ export class Knight {
     } else if (kind === 2 && this.flail) {
       mesh = new THREE.Mesh(new THREE.SphereGeometry(0.066, 12, 8), this.bladeBloodMat);
       this.flail.ball.add(mesh);
+    } else if (bloodBox) {
+      mesh = new THREE.Mesh(new THREE.BoxGeometry(bloodBox.w, bloodBox.len, 0.018), this.bladeBloodMat);
+      mesh.position.set(0, bloodBox.y, 0);
+      this.weapon.add(mesh);
     } else {
       mesh = new THREE.Mesh(new THREE.BoxGeometry(0.054, 0.6, 0.016), this.bladeBloodMat);
       mesh.position.set(0, 0.62, 0);
@@ -1810,6 +1900,21 @@ export class Knight {
 
   // ---------- Spark och gester ----------
 
+  // Zweihändern bommade ett tungt slag: snurrar runt ett varv och vinglar
+  playWhiff() {
+    this.spinT = 0;
+    this.staggerT = 0;
+    this.attack = null;
+    this.charging = false;
+  }
+
+  // Placering på prispallen (1, 2 eller 3), 0 = vanlig
+  playVictory(rank) {
+    this.victory = rank;
+    this.emote = null;
+    this.attack = null;
+  }
+
   playKick() {
     this.kickT = 0;
     this.emote = null;
@@ -1888,19 +1993,42 @@ export class Knight {
     pose[0] -= swing * 0.3 * dirFwd;
     this.chargeAmount += ((this.charging ? 1 : 0) - this.chargeAmount) * Math.min(1, dt * 8);
     pose = pose.map((v, i) => lerp(v, CHARGE_POSE[i], this.chargeAmount));
+    // Zweihändern släpas med spetsen i sanden när man går (och inte gör något annat)
+    const dragging = this.weaponKey === "zweihander" && !this.attack && !this.charging && this.parryT < 0 && !this.emote && !this.victory;
+    this.dragAmount = (this.dragAmount ?? 0) + (((dragging ? moving : 0)) - (this.dragAmount ?? 0)) * Math.min(1, dt * 5);
+    if (this.dragAmount > 0.01) pose = pose.map((v, i) => lerp(v, DRAG_R[i], this.dragAmount));
     let armK = k;
+    let lunge = 0;
     if (this.attack) {
-      this.attack.t += dt;
+      // Tunga vapen är långsammare: animationen spelas i vapnets takt (samma som servern räknar med)
+      this.attack.t += dt / (weaponSpec(this.look.w).speed || 1);
       const keys = this.attack.kind === "h" ? HEAVY_KEYS : this.attack.kind === "t" ? THRUST_KEYS : QUICK_KEYS;
-      if (this.attack.t >= keys[keys.length - 1][0]) this.attack = null;
-      else {
+      if (this.attack.t >= keys[keys.length - 1][0]) {
+        this.attack = null;
+        if (this.weaponKey === "zweihander") this.wobbleT = 0; // vinglar till efter varje hugg
+      } else {
         pose = sampleKeys(keys, this.attack.t);
         armK = kFast;
-        // Tyngd i slaget: höften vrids och kroppen kliver in i tunga slag och stötar
+        // Tyngd i slaget: höften vrids och kroppen kliver in i tunga slag
         const strike = Math.sin(Math.min(1, this.attack.t / 0.35) * Math.PI);
         if (this.attack.kind === "h") pelvisZ = strike * 0.1;
-        if (this.attack.kind === "t") pelvisZ = strike * 0.08;
+        // Stöten: ett riktigt utfallssteg framåt, kroppen sjunker och lutar in
+        if (this.attack.kind === "t") {
+          lunge = Math.sin(Math.min(1, Math.max(0, (this.attack.t - 0.1) / 0.5)) * Math.PI);
+          pelvisZ = lunge * 0.32;
+          pelvisY -= lunge * 0.08;
+        }
         pelvisRotY += pose[3] * 0.5;
+      }
+    }
+    // Tvåhandsvapen: parera genom att lyfta vapnet på tvären
+    if (this.twoHanded && this.parryT >= 0) {
+      this.parryT += dt;
+      if (this.parryT >= PARRY_KEYS[PARRY_KEYS.length - 1][0]) this.parryT = -1;
+      else {
+        const f = Math.min(1, this.parryT / 0.07, (PARRY_KEYS[PARRY_KEYS.length - 1][0] - this.parryT) / 0.15);
+        pose = pose.map((v, i) => lerp(v, PARRY_2H[i], f));
+        armK = kFast;
       }
     }
     set("upperArmR", pose[0], 0, pose[1], armK);
@@ -1911,7 +2039,7 @@ export class Knight {
     let shield = STANCE_L.map((v, i) => lerp(v, CARRY_L[i], moving));
     shield[0] += swing * 0.15 * dirFwd;
     let shieldK = k;
-    if (this.parryT >= 0) {
+    if (this.parryT >= 0 && !this.twoHanded) {
       this.parryT += dt;
       if (this.parryT >= PARRY_KEYS[PARRY_KEYS.length - 1][0]) this.parryT = -1;
       else {
@@ -1924,8 +2052,15 @@ export class Knight {
     set("forearmL", shield[2], 0, 0, shieldK);
 
     // ----- Bålen: lutar in i rörelsen, motvrids mot höfterna, andas -----
-    let lean = 0.06 * moving + 0.1 * run * dirFwd + Math.sin(this.time * 2.0) * 0.012 + (1 - moving) * 0.05;
+    let lean = 0.06 * moving + 0.1 * run * dirFwd + Math.sin(this.time * 2.0) * 0.012 + (1 - moving) * 0.05 + lunge * 0.25;
     let torsoZ = 0;
+    if (this.twoHanded && !this.attack) lean += 0.04;
+    // Zweihändern: vinglar till efter varje hugg
+    if (this.wobbleT >= 0) {
+      this.wobbleT += dt;
+      if (this.wobbleT > 0.9) this.wobbleT = -1;
+      else torsoZ += Math.sin(this.wobbleT * 14) * 0.12 * (1 - this.wobbleT / 0.9);
+    }
     if (this.staggerT >= 0) {
       this.staggerT += dt;
       const d = COMBAT.parry.stagger;
@@ -2019,6 +2154,63 @@ export class Knight {
       }
     }
 
+    // ----- Prispallen: ettan jublar med vapnet i luften, tvåan bugar, trean klappar -----
+    if (this.victory) {
+      const t = this.time;
+      if (this.victory === 1) {
+        const pump = Math.sin(t * 6);
+        set("upperArmR", -2.9 + pump * 0.15, 0, -0.25, kFast);
+        set("forearmR", -0.25, 0, 0, kFast);
+        set("handR", 0.4, 0, 0, kFast);
+        if (!this.twoHanded) {
+          set("upperArmL", -2.7 - pump * 0.15, 0, 0.35, kFast);
+          set("forearmL", -0.3, 0, 0, kFast);
+        }
+        pelvisY += Math.max(0, Math.sin(t * 6)) * 0.07;
+        lean = -0.15;
+        headX = -0.3;
+        this.shout(0.8, 0.1);
+      } else if (this.victory === 2) {
+        const bow = Math.max(0, Math.sin(t * 1.6));
+        lean = 0.1 + bow * 0.6;
+        headX = 0.2 + bow * 0.25;
+        set("upperArmR", lerp(-0.6, -0.3, bow), 0, lerp(-0.2, -1.1, bow));
+        set("forearmR", -0.5);
+        if (!this.twoHanded) {
+          set("upperArmL", lerp(-0.3, 0.2, bow), 0, 0.3);
+          set("forearmL", -1.4);
+        }
+      } else {
+        const clap = Math.abs(Math.sin(t * 10)) * 0.4;
+        set("upperArmR", -1.25, 0, -0.1 - clap, kFast);
+        set("forearmR", -0.5, 0, 0, kFast);
+        set("upperArmL", -1.25, 0, 0.1 + clap, kFast);
+        set("forearmL", -0.5, 0, 0, kFast);
+        this.shout(0.4, 0.1);
+      }
+      torsoY = 0;
+      pelvisRotY = 0;
+    }
+
+    // ----- Zweihändern: ett tungt slag som missar får riddaren att snurra ett varv -----
+    let spin = 0;
+    if (this.spinT >= 0) {
+      this.spinT += dt;
+      const f = Math.min(1, this.spinT / 0.8);
+      spin = f * f * (3 - 2 * f) * Math.PI * 2;
+      lean += Math.sin(f * Math.PI) * 0.3;
+      for (const side of ["L", "R"]) {
+        set("thigh" + side, -0.15, 0, side === "L" ? 0.08 : -0.08, kFast);
+        set("shin" + side, 0.3, 0, 0, kFast);
+        set("foot" + side, -0.15, 0, 0, kFast);
+        legsFree[side] = false; // fötterna snurrar med (komiskt)
+      }
+      if (f >= 1) {
+        this.spinT = -1;
+        this.feet.reset([this.group.position.x, this.group.position.y, this.group.position.z], this.group.rotation.y);
+      }
+    }
+
     set("torso", lean, torsoY, torsoZ, this.attack || this.kickT >= 0 ? kFast : k);
     set("head", headX ?? -lean * 0.5, -torsoY * 0.5 - pelvisRotY * 0.3, headZ);
 
@@ -2033,10 +2225,36 @@ export class Knight {
       pelvis.position.z += (pelvisZ - pelvis.position.z) * kFast;
       pelvis.rotation.y += (pelvisRotY - pelvis.rotation.y) * k;
       pelvis.rotation.z += (pelvisRotZ - pelvis.rotation.z) * k;
+      if (spin) pelvis.rotation.y = pelvisRotY + spin;
+    }
+
+    // ----- Tvåhandsvapen: vänster hand håller greppet (armen räknas ut så att handen hamnar där) -----
+    const freeLeft = this.emote || this.victory === 3 || this.victory === 2 || this.dragAmount > 0.5 || this.kickT >= 0;
+    if (this.twoHanded && !freeLeft && !this.seg.handL.userData.detached && !this.seg.handR.userData.detached && this.weapon.userData.grip2) {
+      this.group.updateMatrixWorld(true);
+      const g = this.weapon.userData.grip2;
+      _v.set(g[0], g[1], g[2]).applyMatrix4(this.weapon.matrixWorld);
+      _inv.copy(this.seg.torso.matrixWorld).invert();
+      _v.applyMatrix4(_inv).sub(this.seg.upperArmL.position);
+      const { upperX, upperZ, elbow } = solveArm([_v.x, _v.y, _v.z]);
+      this.seg.upperArmL.rotation.set(upperX, 0, upperZ);
+      this.seg.forearmL.rotation.set(elbow, 0, 0);
     }
 
     // ----- Benen -----
     this.animateLegs(dt, motion, T, legsFree, k);
+
+    // Zweihänderns spets som släpar i sanden lämnar damm efter sig
+    if (this.dragAmount > 0.6 && motion.speed > 1 && this.onWeaponDrag) {
+      this.dragTimer = (this.dragTimer || 0) + dt;
+      if (this.dragTimer > 0.12) {
+        this.dragTimer = 0;
+        this.weapon.updateWorldMatrix(true, false);
+        const t = this.weapon.userData.trail.tip;
+        _v.set(t[0], t[1], t[2]).applyMatrix4(this.weapon.matrixWorld);
+        if (_v.y < this.groundY + 0.25) this.onWeaponDrag(_v.x, _v.z);
+      }
+    }
 
     // ----- Ansiktet, tyget och kedjan -----
     this.updateFace(dt);
@@ -2109,7 +2327,7 @@ export class Knight {
       const foot = feet[side];
       const pitch = side === "L" ? feet.pitchL : feet.pitchR;
       // Fotleden sitter 0,1 m ovanför sulan; när hälen lyfts höjs den lite
-      const ankle = [foot[0], foot[1] + 0.1 + Math.max(0, pitch) * 0.07, foot[2]];
+      const ankle = [foot[0], foot[1] + this.groundY + 0.1 + Math.max(0, pitch) * 0.07, foot[2]];
       const dx = ankle[0] - hip[0];
       const dy = ankle[1] - hip[1];
       const dz = ankle[2] - hip[2];

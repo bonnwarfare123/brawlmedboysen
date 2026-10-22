@@ -19,7 +19,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, MATCH, ARENA_RX, ARENA_RZ,
   JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS, AIM_JOINT, ARMORS, HELMETS, SHIELDS,
-  WEAPONS, CAPES, MODES,
+  WEAPONS, CAPES, MODES, attackSpec, cooldownsAfter, weaponSpec,
 } from "../public/js/shared.js";
 
 export default {
@@ -134,6 +134,7 @@ function newPlayerState(info) {
     wins: 0,
     nextQuick: 0,
     nextHeavy: 0,
+    nextThrust: 0,
     nextParry: 0,
     nextKick: 0,
     nextEmote: 0,
@@ -154,6 +155,7 @@ function resetForRound(player) {
   player.limbDamage = {};
   player.nextQuick = 0;
   player.nextHeavy = 0;
+  player.nextThrust = 0;
   player.nextParry = 0;
   player.nextKick = 0;
   player.lastParry = -100;
@@ -173,8 +175,8 @@ function jointAvailable(player, joint) {
 
 // Avgör om och i så fall vilken led som huggs av vid en träff.
 // aimSegment = kroppsdelen den som slog siktade på (eller null).
-function chooseSever(player, kind, dead, aimSegment = null, random = Math.random) {
-  const damage = specOf(kind).damage;
+// damage = slagets skada, sever = vapnets förmåga att hugga av (yxor och stora svärd lättare)
+function chooseSever(player, kind, dead, aimSegment = null, random = Math.random, damage = specOf(kind).damage, sever = 1) {
 
   // Siktade på en viss kroppsdel som finns kvar
   const aimed = aimSegment && AIM_JOINT[aimSegment];
@@ -183,13 +185,13 @@ function chooseSever(player, kind, dead, aimSegment = null, random = Math.random
     if (KILL_ONLY_JOINTS.includes(aimed)) return dead ? aimed : null; // huvud bara vid dråp
     if (dead) return aimed;
     const type = aimSegment.replace(/[LR]$/, "");
-    player.limbDamage[aimSegment] = (player.limbDamage[aimSegment] || 0) + damage;
+    player.limbDamage[aimSegment] = (player.limbDamage[aimSegment] || 0) + damage * sever;
     return player.limbDamage[aimSegment] >= COMBAT.limbHp[type] ? aimed : null;
   }
 
   // Annars (bålen, bredvid eller redan avhuggen) liten slumpchans som förut
   const key = (kind === "h" ? "heavy" : "quick") + (dead ? "Kill" : ""); // stöt räknas som snabbt
-  if (random() >= COMBAT.randomSever[key]) return null;
+  if (random() >= Math.min(1, COMBAT.randomSever[key] * sever)) return null;
   const candidates = LIMB_JOINTS.filter((j) => jointAvailable(player, j));
   if (dead) {
     for (const j of KILL_ONLY_JOINTS) {
@@ -235,6 +237,31 @@ export class GameRoom extends DurableObject {
         if (!this.hostId) this.hostId = info.id;
       }
     }
+    // Lobbyledaren och spelsättet sparas i rummets minne, så att de överlever när rummet somnar
+    // (annars glömde servern vem som var ledare och startknappen slutade fungera efter en match).
+    if (this.ctx.storage && this.ctx.blockConcurrencyWhile) {
+      this.ctx.blockConcurrencyWhile(async () => {
+        const saved = await this.ctx.storage.get(["host", "mode"]);
+        const host = saved.get("host");
+        const mode = saved.get("mode");
+        if (host && this.players.has(host)) this.hostId = host;
+        if (MODES.includes(mode)) this.mode = mode;
+      });
+    }
+  }
+
+  // Spara något i rummets minne (finns inte i testerna, då händer inget)
+  remember(key, value) {
+    try {
+      this.ctx.storage?.put(key, value);
+    } catch {
+      // ignorera
+    }
+  }
+
+  setHost(id) {
+    this.hostId = id;
+    this.remember("host", id);
   }
 
   async fetch(request) {
@@ -375,7 +402,7 @@ export class GameRoom extends DurableObject {
     // Kommer man in mitt i en match får man titta på tills nästa runda
     player.dead = this.phase !== "lobby";
     this.players.set(player.id, player);
-    if (!this.hostId) this.hostId = player.id;
+    if (!this.hostId || !this.players.has(this.hostId)) this.setHost(player.id);
 
     this.send(ws, {
       t: "welcome",
@@ -434,6 +461,7 @@ export class GameRoom extends DurableObject {
   handleMode(player, mode) {
     if (player.id !== this.hostId || this.phase !== "lobby" || !MODES.includes(mode)) return;
     this.mode = mode;
+    this.remember("mode", mode);
     if (mode === "team") this.fillTeams();
     this.broadcast({ t: "mode", m: mode, teams: this.teamsTable() });
   }
@@ -693,8 +721,30 @@ export class GameRoom extends DurableObject {
     this.broadcast({
       t: "matchEnd", winner, team, mode: this.mode,
       wins: this.winsTable(), kills: this.killsTable(), teamWins: this.teamWins,
+      podium: this.podium(winner, team),
     });
     this.later(MATCH.matchEndDelay, token, () => this.toLobby());
+  }
+
+  // Prispallen: [etta, tvåa, trea] (spelar-id, bara de som fortfarande är kvar)
+  podium(winner, team) {
+    const here = (id) => id && this.players.has(id);
+    const byScore = (a, b) => b.wins - a.wins || b.kills - a.kills;
+    let order = [];
+    if (this.mode === "team" && team !== null) {
+      // Vinnande laget: bäst (flest dråp) högst upp
+      order = [...this.players.values()].filter((p) => p.team === team).sort((a, b) => b.kills - a.kills).map((p) => p.id);
+    } else if (this.mode === "tourney" && this.bracket) {
+      const final = this.bracket[this.bracket.length - 1][0];
+      const loserOf = (m) => (m && m.w ? (m.a === m.w ? m.b : m.a) : null);
+      const semis = this.bracket.length > 1 ? this.bracket[this.bracket.length - 2] : [];
+      const thirds = semis.map(loserOf).filter(here).map((id) => this.players.get(id)).sort((a, b) => b.kills - a.kills);
+      order = [winner ?? final.w, loserOf(final), thirds[0]?.id];
+    } else {
+      order = [...this.players.values()].sort(byScore).map((p) => p.id);
+      if (winner) order = [winner, ...order.filter((id) => id !== winner)];
+    }
+    return [0, 1, 2].map((i) => (here(order[i]) ? order[i] : null));
   }
 
   toLobby() {
@@ -737,18 +787,23 @@ export class GameRoom extends DurableObject {
     const t = now();
     if (!this.canFight(player) || t < player.staggerUntil) return;
 
-    const spec = specOf(kind);
+    const w = player.look?.w ?? 0;
+    const spec = attackSpec(kind, w);
 
     if (kind === "h") {
       if (t < player.nextHeavy - TOLERANCE) return;
-      if (player.chargeStart === null || t - player.chargeStart < COMBAT.heavy.charge - 0.2) return;
+      if (player.chargeStart === null || t - player.chargeStart < spec.charge - 0.2) return;
+    } else if (kind === "t") {
+      if (t < player.nextThrust - TOLERANCE) return; // stöten har en egen, längre väntetid
     } else if (t < player.nextQuick - TOLERANCE) {
       return;
     }
 
     player.chargeStart = null;
-    player.nextQuick = t + spec.cooldown;
-    player.nextHeavy = t + (kind === "h" ? COMBAT.heavy.cooldown : COMBAT.quick.cooldown);
+    const cds = cooldownsAfter(kind, w);
+    player.nextQuick = t + cds.quick;
+    player.nextHeavy = t + cds.heavy;
+    player.nextThrust = Math.max(player.nextThrust, t + cds.thrust);
 
     // Vad siktade spelaren på? { id: motståndare, seg: kroppsdel }
     const aimInfo = aim && typeof aim.id === "string" && typeof aim.seg === "string" && AIM_JOINT[aim.seg]
@@ -767,15 +822,28 @@ export class GameRoom extends DurableObject {
     const t = now();
     if (t < attacker.staggerUntil) return; // blev själv parerad under tiden
 
-    const spec = specOf(kind);
+    const w = attacker.look?.w ?? 0;
+    const ws = weaponSpec(w);
+    const spec = attackSpec(kind, w);
 
     // Vilka står inom räckhåll och framför den som slår?
     const targets = this.inCone(attacker, spec.reach, spec.arc);
 
+    // Zweihändern: ett tungt slag som missar får riddaren att snurra runt och vingla
+    if (targets.length === 0 && kind === "h" && ws.whiffStagger) {
+      attacker.staggerUntil = t + ws.whiffStagger;
+      attacker.chargeStart = null;
+      this.broadcast({ t: "whiff", id: attacker.id });
+      return;
+    }
+
     // Parering: tryckte någon av måltavlorna parera precis innan, vänd mot den som slår?
+    // Med tvåhandsvapen parerar man med vapnet: kortare fönster. Slagkedjan går ibland runt skölden.
     for (const target of targets) {
       const sinceParry = t - target.lastParry;
-      if (sinceParry < 0 || sinceParry > COMBAT.parry.window) continue;
+      const window = COMBAT.parry.window * (weaponSpec(target.look?.w ?? 0).twoHanded ? 0.7 : 1);
+      if (sinceParry < 0 || sinceParry > window) continue;
+      if (ws.parryBypass && Math.random() < ws.parryBypass) continue;
       const tx = Math.sin(target.r);
       const tz = Math.cos(target.r);
       const facing = tx * (attacker.p[0] - target.p[0]) + tz * (attacker.p[2] - target.p[2]);
@@ -789,10 +857,13 @@ export class GameRoom extends DurableObject {
     }
 
     for (const target of targets) {
-      target.hp = Math.max(0, target.hp - spec.damage);
+      // Hillebarden är klumpig på nära håll: halv skada om man står för nära
+      const dist = Math.hypot(target.p[0] - attacker.p[0], target.p[2] - attacker.p[2]);
+      const damage = Math.round(spec.damage * (ws.minRange && dist < ws.minRange ? 0.5 : 1));
+      target.hp = Math.max(0, target.hp - damage);
       const dead = target.hp === 0;
       const aimSeg = aimInfo && aimInfo.id === target.id ? aimInfo.seg : null;
-      const sev = chooseSever(target, kind, dead, aimSeg);
+      const sev = chooseSever(target, kind, dead, aimSeg, Math.random, damage, ws.sever);
       if (sev) target.severed.push(sev);
       // Tunga slag kan slå av hjälmen (bara utseende). Siktar man på huvudet åker den alltid.
       let hk = 0;
@@ -897,7 +968,7 @@ export class GameRoom extends DurableObject {
     // Ny lobbyledare om ledaren gick
     if (this.hostId === info.id) {
       const next = this.players.keys().next();
-      this.hostId = next.done ? null : next.value;
+      this.setHost(next.done ? null : next.value);
       if (this.hostId) this.broadcast({ t: "host", id: this.hostId });
     }
 

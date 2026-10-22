@@ -15,7 +15,10 @@ export const SHIN = 0.40;  // underbenets längd
 //   hipX = lårets vinkel framåt/bakåt (minus = framåt, så som riddarens leder är byggda)
 //   hipZ = lårets vinkel ut åt sidan
 //   knee = knäböj (plus = foten bakåt)
-export function solveLeg(target) {
+// upper/lower = längden på de två delarna (lår och underben som standard; används även för armar)
+export function solveLeg(target, upper = THIGH, lower = SHIN) {
+  const THIGH = upper;
+  const SHIN = lower;
   const [X, Y, Z] = target;
   const maxReach = THIGH + SHIN - 0.0005;
   let D = Math.hypot(X, Y, Z);
@@ -30,7 +33,7 @@ export function solveLeg(target) {
     tz *= s;
     D = maxReach;
   }
-  if (D < 0.12) D = 0.12;
+  if (D < Math.abs(THIGH - SHIN) + 0.02) D = Math.abs(THIGH - SHIN) + 0.02;
 
   // Knät: cosinussatsen
   const cosKnee = (D * D - THIGH * THIGH - SHIN * SHIN) / (2 * THIGH * SHIN);
@@ -48,6 +51,13 @@ export function solveLeg(target) {
   // Framåtvinkel (X-rotation): vrider (yRot, zRot) till (ty, tz)
   const hipX = Math.atan2(tz, ty) - Math.atan2(zRot, yRot);
   return { hipX: wrapAngle(hipX), hipZ, knee };
+}
+
+// En arm (armbågen böjs framåt, tvärtom mot knät): spegla framåt/bakåt och använd samma lösare.
+// target = handledens position i axelns koordinater. Returnerar { upperX, upperZ, elbow }.
+export function solveArm(target, upper = 0.29, lower = 0.26) {
+  const { hipX, hipZ, knee } = solveLeg([target[0], target[1], -target[2]], upper, lower);
+  return { upperX: -hipX, upperZ: hipZ, elbow: -knee };
 }
 
 // Kontroll åt andra hållet: var hamnar fotleden med givna vinklar? (används i testerna)

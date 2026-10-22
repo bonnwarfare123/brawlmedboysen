@@ -190,7 +190,7 @@ button.small {
   bottom: 22px;
   left: 50%;
   transform: translateX(-50%);
-  width: 320px;
+  width: 360px;
   max-width: calc(100% - 32px);
 }
 
@@ -222,7 +222,7 @@ button.small {
 
 .cooldowns {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 6px;
   margin-top: 6px;
 }
@@ -420,7 +420,9 @@ body[data-phase="matchEnd"] #crosshair,
 body[data-phase="matchEnd"] #click-hint,
 body[data-phase="bracket"] #crosshair,
 body[data-phase="bracket"] #click-hint,
-body[data-phase="bracket"] #combat-hud { display: none; }
+body[data-phase="bracket"] #combat-hud,
+body[data-phase="matchEnd"] #combat-hud,
+body[data-phase="matchEnd"] .help { display: none; }
 
 /* ---------- Utseende och volym ---------- */
 .look-row {
@@ -475,3 +477,9 @@ body[data-phase="bracket"] #combat-hud { display: none; }
 .bracket-slot.empty { opacity: 0.5; font-style: italic; }
 .bracket-slot .score { margin-left: auto; font-weight: bold; }
 .bracket-champion { align-self: center; text-align: center; font-size: 18px; font-weight: bold; min-width: 140px; }
+
+/* Resultattavlan under prisceremonin: liten, uppe i högra hörnet, så man ser prispallen */
+#scoreboard.corner { background: none; pointer-events: none; align-items: flex-start; justify-content: flex-end; padding: 16px; }
+#scoreboard.corner .card { transform: scale(0.78); transform-origin: top right; background: rgba(255, 248, 232, 0.88); animation: slide-in 0.6s ease-out; }
+@keyframes slide-in { from { opacity: 0; transform: translateX(40px) scale(0.78); } to { opacity: 1; transform: scale(0.78); } }
+.look-row button:disabled { opacity: 0.35; cursor: default; }

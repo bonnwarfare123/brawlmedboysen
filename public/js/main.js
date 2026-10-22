@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { CONFIG } from "./config.js";
 import {
   COLORS, ARENA_RX, ARENA_RZ, ROOM_CODE_RE, VERSION, COMBAT, MATCH, ARMORS, HELMETS, SHIELDS, WEAPONS, CAPES, MODE_NAMES, TEAMS,
+  attackSpec, cooldownsAfter, weaponSpec,
 } from "./shared.js";
 import { buildArena, makeSky } from "./arena.js";
 import { Knight, setEnvironment } from "./knight.js";
@@ -200,6 +201,15 @@ function playerById(id) {
   return others.get(id) || null;
 }
 
+// Ljuden finns för tre sorters vapen: 0 = klinga, 1 = yxblad, 2 = kedja
+const SOUND_KIND = [0, 1, 2, 0, 1, 1, 0];
+function soundWeapon(player) {
+  return SOUND_KIND[player?.look?.w ?? 0] ?? 0;
+}
+function weaponOf(player) {
+  return player?.look?.w ?? 0;
+}
+
 function positionOf(player) {
   return player === me ? me.pos : player.knight.group.position;
 }
@@ -331,6 +341,12 @@ function createKnight(player) {
   if (player.helmetOff) knight.removeHelmet();
   // Fotspår i sanden och små knaster-ljud när fötterna sätts ner
   const metal = player.look && (player.look.a === 0 || player.look.a === 3);
+  // Zweihänderns spets ritar ett spår och dammar i sanden
+  knight.onWeaponDrag = (x, z) => {
+    if (phase !== "round" && phase !== "countdown") return;
+    _stepPos.set(x, 0.05, z);
+    effects.dust(_stepPos, 1, 0.5);
+  };
   knight.onFootstep = (side, [x, z], yaw) => {
     if (phase !== "round" && phase !== "countdown") return;
     effects.footprint(x, z, yaw, side);
@@ -371,6 +387,109 @@ function lineup() {
 }
 
 // ---------------------------------------------------------------------------
+// Prisceremonin efter matchen: prispallen reser sig, de tre bästa ställer sig på den
+// och resten står framför och applåderar. Kameran glider runt pallen.
+// ---------------------------------------------------------------------------
+
+const CEREMONY_WAIT = 2.2; // sekunder att se sista dråpet innan pallen kommer
+const CEREMONY_RISE = 1.7; // så lång tid tar det för pallen att resa sig
+let ceremony = null;       // { at, placed, ranks: Map(id → 1–3), clappers: [id] }
+
+function podiumOrder(msg) {
+  if (Array.isArray(msg.podium)) return msg.podium;
+  // Äldre server: sortera själv
+  const list = allPlayers().sort((a, b) => b.wins - a.wins || b.kills - a.kills).map((p) => p.id);
+  if (msg.winner) return [msg.winner, ...list.filter((id) => id !== msg.winner)].slice(0, 3);
+  return list.slice(0, 3);
+}
+
+function startCeremony(msg) {
+  const ranks = new Map();
+  podiumOrder(msg).forEach((id, i) => {
+    if (id && playerById(id)) ranks.set(id, i + 1);
+  });
+  ceremony = { at: seconds() + CEREMONY_WAIT, placed: false, risen: false, ranks, clappers: [] };
+}
+
+function ceremonyActive() {
+  return !!(ceremony && ceremony.risen);
+}
+
+function endCeremony() {
+  ceremony = null;
+  arena.podium.hide();
+  $("scoreboard").hidden = true;
+  $("scoreboard").classList.remove("corner");
+}
+
+function updateCeremony(dt) {
+  if (!ceremony || phase !== "matchEnd") return;
+  const t = seconds() - ceremony.at;
+  if (t < 0) return;
+  if (!ceremony.risen) {
+    // Pallen reser sig. Kropparna och de avhuggna delarna försvinner i ett dammoln.
+    ceremony.risen = true;
+    arena.podium.show();
+    debris.clear();
+    pendingPools.length = 0;
+    $("death").hidden = true;
+    $("spectate").hidden = true;
+    const c = new THREE.Vector3(0, 0.2, 0);
+    effects.dust(c, 30, 3);
+    sound.kickHit?.(c);
+    for (const p of allPlayers()) {
+      p.dead = false;
+      p.corpse = null;
+      p.spectating = false;
+      p.hp = COMBAT.maxHp;
+      rebuildKnight(p);
+      p.knight.group.visible = false;
+    }
+    arena.cheer(1);
+  }
+  if (!ceremony.placed && t >= CEREMONY_RISE) {
+    ceremony.placed = true;
+    ceremony.clappers = allPlayers().filter((p) => !ceremony.ranks.has(p.id)).map((p) => p.id);
+    for (const p of allPlayers()) {
+      const rank = ceremony.ranks.get(p.id);
+      p.knight.group.visible = true;
+      p.knight.playVictory(rank === 1 ? 1 : rank ? 2 : 3);
+      const pos = positionOf(p);
+      effects.dust(rank ? arena.podium.spot(rank) : pos, 6, 1);
+    }
+    arena.heraldBlow();
+    arena.royalReact(true);
+    arena.cheer(1.5);
+    sound.matchWin();
+    $("scoreboard").hidden = false;
+  }
+  if (!ceremony.placed) return;
+  // Alla står på sin plats och gör sin segergest
+  const yaw = arena.podium.yaw();
+  const n = ceremony.clappers.length;
+  for (const p of allPlayers()) {
+    const rank = ceremony.ranks.get(p.id);
+    const spot = rank ? arena.podium.spot(rank) : arena.podium.crowdSpot(ceremony.clappers.indexOf(p.id), n);
+    const k = p.knight;
+    k.group.position.copy(spot);
+    // De som står framför vänder sig mot pallen
+    k.group.rotation.y = rank ? yaw : Math.atan2(-spot.x, -spot.z);
+    k.groundY = spot.y;
+    if (p === me) {
+      me.pos.copy(spot);
+      me.yaw = k.group.rotation.y;
+      me.vel.set(0, 0, 0);
+    } else {
+      p.target.copy(spot);
+      p.targetYaw = k.group.rotation.y;
+    }
+    k.animate(dt, { speed: 0, forward: 0, side: 0, airborne: false });
+  }
+  // Publiken jublar då och då
+  if (Math.random() < dt * 0.5) arena.cheer(0.6);
+}
+
+// ---------------------------------------------------------------------------
 // Nätverk: vad som händer när servern skickar något
 // ---------------------------------------------------------------------------
 
@@ -407,6 +526,7 @@ const net = new Net({
       dead: you.dead,
       nextQuick: 0,
       nextHeavy: 0,
+      nextThrust: 0,
       nextParry: 0,
       staggerUntil: 0,
       attackUntil: 0,
@@ -567,7 +687,6 @@ const net = new Net({
     $("spectate").hidden = true;
     $("death").hidden = true;
     stopCharging(false);
-    arena.clearThrown();
     // Ny match: rustningarna är hela och rena igen
     if (round === 1) for (const p of allPlayers()) p.wear = freshWear();
     for (const p of allPlayers()) p.helmetOff = false;
@@ -607,7 +726,7 @@ const net = new Net({
         camYaw = s.r;
         camPitch = 0.25;
         me.staggerUntil = 0;
-        me.nextQuick = me.nextHeavy = me.nextParry = 0;
+        me.nextQuick = me.nextHeavy = me.nextThrust = me.nextParry = 0;
       } else {
         player.target.set(s.p[0], s.p[1], s.p[2]);
         player.targetYaw = s.r;
@@ -656,13 +775,6 @@ const net = new Net({
     } else {
       callout("Ingen vann rundan!", 2500);
     }
-    // Publiken kastar rosor till vinnaren och tomater på förlorarna
-    for (const p of winners) arena.throwAt("rose", positionOf(p).clone(), 7);
-    for (const p of allPlayers()) {
-      if (!p.corpse || p.spectating) continue;
-      const c = p.corpse.center();
-      arena.throwAt("tomato", new THREE.Vector3(c[0], 0, c[2]), 6);
-    }
     sound.roundWin();
     arena.cheer(1);
     renderPlayerList();
@@ -703,19 +815,21 @@ const net = new Net({
         tr.append(name, wins, kills);
         tbody.appendChild(tr);
       });
-    $("scoreboard").hidden = false;
+    $("scoreboard").hidden = true;
+    $("scoreboard").classList.add("corner");
     if (document.pointerLockElement) document.exitPointerLock();
-    sound.matchWin();
     arena.cheer(1.5);
+    sound.roundWin();
     sound.setBattleMusic(false);
     renderPlayerList();
+    startCeremony(msg);
   },
 
   lobby() {
     duel = null;
     teamWins = [0, 0];
     $("bracket").hidden = true;
-    arena.clearThrown();
+    endCeremony();
     for (const p of allPlayers()) {
       p.hp = COMBAT.maxHp;
       p.dead = false;
@@ -750,9 +864,25 @@ const net = new Net({
     if (!other) return;
     other.knight.playAttack(msg.k);
     const pos = other.knight.group.position;
-    sound.swing(pos, msg.k === "h", msg.k, other.look?.w ?? 0);
+    sound.swing(pos, msg.k === "h" || weaponSpec(weaponOf(other)).twoHanded, msg.k, soundWeapon(other));
     sound.grunt(pos, voiceOf(other), msg.k === "h");
     checkQuintain(other, msg.k);
+  },
+
+  // Zweihändern missade ett tungt slag: riddaren snurrar runt av tyngden
+  whiff(msg) {
+    const player = playerById(msg.id);
+    if (!player || player.dead) return;
+    player.knight.playWhiff();
+    const pos = positionOf(player);
+    effects.dust(pos, 8, 1.4);
+    sound.grunt(pos, voiceOf(player), true);
+    arena.cheer(0.25);
+    if (player === me) {
+      me.staggerUntil = seconds() + (weaponSpec(weaponOf(me)).whiffStagger ?? 0.9);
+      stopCharging(false);
+      callout("Bom! Svärdet drog med dig runt", 1400);
+    }
   },
 
   par(msg) {
@@ -806,7 +936,7 @@ const net = new Net({
 
     const heavy = msg.k === "h";
     effects.blood(spot, heavy ? 26 : 14, dir, heavy ? 1.3 : 1);
-    sound.hit(spot, heavy, attacker?.look?.w ?? 0);
+    sound.hit(spot, heavy, soundWeapon(attacker));
     if (!msg.dead && !msg.sev) sound.hurt(spot, voiceOf(victim), heavy ? 1 : 0.55);
 
     // Hjälmen flyger av (tunga slag mot huvudet)
@@ -964,6 +1094,7 @@ function applyWins(wins) {
 // ---------------------------------------------------------------------------
 
 function enterLobby() {
+  endCeremony();
   setPhase("lobby");
   sound.setBattleMusic(false);
   round = 0;
@@ -1038,7 +1169,10 @@ function renderLobby() {
 
   $("look-a").textContent = ARMORS[me.look.a] ?? "";
   $("look-h").textContent = HELMETS[me.look.h] ?? "";
-  $("look-s").textContent = SHIELDS[me.look.s] ?? "";
+  // Tvåhandsvapen: ingen sköld
+  const twoHanded = weaponSpec(me.look.w ?? 0).twoHanded;
+  $("look-s").textContent = twoHanded ? "— (tvåhandsvapen)" : SHIELDS[me.look.s] ?? "";
+  document.querySelectorAll('[data-look="s"]').forEach((b) => (b.disabled = !!twoHanded));
   $("look-w").textContent = WEAPONS[me.look.w ?? 0] ?? "";
   $("look-c").textContent = CAPES[me.look.c ?? 0] ?? "";
 
@@ -1209,15 +1343,17 @@ function setCooldown(id, readyAt, total) {
 
 function renderCooldowns() {
   if (!me) return;
-  setCooldown("cd-q", me.nextQuick, COMBAT.quick.cooldown);
+  const w = weaponOf(me);
+  setCooldown("cd-q", me.nextQuick, attackSpec("q", w).cooldown);
+  setCooldown("cd-t", me.nextThrust, attackSpec("t", w).cooldown);
   if (charging) {
-    const progress = Math.min(1, (seconds() - mouseDownAt) / COMBAT.heavy.charge);
+    const progress = Math.min(1, (seconds() - mouseDownAt) / attackSpec("h", w).charge);
     const el = $("cd-h");
     el.querySelector(".cd-fill").style.width = progress * 100 + "%";
     el.classList.toggle("charged", progress >= 1);
     el.classList.remove("ready");
   } else {
-    setCooldown("cd-h", me.nextHeavy, COMBAT.heavy.cooldown);
+    setCooldown("cd-h", me.nextHeavy, attackSpec("h", w).cooldown);
   }
   setCooldown("cd-p", me.nextParry, COMBAT.parry.cooldown);
   if (me.dead) $("respawn-timer").textContent = "Väntar på nästa runda…";
@@ -1364,7 +1500,7 @@ document.addEventListener("mouseup", (e) => {
 
   if (charging) {
     const held = seconds() - mouseDownAt;
-    if (held >= COMBAT.heavy.charge) {
+    if (held >= attackSpec("h", weaponOf(me)).charge) {
       stopCharging(false);
       tryAttack("h");
     } else {
@@ -1396,17 +1532,23 @@ function stopCharging(tellServer) {
 function tryAttack(kind) {
   if (!canAct()) return;
   const t = seconds();
-  if (kind === "h" ? t < me.nextHeavy : t < me.nextQuick) return;
+  if (kind === "h" ? t < me.nextHeavy : kind === "t" ? t < me.nextThrust : t < me.nextQuick) {
+    if (kind === "t") callout("Stöten är inte redo än", 600);
+    return;
+  }
 
-  const spec = kind === "h" ? COMBAT.heavy : kind === "t" ? COMBAT.thrust : COMBAT.quick;
-  me.nextQuick = t + spec.cooldown;
-  me.nextHeavy = t + (kind === "h" ? COMBAT.heavy.cooldown : COMBAT.quick.cooldown);
+  const w = weaponOf(me);
+  const spec = attackSpec(kind, w);
+  const cds = cooldownsAfter(kind, w);
+  me.nextQuick = t + cds.quick;
+  me.nextHeavy = t + cds.heavy;
+  me.nextThrust = Math.max(me.nextThrust, t + cds.thrust);
   me.attackUntil = t + spec.windup + 0.15;
   me.knight.playAttack(kind); // visa slaget direkt, servern avgör om det träffar
-  sound.swing(me.pos, kind === "h", kind, me.look?.w ?? 0);
+  sound.swing(me.pos, kind === "h" || weaponSpec(weaponOf(me)).twoHanded, kind, soundWeapon(me));
   sound.grunt(me.pos, voiceOf(me), kind === "h");
   checkQuintain(me, kind);
-  if (kind === "t") me.knock.addScaledVector(forward.set(Math.sin(me.yaw), 0, Math.cos(me.yaw)), 3); // litet utfall framåt
+  if (kind === "t") me.knock.addScaledVector(forward.set(Math.sin(me.yaw), 0, Math.cos(me.yaw)), 4.5); // utfallssteg framåt
   sendStateNow(); // se till att servern har exakt var vi står och tittar
   const msg = { t: "atk", k: kind };
   if (aim) msg.aim = { id: aim.id, seg: aim.seg }; // kroppsdelen under siktet
@@ -1415,7 +1557,7 @@ function tryAttack(kind) {
 
 // Träningsdockan snurrar om slaget träffar den (bara på riktigt hos varje spelare, servern bryr sig inte)
 function checkQuintain(player, kind) {
-  const spec = kind === "h" ? COMBAT.heavy : kind === "t" ? COMBAT.thrust : COMBAT.quick;
+  const spec = attackSpec(kind, weaponOf(player));
   setTimeout(() => {
     if (phase !== "round" && phase !== "lobby" && phase !== "roundEnd") return;
     const pos = positionOf(player);
@@ -1489,7 +1631,7 @@ function updateAim() {
     .filter((o) => !o.dead && o.knight.group.visible && !(mode === "team" && o.team === me.team))
     .map((o) => o.knight.group);
   raycaster.setFromCamera(screenCenter, camera);
-  raycaster.far = CONFIG.cameraDistance + COMBAT.heavy.reach + 2;
+  raycaster.far = CONFIG.cameraDistance + COMBAT.heavy.reach + 1.2 + 2; // + längsta vapnet
   const hits = raycaster.intersectObjects(targets, true);
   for (const hit of hits) {
     if (!hit.object.isMesh) continue; // t.ex. namnskylten
@@ -1643,6 +1785,7 @@ function updateMe(dt) {
   }
   me.wasOnGround = me.onGround;
 
+  if (ceremonyActive()) return; // prisceremonin styr riddaren
   me.knight.group.position.copy(me.pos);
   me.knight.group.rotation.y = me.yaw;
   if (!me.dead) {
@@ -1658,6 +1801,7 @@ const measuredVel = new THREE.Vector3();
 function updateOthers(dt) {
   const t = 1 - Math.exp(-dt * 12); // mjuk förflyttning mot senaste kända position
   for (const other of others.values()) {
+    if (ceremonyActive()) break; // prisceremonin styr riddarna
     const group = other.knight.group;
     prevPos.copy(group.position);
     if (group.position.distanceTo(other.target) > 5) {
@@ -1740,6 +1884,15 @@ function updateCamera(dt) {
     // Riddarna på rad; kameran lite åt vänster så lobbyrutan inte skymmer dem
     camera.position.set(-1.4, 1.7, 7.2);
     camera.lookAt(-1.4, 1.1, 2);
+    return;
+  }
+  if (phase === "matchEnd" && ceremonyActive()) {
+    // Kameran gungar fram och tillbaka framför prispallen (som vänder sig mot kungen, -Z)
+    const t = seconds() - ceremony.at;
+    const a = Math.PI + Math.sin(t * 0.22) * 0.75;
+    const r = 7.2 - Math.min(1, t / 6) * 1.4;
+    camera.position.set(Math.sin(a) * r, 2.3 + Math.sin(t * 0.3) * 0.3, Math.cos(a) * r);
+    camera.lookAt(0, 1.3, 0);
     return;
   }
   if (phase === "bracket" || phase === "matchEnd") {
@@ -1873,6 +2026,7 @@ function frame() {
     renderCooldowns();
   }
   updateOthers(dt);
+  updateCeremony(dt);
   updateBleeding(dt);
   debris.update(dt);
   effects.update(dt);

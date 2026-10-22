@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.9";
+export const VERSION = "0.10";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -9,7 +9,7 @@ export const COMBAT = {
   maxHp: 100,
   quick: { damage: 25, windup: 0.3, cooldown: 0.6, reach: 2.1, arc: 60 },
   heavy: { damage: 50, charge: 0.8, windup: 0.3, cooldown: 1.5, reach: 2.4, arc: 50 },
-  thrust: { damage: 20, windup: 0.22, cooldown: 0.6, reach: 2.8, arc: 22 }, // stöt: lång men smal
+  thrust: { damage: 20, windup: 0.26, cooldown: 1.5, reach: 2.8, arc: 22 }, // stöt: lång men smal, egen längre väntetid
   // Spark: ingen skada, men knuffar bort och får motståndaren att vingla (bryter laddning och parering)
   kick: { windup: 0.18, cooldown: 1.5, reach: 1.7, arc: 55, push: 7, stagger: 0.6 },
   emoteCooldown: 1.5,
@@ -35,7 +35,48 @@ export const COMBAT = {
 export const ARMORS = ["Plåtrustning", "Ringbrynja", "Läderrustning", "Praktrustning", "Bonde"];
 export const HELMETS = ["Tunnhjälm", "Visirhjälm", "Järnhatt", "Hornhjälm", "Plymhjälm", "Kastrull", "Halmhatt"];
 export const SHIELDS = ["Rund", "Droppformad", "Riddarsköld", "Bucklare", "Pavis"];
-export const WEAPONS = ["Svärd", "Yxa", "Slagkedja"]; // alla exakt lika starka och snabba
+export const WEAPONS = ["Svärd", "Yxa", "Slagkedja", "Tvåhandssvärd", "Stridsyxa", "Hillebard", "Zweihänder"];
+
+// VAPNENS EGENSKAPER (gånger grundvärdena i COMBAT ovan; 1 = som svärdet)
+//   damage = skada, speed = hur lång tid slaget tar (större = långsammare), recover = väntetid efter slaget,
+//   reach = extra räckvidd i meter, arc = hur brett slaget tar (mindre = smalare), sever = hur lätt lemmar åker av,
+//   thrust = stötens skada, twoHanded = ingen sköld (parerar med vapnet, kortare fönster)
+export const WEAPON_SPECS = [
+  { key: "sword", damage: 1, speed: 1, recover: 1, reach: 0, arc: 1, sever: 1, thrust: 1.15 },
+  { key: "axe", damage: 1.15, speed: 1.1, recover: 1.1, reach: 0, arc: 1, sever: 1.4, thrust: 0.7 },
+  { key: "flail", damage: 1.05, speed: 1.05, recover: 1.2, reach: 0.1, arc: 1.1, sever: 1.1, thrust: 0.6, parryBypass: 0.4 },
+  { key: "twohander", damage: 1.35, speed: 1.25, recover: 1.3, reach: 0.6, arc: 0.95, sever: 1.25, thrust: 1.2, twoHanded: true },
+  { key: "daneaxe", damage: 1.55, speed: 1.4, recover: 1.45, reach: 0.4, arc: 1, sever: 1.8, thrust: 0.8, twoHanded: true },
+  { key: "halberd", damage: 1.2, speed: 1.3, recover: 1.35, reach: 1.0, arc: 0.8, sever: 1.3, thrust: 1.5, thrustReach: 1.2, minRange: 1.0, twoHanded: true },
+  { key: "zweihander", damage: 1.9, speed: 1.6, recover: 1.8, reach: 1.1, arc: 0.7, sever: 2.2, thrust: 1.3, twoHanded: true, whiffStagger: 0.9 },
+];
+
+export function weaponSpec(w) {
+  return WEAPON_SPECS[w] || WEAPON_SPECS[0];
+}
+
+// Ett slags egenskaper med ett visst vapen. kind: "q" snabbt, "h" tungt, "t" stöt
+export function attackSpec(kind, w) {
+  const base = kind === "h" ? COMBAT.heavy : kind === "t" ? COMBAT.thrust : COMBAT.quick;
+  const ws = weaponSpec(w);
+  return {
+    damage: Math.round(base.damage * ws.damage * (kind === "t" ? ws.thrust : 1)),
+    windup: base.windup * ws.speed,
+    cooldown: base.cooldown * ws.recover,
+    charge: kind === "h" ? COMBAT.heavy.charge * ws.speed : 0,
+    reach: base.reach + (kind === "t" ? ws.thrustReach ?? ws.reach : ws.reach),
+    arc: base.arc * ws.arc,
+  };
+}
+
+// Väntetider efter ett slag: när kan man slå snabbt, tungt eller stöta igen? (sekunder från nu)
+export function cooldownsAfter(kind, w) {
+  const ws = weaponSpec(w);
+  const quick = COMBAT.quick.cooldown * ws.recover;
+  if (kind === "h") return { quick, heavy: COMBAT.heavy.cooldown * ws.recover, thrust: Math.max(quick, 0.9 * ws.recover) };
+  if (kind === "t") return { quick, heavy: quick, thrust: COMBAT.thrust.cooldown * ws.recover };
+  return { quick, heavy: quick, thrust: quick };
+}
 export const CAPES = ["Nej", "Ja"];
 
 // SPELSÄTT
@@ -52,7 +93,7 @@ export const MATCH = {
   minPlayers: 2,       // minst så många för att kunna starta
   countdown: 3,        // sekunder innan rundan börjar
   roundEndDelay: 4,    // sekunder mellan rundor
-  matchEndDelay: 8,    // sekunder resultattavlan visas innan alla går tillbaka till lobbyn
+  matchEndDelay: 13,   // sekunder för prisceremonin innan alla går tillbaka till lobbyn
   duelRoundsToWin: 2,  // turnering: bäst av 3 rundor per duell
   bracketDelay: 6,     // sekunder turneringsträdet visas mellan duellerna
   helmetKnockChance: 0.15, // chans att hjälmen flyger av vid tunga slag som inte siktar på huvudet
