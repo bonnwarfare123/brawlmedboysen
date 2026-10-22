@@ -16,7 +16,7 @@ const MAX_PRINTS = 90;
 
 const WET = new THREE.Color(0x7c0909);   // färskt blod
 const DRY = new THREE.Color(0x3a0705);   // intorkat blod
-const PRINT = new THREE.Color(0x5a4228); // fotspår (mörk sand)
+const PRINT = new THREE.Color(0x5e4630); // fotspår (lite mörkare sand)
 const DIRT = new THREE.Color(0x8a6a48);  // marken (fotspåren tonar mot den)
 
 const _m = new THREE.Matrix4();
@@ -81,6 +81,8 @@ export class Effects {
     scene.add(this.pools.mesh);
     this.prints = groundDecals(footprintTexture(), MAX_PRINTS, 0);
     this.prints.mesh.material.roughness = 1;
+    this.prints.mesh.material.alphaTest = 0.01; // mjuk kant, inget skarpt streck
+    this.prints.mesh.material.opacity = 0.7;
     scene.add(this.prints.mesh);
     this.colorTimer = 0;
 
@@ -197,7 +199,7 @@ export class Effects {
     const lx = side === "L" ? 0.02 : -0.02;
     _q.setFromAxisAngle(_up, yaw + Math.PI);
     _p.set(x + lx * Math.cos(yaw), 0.013, z - lx * Math.sin(yaw));
-    _s.set(0.13, 1, 0.3);
+    _s.set(0.12, 1, 0.28);
     _m.compose(_p, _q, _s);
     this.prints.mesh.setMatrixAt(i, _m);
     this.prints.mesh.setColorAt(i, PRINT);

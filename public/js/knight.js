@@ -1,14 +1,14 @@
-// RIDDAREN – formade lemmar, rustning i enskilda delar och riktiga leder.
+// RIDDAREN – formade lemmar, rustning i enskilda delar, ansikte och riktiga leder.
 // Riddaren tittar mot +Z. Origo (0,0,0) är mellan fötterna. Längd ca 1,8 m.
 //
 // Kroppen består av 15 delar som sitter ihop i leder:
 //
 //   pelvis (höfter)
 //    ├ torso (bål)            ← midja
-//    │  ├ head (huvud)        ← hals
+//    │  ├ head (huvud)        ← hals     (ansikte under hjälmen, hjälmen kan flyga av)
 //    │  ├ upperArmL/R         ← axel
 //    │  │  └ forearmL/R       ← armbåge
-//    │  │     └ handL/R       ← handled   (sköld i vänster, svärd i höger)
+//    │  │     └ handL/R       ← handled   (sköld i vänster, vapen i höger)
 //    ├ thighL/R (lår)         ← höft
 //    │  └ shinL/R (underben)  ← knä
 //    │     └ footL/R (fot)    ← fotled
@@ -16,21 +16,26 @@
 // Varje led kan huggas av. Då blir delen (och allt som sitter längre ut)
 // en egen ragdoll som flyger iväg.
 //
-// Utseendet väljs med look = { a: rustning, h: hjälm, s: sköld } (se listorna i shared.js).
+// Utseendet väljs med look = { a: rustning, h: hjälm, s: sköld, w: vapen, c: mantel } (se shared.js).
 // Benen styrs av en benlösare (ik.js) så att fötterna står stadigt på marken.
+// Mantel, vapenrock och slagkedja är mjuka och styrs av fysik (cloth.js).
 
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { COMBAT, JOINT_SEGMENT, LEG_JOINTS } from "./shared.js";
 import { Ragdoll } from "./ragdoll.js";
-import { FootPlanner, solveLeg } from "./ik.js";
+import { FootPlanner, solveLeg, gaitStride } from "./ik.js";
+import { Cloth, Chain } from "./cloth.js";
 import {
   chainmailTexture, leatherTexture, quiltTexture, wrapTexture, strawTexture, metalWearTexture, heraldryTexture,
+  linenTexture, daggedTexture, splatterTexture,
 } from "./textures.js";
 
-const VISOR = 0x15151a;
 const BLOOD = 0x6a0808;
-const SKIN = [0xf0c8a0, 0xd9a878, 0xb98058, 0x8a5a3a];
+const SKIN = [0xf2cfaa, 0xe6b890, 0xd09a6c, 0xa86e48, 0x7a4c2e];
+const HAIR = [0x23170e, 0x4a3018, 0x7a4e26, 0xc8a050, 0x9a3c18, 0x8c8a86];
+const EYES = [0x3a2a1a, 0x4a6a8a, 0x5a6a3a, 0x2a2a2a];
+const DIRT = new THREE.Color(0x5a4630);
 
 // Omgivning som blank metall speglar (sätts av spelet, se setEnvironment)
 let ENVIRONMENT = null;
@@ -38,21 +43,34 @@ export function setEnvironment(texture) {
   ENVIRONMENT = texture;
 }
 
-let bloodDecalMaterial = null;
+// Blodstänk på rustningen: oregelbundna stänk (samma former som på marken), lite blanka
+const bloodDecalMaterials = [];
 function bloodDecal() {
-  if (!bloodDecalMaterial) {
-    bloodDecalMaterial = new THREE.MeshStandardMaterial({
-      color: BLOOD, roughness: 0.25, metalness: 0.1, polygonOffset: true, polygonOffsetFactor: -4,
-    });
+  if (bloodDecalMaterials.length === 0) {
+    for (let v = 0; v < 4; v++) {
+      bloodDecalMaterials.push(new THREE.MeshStandardMaterial({
+        color: BLOOD, roughness: 0.25, metalness: 0.1, map: splatterTexture(v), alphaTest: 0.4,
+        polygonOffset: true, polygonOffsetFactor: -4, side: THREE.DoubleSide,
+      }));
+    }
   }
-  return bloodDecalMaterial;
+  return bloodDecalMaterials[Math.floor(Math.random() * bloodDecalMaterials.length)];
+}
+
+// Enkel slumpgenerator som ger samma följd för samma frö (så ansiktet blir likadant hos alla)
+function seededRandom(seed) {
+  let s = Math.abs(Math.floor(seed)) % 2147483647 || 1;
+  return () => {
+    s = (s * 16807) % 2147483647;
+    return (s - 1) / 2147483646;
+  };
 }
 
 // ---------- Formade lemmar ----------
 // Profil = [andel av längden, radie]. Snurras runt sin axel till en rund, formad lem.
 const PROFILE = {
-  thigh: [[0, 0.082], [0.12, 0.09], [0.5, 0.079], [0.85, 0.062], [1, 0.057]],
-  shin: [[0, 0.058], [0.2, 0.067], [0.42, 0.064], [0.78, 0.046], [1, 0.041]],
+  thigh: [[0, 0.082], [0.12, 0.09], [0.5, 0.08], [0.85, 0.064], [1, 0.06]],
+  shin: [[0, 0.063], [0.2, 0.073], [0.42, 0.07], [0.78, 0.053], [1, 0.049]],
   upperArm: [[0, 0.058], [0.35, 0.061], [0.72, 0.052], [1, 0.046]],
   forearm: [[0, 0.05], [0.25, 0.054], [0.72, 0.042], [1, 0.036]],
 };
@@ -69,32 +87,27 @@ function radiusAt(profile, f) {
 }
 
 // Rund form längs en lem (från andel "from" till "to"), "extra" = hur mycket större än själva lemmen
+// Punkterna måste gå uppåt (ökande y), annars vänds ytan ut och in och syns inte utifrån.
 function latheAlong(profile, length, from = 0, to = 1, extra = 0, closed = true, flare = 0) {
   const pts = [];
   const steps = 8;
-  if (closed) pts.push(new THREE.Vector2(0.0001, -from * length));
-  for (let i = 0; i <= steps; i++) {
+  if (closed) pts.push(new THREE.Vector2(0.0001, -to * length));
+  for (let i = steps; i >= 0; i--) {
     const f = from + ((to - from) * i) / steps;
     let r = radiusAt(profile, f) + extra;
     if (flare && (i === 0 || i === steps)) r += flare; // utvikt kant på plåten
     pts.push(new THREE.Vector2(r, -f * length));
   }
-  if (closed) pts.push(new THREE.Vector2(0.0001, -to * length));
+  if (closed) pts.push(new THREE.Vector2(0.0001, -from * length));
   return new THREE.LatheGeometry(pts, 14);
 }
 
-// Rustningarna: material för varje del
-const ARMOR_STYLES = [
-  { key: "plate" },   // Plåtrustning
-  { key: "chain" },   // Ringbrynja
-  { key: "leather" }, // Läderrustning
-  { key: "gilded" },  // Praktrustning
-  { key: "peasant" }, // Bonde
-];
+// Rustningarna
+const ARMOR_STYLES = ["plate", "chain", "leather", "gilded", "peasant"];
 
-// Rörelsekurvor för svärdsarmen:
+// Rörelsekurvor för vapenarmen:
 // [tid, överarm framåt, överarm i sidled, underarm böj, bålens vridning, handled]
-const STANCE_R = [-0.55, -0.12, -1.25, 0.12, 0.35]; // stridsställning: svärdet redo
+const STANCE_R = [-0.55, -0.12, -1.25, 0.12, 0.35]; // stridsställning: vapnet redo
 const CARRY_R = [-0.25, 0, -0.75, 0, 0.1];          // när man går: armen mer avslappnad
 const QUICK_KEYS = [
   [0.0, -0.55, -0.12, -1.25, 0.12, 0.35],
@@ -202,15 +215,30 @@ function fitUVs(geometry) {
   return geometry;
 }
 
+// Återanvända hjälpvektorer (så vi inte skapar skräp varje bildruta)
+const _v = new THREE.Vector3();
+const _v2 = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const _q2 = new THREE.Quaternion();
+const _up = new THREE.Vector3(0, 1, 0);
+const _inv = new THREE.Matrix4();
+const _mat = new THREE.Matrix4();
+const _mid = new THREE.Vector3();
+const _linkScale = new THREE.Vector3(1, 1.7, 1);
+
 export class Knight {
-  constructor(colorHex, name = null, look = { a: 0, h: 0, s: 0 }) {
+  constructor(colorHex, name = null, look = {}, opts = {}) {
+    look = { a: 0, h: 0, s: 0, w: 0, c: 0, ...look };
+    this.look = look;
     this.group = new THREE.Group();
     this.materials = [];
     this.seg = {};
     this.stumps = [];
     this.legLoss = 0;
     this.bloodSplats = 0;
+    this.decals = 0;
     this.swordBlood = 0;
+    this.soft = []; // tyg som ska röras av fysiken: { cloth, pins: [[seg, [x,y,z]]...], colliders }
 
     this.phase = 0;
     this.amp = 0;
@@ -228,41 +256,74 @@ export class Knight {
     this.feet = new FootPlanner();
     this.wasAirborne = false;
     this.onFootstep = null; // anropas (sida, [x, z], vridning) när en fot sätts ner
+    this.helmetOff = false;
+    // Ansiktsuttryck
+    this.mouthOpen = 0;
+    this.mouthTimer = 0;
+    this.mouthTarget = 0;
+    this.squint = 0;
+    this.blinkTimer = 1 + Math.random() * 3;
+    this.visorOpen = 0;
 
-    const style = (ARMOR_STYLES[look.a] || ARMOR_STYLES[0]).key;
+    const style = ARMOR_STYLES[look.a] || ARMOR_STYLES[0];
     this.style = style;
-    const skinColor = SKIN[Math.abs(Math.floor(colorHex / 7)) % SKIN.length];
     const isPlate = style === "plate" || style === "gilded";
     const gilded = style === "gilded";
+    this.isMetal = isPlate;
+
+    // Ansiktsdrag slumpas fram ur ett frö (spelarens id), så alla ser samma ansikte
+    const rand = seededRandom(opts.seed ?? colorHex + 7);
+    const features = {
+      skin: SKIN[Math.floor(rand() * SKIN.length)],
+      hair: HAIR[Math.floor(rand() * HAIR.length)],
+      eyes: EYES[Math.floor(rand() * EYES.length)],
+      hairStyle: Math.floor(rand() * 4), // 0 kort, 1 långt, 2 flint, 3 pottfrisyr
+      beard: Math.floor(rand() * 4),     // 0 inget, 1 mustasch, 2 helskägg, 3 pipskägg
+    };
 
     // ---------- Material ----------
     const m = {};
     m.cloth = this.mat(colorHex, 0.85, 0);
     m.cloth.side = THREE.DoubleSide; // kjolar och mantlar är öppna
+    m.capeCloth = this.mat(colorHex, 0.9, 0, { map: linenTexture(), side: THREE.DoubleSide });
+    m.tabardCloth = this.mat(colorHex, 0.88, 0, { map: linenTexture(), alphaMap: daggedTexture(), alphaTest: 0.5, side: THREE.DoubleSide });
     m.herald = this.mat(0xffffff, 0.8, 0, { map: heraldryTexture(colorHex) });
-    m.steel = gilded ? this.mat(0xd2d8e0, 0.2, 0.92, { roughnessMap: metalWearTexture() }) : this.mat(0xa2a9b2, 0.32, 0.85, { roughnessMap: metalWearTexture() });
-    m.steelDark = this.mat(0x5e646d, 0.4, 0.75);
-    m.gold = this.mat(0xd4a83a, 0.28, 0.9);
-    m.brass = this.mat(0xb8893a, 0.35, 0.85);
-    m.chain = this.mat(0xb8bec6, 0.45, 0.8, { map: chainmailTexture(), bumpMap: chainmailTexture(), bumpScale: 2 });
-    m.leather = this.mat(0x7a5230, 0.75, 0, { map: leatherTexture() });
-    m.leatherDark = this.mat(0x4a2e1a, 0.8, 0, { map: leatherTexture() });
+    this.gilded = gilded;
+    m.steel = gilded ? this.mat(0xdde3ea, 0.28, 0.82) : this.mat(0xb6bcc4, 0.38, 0.78);
+    m.steelDark = this.mat(0x6a7079, 0.42, 0.72);
+    m.gold = this.mat(0xd8ae42, 0.3, 0.85);
+    m.brass = this.mat(0xc49440, 0.35, 0.8);
+    m.chain = this.mat(0xbcc2ca, 0.45, 0.75, { map: chainmailTexture(), bumpMap: chainmailTexture(), bumpScale: 2 });
+    m.leather = this.mat(0xa8763f, 0.72, 0, { map: leatherTexture() });
+    m.leatherDark = this.mat(0x553620, 0.78, 0, { map: leatherTexture() });
+    m.strap = this.mat(0x3a2414, 0.75, 0, { map: leatherTexture() });
     m.wool = this.mat(0x5a4632, 0.95, 0, { map: wrapTexture() });
     m.quilt = this.mat(0xd8c8a0, 0.95, 0, { map: quiltTexture() });
     m.straw = this.mat(0xffffff, 0.9, 0, { map: strawTexture() });
     m.rope = this.mat(0xa08850, 0.95, 0);
-    m.skin = this.mat(skinColor, 0.75, 0);
-    m.visor = this.mat(VISOR, 0.6, 0.2);
+    m.skin = this.mat(features.skin, 0.72, 0);
+    m.lips = this.mat(new THREE.Color(features.skin).multiplyScalar(0.72).getHex(), 0.6, 0);
+    m.hair = this.mat(features.hair, 0.9, 0);
+    m.eyeWhite = this.mat(0xf4f0e8, 0.3, 0);
+    m.iris = this.mat(features.eyes, 0.25, 0);
+    m.mouth = this.mat(0x2a0e0c, 0.8, 0);
+    m.teeth = this.mat(0xeee6d0, 0.5, 0);
+    m.helmInner = this.mat(0x16161a, 0.9, 0, { side: THREE.BackSide });
+    m.hole = this.mat(0x0c0c0e, 0.9, 0);
     m.white = this.mat(0xf2efe6, 0.8, 0);
-    m.blade = this.mat(0xd8dde3, 0.18, 0.95);
+    m.blade = this.mat(0xd4dae2, 0.3, 0.62);
     m.wood = this.mat(0x6a4a2c, 0.85, 0);
+    m.iron = this.mat(0x4a4e55, 0.5, 0.7);
     m.blood = this.mat(BLOOD, 0.4, 0.1);
     m.trim = gilded ? m.gold : m.brass;
+    m.scratch = isPlate ? this.mat(0xf2f5f8, 0.3, 0.45) : this.mat(0xd8bc90, 0.8, 0);
     this.m = m;
+    for (const mat of this.materials) mat.userData.baseColor = mat.color.clone();
 
-    // Vad lemmarna består av under plåten
+    // Vad lemmarna består av under rustningen
     const limbMat = { plate: m.chain, gilded: m.chain, chain: m.chain, leather: m.leather, peasant: m.quilt }[style];
     const legMat = { plate: m.chain, gilded: m.chain, chain: m.chain, leather: m.wool, peasant: m.wool }[style];
+    this.limbMat = limbMat;
 
     // ---------- Kroppsdelarna ----------
     // segment(namn, förälder, ledens position, punkter för fysiken, radie)
@@ -271,8 +332,12 @@ export class Knight {
     const torso = this.segment("torso", pelvis, [0, 0, 0], [[0, 0, 0], [0, 0.44, 0], [0.19, 0.4, 0], [-0.19, 0.4, 0], [0, 0.25, 0.12]], 0.13);
     const head = this.segment("head", torso, [0, 0.46, 0], [[0, 0, 0], [0, 0.28, 0], [0, 0.12, 0.12]], 0.12);
 
-    this.buildTorso(pelvis, torso, style, m, isPlate, gilded);
-    this.buildHelmet(head, look.h, m, gilded);
+    this.buildTorso(pelvis, torso, style, m, isPlate, gilded, limbMat, look);
+    this.buildHead(head, m, features);
+    this.helmet = new THREE.Group();
+    this.helmet.userData.helmet = true;
+    head.add(this.helmet);
+    this.buildHelmet(this.helmet, look.h, m, gilded);
 
     for (const side of ["L", "R"]) {
       const s = side === "L" ? 1 : -1;
@@ -280,14 +345,18 @@ export class Knight {
       const fore = this.segment("forearm" + side, upper, [0, -0.29, 0], [[0, 0, 0], [0, -0.26, 0], [0.05 * s, -0.13, 0]], 0.05);
       const hand = this.segment("hand" + side, fore, [0, -0.26, 0], [[0, 0, 0], [0, -0.1, 0], [0.04 * s, -0.05, 0]], 0.045);
       const thigh = this.segment("thigh" + side, pelvis, [0.1 * s, -0.08, 0], [[0, 0, 0], [0, -0.42, 0], [0.06 * s, -0.21, 0]], 0.075);
-      const shin = this.segment("shin" + side, thigh, [0, -0.42, 0], [[0, 0, 0], [0, -0.4, 0], [0.05 * s, -0.2, 0]], 0.06);
-      const foot = this.segment("foot" + side, shin, [0, -0.4, 0], [[0, 0, 0], [0, -0.06, 0.18], [0.05 * s, -0.06, 0]], 0.05);
+      const shin = this.segment("shin" + side, thigh, [0, -0.42, 0], [[0, 0, 0], [0, -0.4, 0], [0.05 * s, -0.2, 0]], 0.065);
+      const foot = this.segment("foot" + side, shin, [0, -0.4, 0], [[0, 0, 0], [0, -0.06, 0.2], [0.05 * s, -0.06, 0]], 0.055);
 
-      // Lemmarna under rustningen (formade, inte rör)
+      // Lemmarna under rustningen (formade, inte rör). Kulor i lederna så det aldrig blir glipor.
       upper.add(this.shape(latheAlong(PROFILE.upperArm, 0.29), limbMat));
+      upper.add(this.shape(new THREE.SphereGeometry(0.06, 10, 8), limbMat));
       fore.add(this.shape(latheAlong(PROFILE.forearm, 0.26), limbMat));
+      fore.add(this.shape(new THREE.SphereGeometry(0.05, 10, 8), limbMat));
       thigh.add(this.shape(latheAlong(PROFILE.thigh, 0.42), legMat));
+      thigh.add(this.shape(new THREE.SphereGeometry(0.082, 10, 8), legMat));
       shin.add(this.shape(latheAlong(PROFILE.shin, 0.4), legMat));
+      shin.add(this.shape(new THREE.SphereGeometry(0.062, 10, 8), legMat));
 
       if (isPlate) this.buildPlateLimbs(side, s, upper, fore, hand, thigh, shin, foot, m, gilded);
       else if (style === "chain") this.buildChainLimbs(side, s, upper, fore, hand, thigh, shin, foot, m);
@@ -295,30 +364,37 @@ export class Knight {
       else this.buildPeasantLimbs(side, s, upper, fore, hand, thigh, shin, foot, m);
     }
 
-    // Svärd och sköld
-    const sword = this.buildSword(m, gilded);
-    sword.position.set(0, -0.06, 0.01);
-    sword.rotation.x = 2.0;
-    sword.userData.equipment = true; // siktet ska inte räkna svärdet som kroppsdel
-    this.seg.handR.add(sword);
-    this.sword = sword;
+    // Vapen och sköld
+    const weapon = this.buildWeapon(look.w, m, gilded);
+    weapon.position.set(0, -0.06, 0.01);
+    weapon.rotation.x = 2.0;
+    weapon.userData.equipment = true; // siktet ska inte räkna vapnet som kroppsdel
+    this.seg.handR.add(weapon);
+    this.weapon = weapon;
+    this.sword = weapon; // gammalt namn
 
     const shield = this.buildShield(look.s, m, colorHex);
-    shield.position.set(0.03, -0.08, 0);
+    shield.position.set(0.03, -0.115, 0);
     shield.rotation.x = 1.6;
     shield.userData.equipment = true;
     this.seg.handL.add(shield);
 
     // Slå ihop småbitarna i varje kroppsdel (färre ritanrop = högre FPS)
     for (const seg of Object.values(this.seg)) this.mergeChildren(seg);
-    this.mergeChildren(sword);
+    this.mergeChildren(weapon);
     this.mergeChildren(shield);
+    this.mergeChildren(this.helmet);
+    this.mergeChildren(this.hairGroup);
+    this.closedHelmet = [0, 1, 4].includes(look.h);
+    this.hairGroup.visible = !this.closedHelmet;
 
-    // Blod på svärdsklingan (syns mer ju fler man träffat)
+    // Blod på vapnet (syns mer ju fler man träffat)
     this.bladeBloodMat = new THREE.MeshStandardMaterial({ color: BLOOD, roughness: 0.3, transparent: true, opacity: 0, depthWrite: false });
-    const bladeBlood = new THREE.Mesh(new THREE.BoxGeometry(0.054, 0.6, 0.016), this.bladeBloodMat);
-    bladeBlood.position.set(0, 0.62, 0);
-    sword.add(bladeBlood);
+    this.addWeaponBlood(look.w);
+
+    // Mjukt tyg: mantel (valfri) och vapenrockens skört (ringbrynja)
+    if (look.c === 1) this.addCape(m, gilded);
+    if (style === "chain") this.addTabard(m);
 
     this.group.traverse((obj) => {
       if (obj.isMesh) {
@@ -334,12 +410,14 @@ export class Knight {
 
   // ---------- Bål och höfter ----------
 
-  buildTorso(pelvis, torso, style, m, isPlate, gilded) {
+  buildTorso(pelvis, torso, style, m, isPlate, gilded, limbMat, look) {
     const P = (...a) => pelvis.add(this.shape(...a));
     const T = (...a) => torso.add(this.shape(...a));
 
     // Höfterna
-    P(new THREE.SphereGeometry(1, 14, 10), isPlate || style === "chain" ? m.chain : style === "leather" ? m.wool : m.wool, [0, -0.04, 0], [0.16, 0.11, 0.12]);
+    P(new THREE.SphereGeometry(1, 14, 10), isPlate || style === "chain" ? m.chain : m.wool, [0, -0.04, 0], [0.16, 0.11, 0.12]);
+    // Axlarna sitter fast på bålen, så det aldrig blir ett tomrum mellan arm och kropp
+    for (const s of [1, -1]) T(new THREE.SphereGeometry(0.075, 12, 8), limbMat, [0.17 * s, 0.395, 0], [1.15, 0.85, 1.1]);
 
     if (isPlate) {
       // Bröstharnesk: format runt bålen, med mittås, rullad halskant och nitar
@@ -353,6 +431,13 @@ export class Knight {
         const a = i * 0.32;
         T(new THREE.SphereGeometry(0.008, 5, 4), m.trim, [Math.sin(a) * 0.2, 0.035, Math.cos(a) * 0.15]); // nitar
       }
+      // Halsskydd (krage i plåt) upp till hjälmen
+      T(new THREE.CylinderGeometry(0.068, 0.092, 0.09, 16, 1, true), m.steel, [0, 0.49, 0], [1.05, 1, 0.95]);
+      T(new THREE.TorusGeometry(0.07, 0.006, 4, 16), m.trim, [0, 0.535, 0], [1.05, 0.95, 1], [Math.PI / 2, 0, 0]);
+      // Axelplåtar på bålen (under axelskydden)
+      for (const s of [1, -1]) {
+        T(new THREE.SphereGeometry(0.09, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), m.steel, [0.16 * s, 0.395, 0], [1.15, 0.6, 1.15]);
+      }
       // Band i spelarens färg över bröstet (så man ser vem som är vem)
       T(new THREE.BoxGeometry(0.06, 0.5, 0.33), m.cloth, [0, 0.24, 0.005], [1, 1, 1], [0, 0, 0.72]);
       // Plåtkjol i lameller, tygkjol under och höftskydd framtill
@@ -365,48 +450,46 @@ export class Knight {
         P(new THREE.BoxGeometry(0.13, 0.17, 0.012), m.steel, [0.085 * s, -0.22, 0.135], [1, 1, 1], [-0.12, 0, 0]); // höftskydd
         P(new THREE.SphereGeometry(0.008, 5, 4), m.trim, [0.085 * s, -0.15, 0.143]);
       }
-      if (gilded) {
-        // Mantel på ryggen
-        T(new THREE.BoxGeometry(0.4, 1.0, 0.012), m.cloth, [0, -0.07, -0.16], [1, 1, 1], [0.1, 0, 0]);
-        T(new THREE.TorusGeometry(0.03, 0.008, 5, 10), m.gold, [0.15, 0.4, 0.1]); // mantelspänne
-      }
-      // Svärdsskida vid vänster höft
-      this.addScabbard(pelvis, m, gilded ? m.gold : m.steelDark);
+      if (look.w === 0) this.addScabbard(pelvis, m, gilded ? m.gold : m.steelDark);
     } else if (style === "chain") {
-      // Vapenrock med vapenmönster över ringbrynjan
+      // Vapenrock med vapenmönster över ringbrynjan (skörtet nedtill är mjukt tyg, se addTabard)
       T(new THREE.CapsuleGeometry(0.15, 0.2, 6, 14), m.chain, [0, 0.24, 0], [1.22, 1, 0.76]);
       T(new THREE.BoxGeometry(0.3, 0.42, 0.012), m.cloth, [0, 0.21, 0.122]);
       T(new THREE.PlaneGeometry(0.29, 0.4), m.herald, [0, 0.21, 0.129]);
       T(new THREE.BoxGeometry(0.3, 0.42, 0.012), m.cloth, [0, 0.21, -0.122]);
-      T(new THREE.CylinderGeometry(0.1, 0.12, 0.08, 12), m.chain, [0, 0.44, 0]); // ringbrynjehuva vid halsen
-      P(new THREE.CylinderGeometry(0.16, 0.22, 0.45, 16, 1, true), m.cloth, [0, -0.21, 0], [1, 1, 0.74]); // lång vapenrockskjol
-      for (let i = 0; i < 16; i++) {
-        const a = (i / 16) * Math.PI * 2;
-        P(new THREE.ConeGeometry(0.02, 0.05, 4), m.cloth, [Math.sin(a) * 0.22, -0.455, Math.cos(a) * 0.163], [1, 1, 1], [Math.PI, 0, 0]); // tandad fåll
-      }
-      P(new THREE.CylinderGeometry(0.162, 0.162, 0.045, 16), m.leatherDark, [0, 0, 0], [1, 1, 0.8]); // bälte
+      // Ringbrynjehuva över halsen och axlarna
+      T(new THREE.CylinderGeometry(0.075, 0.13, 0.12, 14, 1, true), m.chain, [0, 0.47, 0], [1.1, 1, 0.9]);
+      P(new THREE.CylinderGeometry(0.162, 0.18, 0.12, 16, 1, true), m.chain, [0, -0.07, 0], [1, 1, 0.78]); // ringbrynjans nederkant
+      P(new THREE.CylinderGeometry(0.162, 0.162, 0.045, 16), m.strap, [0, 0, 0], [1, 1, 0.8]); // bälte
       P(new THREE.BoxGeometry(0.05, 0.05, 0.02), m.brass, [0, 0, 0.13]);
-      this.addScabbard(pelvis, m, m.leatherDark);
+      P(new THREE.BoxGeometry(0.012, 0.09, 0.008), m.strap, [0.03, -0.05, 0.132]); // bältets ände hänger ner
+      if (look.w === 0) this.addScabbard(pelvis, m, m.leatherDark);
     } else if (style === "leather") {
       // Läderjacka med remmar, spännen, nitar och axelskydd
       T(new THREE.CapsuleGeometry(0.15, 0.2, 6, 14), m.leather, [0, 0.24, 0], [1.24, 1, 0.78]);
+      T(new THREE.CylinderGeometry(0.075, 0.1, 0.07, 14, 1, true), m.leatherDark, [0, 0.47, 0], [1.1, 1, 0.9]); // hög krage
       for (const s of [1, -1]) {
-        T(new THREE.BoxGeometry(0.035, 0.5, 0.012), m.leatherDark, [0.02 * s, 0.24, 0.12], [1, 1, 1], [0, 0, 0.5 * s]); // korsade remmar
-        T(new THREE.TorusGeometry(0.018, 0.005, 4, 8), m.brass, [0.08 * s, 0.3, 0.128]);                         // spännen
+        T(new THREE.BoxGeometry(0.038, 0.5, 0.012), m.strap, [0.02 * s, 0.24, 0.12], [1, 1, 1], [0, 0, 0.5 * s]); // korsade remmar
+        T(new THREE.BoxGeometry(0.03, 0.026, 0.006), m.brass, [0.08 * s, 0.3, 0.13]);                        // spännen
+        T(new THREE.BoxGeometry(0.008, 0.026, 0.008), m.strap, [0.08 * s, 0.3, 0.134]);
       }
-      for (let y = 0.08; y < 0.42; y += 0.07) {
-        for (const x of [-0.13, 0.13]) T(new THREE.SphereGeometry(0.009, 5, 4), m.brass, [x, y, 0.105]); // nitar
+      // Sömmar och nitar längs framkanten
+      for (let y = 0.06; y < 0.42; y += 0.06) {
+        for (const x of [-0.035, 0.035]) T(new THREE.SphereGeometry(0.009, 5, 4), m.brass, [x, y, 0.118]);
       }
+      T(new THREE.BoxGeometry(0.005, 0.4, 0.004), m.strap, [0, 0.23, 0.119]); // snörning
       T(new THREE.BoxGeometry(0.06, 0.48, 0.3), m.cloth, [0, 0.24, 0.01], [1, 1, 1], [0, 0, -0.72]);   // band i spelarens färg
       P(new THREE.CylinderGeometry(0.16, 0.19, 0.2, 14, 1, true), m.leather, [0, -0.09, 0], [1, 1, 0.78]);
-      P(new THREE.CylinderGeometry(0.165, 0.165, 0.05, 16), m.leatherDark, [0, 0, 0], [1, 1, 0.8]); // bälte
-      P(new THREE.BoxGeometry(0.06, 0.05, 0.02), m.brass, [0, 0, 0.133]);
+      P(new THREE.CylinderGeometry(0.165, 0.165, 0.05, 16), m.strap, [0, 0, 0], [1, 1, 0.8]); // bälte
+      P(new THREE.BoxGeometry(0.06, 0.05, 0.008), m.brass, [0, 0, 0.133]);
       P(new THREE.BoxGeometry(0.08, 0.09, 0.05), m.leatherDark, [-0.13, -0.05, 0.08]);  // pung
+      P(new THREE.SphereGeometry(0.01, 5, 4), m.brass, [-0.13, -0.02, 0.106]);
       P(new THREE.BoxGeometry(0.035, 0.2, 0.02), m.leatherDark, [0.15, -0.1, 0.06], [1, 1, 1], [0, 0, 0.2]); // dolkslida
       P(new THREE.SphereGeometry(0.018, 6, 5), m.brass, [0.165, 0.01, 0.06]);
     } else {
-      // Bonde: vadderad jacka med lappar, repbälte och trasig fåll
+      // Bonde: vadderad jacka med lappar, repbälte, huva och trasig fåll
       T(new THREE.CapsuleGeometry(0.155, 0.2, 6, 14), m.quilt, [0, 0.24, 0], [1.26, 1, 0.8]);
+      T(new THREE.TorusGeometry(0.1, 0.035, 8, 16), m.wool, [0, 0.45, -0.01], [1.1, 1, 1], [Math.PI / 2 + 0.2, 0, 0]); // nedfälld huva
       T(new THREE.BoxGeometry(0.09, 0.09, 0.01), m.leather, [0.08, 0.3, 0.125], [1, 1, 1], [0, 0, 0.2]);   // lapp
       T(new THREE.BoxGeometry(0.07, 0.06, 0.01), m.wool, [-0.1, 0.14, 0.123], [1, 1, 1], [0, 0, -0.3]);    // lapp
       T(new THREE.BoxGeometry(0.06, 0.48, 0.32), m.cloth, [0, 0.24, 0.005], [1, 1, 1], [0, 0, 0.72]);     // band i spelarens färg
@@ -436,6 +519,79 @@ export class Knight {
     }
   }
 
+  // ---------- Huvud och ansikte ----------
+  // Ansiktet finns alltid (även under stängda hjälmar, och syns om hjälmen flyger av).
+  // Ögon, ögonbryn och mun ligger i en egen grupp så de kan röra sig (blinka, grimasera, skrika).
+
+  buildHead(head, m, f) {
+    const H = (...a) => head.add(this.shape(...a));
+    H(new THREE.CylinderGeometry(0.046, 0.052, 0.1, 10), m.skin, [0, 0.02, 0]); // hals
+    H(new THREE.SphereGeometry(0.09, 18, 14), m.skin, [0, 0.135, 0.004], [1, 1.12, 1.06]); // skalle
+    H(new THREE.SphereGeometry(0.064, 14, 10), m.skin, [0, 0.088, 0.03], [1.06, 0.85, 1]); // käke och haka
+    for (const s of [1, -1]) {
+      H(new THREE.SphereGeometry(0.022, 8, 6), m.skin, [0.089 * s, 0.13, -0.004], [0.45, 1, 0.75]); // öron
+      H(new THREE.SphereGeometry(0.02, 8, 6), m.skin, [0.045 * s, 0.112, 0.078], [1, 0.8, 0.6]);     // kinder
+    }
+    H(new THREE.BoxGeometry(0.018, 0.04, 0.024), m.skin, [0, 0.127, 0.092], [1, 1, 1], [-0.3, 0, 0]); // näsrygg
+    H(new THREE.SphereGeometry(0.0125, 8, 6), m.skin, [0, 0.11, 0.101], [1.15, 1, 1]);                // nästipp
+    H(new THREE.SphereGeometry(0.03, 10, 6), m.skin, [0, 0.162, 0.07], [1.9, 0.5, 0.7]);              // pannben ovanför ögonen
+
+    // Hår och skägg i en egen grupp: göms under stängda hjälmar (så inget sticker ut) och syns om hjälmen åker av
+    const hairGroup = new THREE.Group();
+    head.add(hairGroup);
+    this.hairGroup = hairGroup;
+    const HR = (...a) => hairGroup.add(this.shape(...a));
+    if (f.hairStyle !== 2) HR(new THREE.SphereGeometry(0.094, 16, 8, 0, Math.PI * 2, 0, 1.45), m.hair, [0, 0.142, -0.004], [1.03, 1.12, 1.08]);
+    if (f.hairStyle === 1) {
+      HR(new THREE.BoxGeometry(0.15, 0.13, 0.05), m.hair, [0, 0.1, -0.072], [1, 1, 1], [0.15, 0, 0]); // långt hår i nacken
+      for (const s of [1, -1]) HR(new THREE.BoxGeometry(0.025, 0.1, 0.06), m.hair, [0.088 * s, 0.1, -0.02]);
+    } else if (f.hairStyle === 2) {
+      HR(new THREE.TorusGeometry(0.084, 0.014, 6, 16, Math.PI * 1.3), m.hair, [0, 0.125, 0.0], [1.05, 1, 1.08], [Math.PI / 2, 0, -Math.PI * 0.15 + Math.PI]); // krans runt flinten
+    } else if (f.hairStyle === 3) {
+      HR(new THREE.CylinderGeometry(0.098, 0.1, 0.035, 16, 1, true), m.hair, [0, 0.185, 0.002], [1.03, 1, 1.09]); // pottfrisyr
+    }
+    // Skägg
+    if (f.beard === 1) {
+      for (const s of [1, -1]) HR(new THREE.BoxGeometry(0.03, 0.01, 0.012), m.hair, [0.016 * s, 0.098, 0.098], [1, 1, 1], [0, 0, -0.35 * s]); // mustasch
+    } else if (f.beard === 2) {
+      HR(new THREE.SphereGeometry(0.06, 12, 8), m.hair, [0, 0.062, 0.042], [1.12, 0.85, 0.9]); // helskägg
+      for (const s of [1, -1]) HR(new THREE.BoxGeometry(0.03, 0.01, 0.012), m.hair, [0.016 * s, 0.099, 0.099], [1, 1, 1], [0, 0, -0.3 * s]);
+    } else if (f.beard === 3) {
+      HR(new THREE.ConeGeometry(0.02, 0.05, 8), m.hair, [0, 0.045, 0.075], [1, 1, 1], [Math.PI + 0.3, 0, 0]); // pipskägg
+    }
+
+    // Rörliga delar: ögon, ögonbryn och mun
+    const face = new THREE.Group();
+    face.userData.face = true;
+    head.add(face);
+    this.eyes = [];
+    this.brows = [];
+    for (const s of [1, -1]) {
+      const eye = new THREE.Group();
+      eye.position.set(0.033 * s, 0.146, 0.083);
+      eye.add(this.shape(new THREE.SphereGeometry(0.0145, 10, 8), m.eyeWhite, [0, 0, 0], [1, 0.8, 0.6]));
+      eye.add(this.shape(new THREE.SphereGeometry(0.0072, 8, 6), m.iris, [0, 0, 0.0075], [1, 1, 0.5]));
+      eye.add(this.shape(new THREE.SphereGeometry(0.0035, 6, 4), m.mouth, [0, 0, 0.0105]));
+      face.add(eye);
+      this.eyes.push(eye);
+      const brow = this.shape(new THREE.BoxGeometry(0.032, 0.008, 0.012), m.hair, [0.034 * s, 0.168, 0.09], [1, 1, 1], [0, 0, 0.15 * s]);
+      brow.userData.side = s;
+      face.add(brow);
+      this.brows.push(brow);
+    }
+    const mouth = new THREE.Group();
+    mouth.position.set(0, 0.088, 0.093);
+    mouth.add(this.shape(new THREE.SphereGeometry(0.019, 10, 8), m.mouth, [0, 0, 0], [1.25, 1, 0.5]));
+    mouth.add(this.shape(new THREE.BoxGeometry(0.024, 0.006, 0.006), m.teeth, [0, 0.009, 0.004]));
+    face.add(mouth);
+    this.mouthMesh = mouth;
+    this.lips = this.shape(new THREE.BoxGeometry(0.036, 0.006, 0.01), m.lips, [0, 0.088, 0.097]);
+    face.add(this.lips);
+    this.face = face;
+    for (const eye of this.eyes) this.mergeChildren(eye);
+    this.mergeChildren(mouth);
+  }
+
   // ---------- Lemmar per rustning ----------
 
   buildPlateLimbs(side, s, upper, fore, hand, thigh, shin, foot, m, gilded) {
@@ -447,13 +603,15 @@ export class Knight {
     const FT = (...a) => foot.add(this.shape(...a));
     const edge = gilded ? m.gold : m.steelDark;
 
-    // Axelskydd i tre överlappande plåtar
-    U(new THREE.SphereGeometry(0.1, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), m.steel, [0.012 * s, 0.0, 0], [1.08, 0.75, 1.2]);
-    U(new THREE.TorusGeometry(0.1, 0.008, 5, 18), edge, [0.012 * s, 0.0, 0], [1.08, 1.2, 1], [Math.PI / 2, 0, 0]);
-    for (let i = 0; i < 2; i++) {
-      U(new THREE.CylinderGeometry(0.1 - i * 0.012, 0.106 - i * 0.012, 0.04, 16, 1, true), m.steel, [0.01 * s, -0.035 - i * 0.035, 0], [1.08, 1, 1.2]);
+    // Axelskydd: en välvd plåt överst och tre lameller som överlappar nedåt
+    U(new THREE.SphereGeometry(0.105, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2), m.steel, [0.015 * s, -0.005, 0], [1.12, 0.6, 1.22]);
+    U(new THREE.TorusGeometry(0.105, 0.007, 5, 22), edge, [0.015 * s, -0.005, 0], [1.12, 1.22, 1], [Math.PI / 2, 0, 0]);
+    for (let i = 0; i < 3; i++) {
+      const r = 0.104 - i * 0.01;
+      U(new THREE.CylinderGeometry(r, r + 0.008, 0.038, 18, 1, true), m.steel, [0.018 * s, -0.03 - i * 0.032, 0], [1.1, 1, 1.18], [0, 0, 0.12 * s]);
+      U(new THREE.TorusGeometry(r + 0.008, 0.004, 4, 18), edge, [0.018 * s, -0.049 - i * 0.032, 0], [1.1, 1.18, 1], [Math.PI / 2, 0.12 * s, 0]);
     }
-    U(new THREE.SphereGeometry(0.01, 5, 4), m.trim, [0.08 * s, 0.03, 0.07]);
+    for (const z of [0.07, -0.07]) U(new THREE.SphereGeometry(0.009, 5, 4), m.trim, [0.06 * s, 0.035, z]);
     // Överarmsskena
     U(latheAlong(PROFILE.upperArm, 0.29, 0.38, 0.88, 0.012, false, 0.004), m.steel);
     // Armbågskopp med solfjäderformad vinge
@@ -467,16 +625,17 @@ export class Knight {
     // Handske med fingrar
     this.addGauntlet(H, m.steel, m.steelDark, s);
 
-    // Lårskena med kant, knäkopp med vinge, benskena
+    // Lårskena med kant, knäkopp med vinge, benskena ända ner till foten
     TH(latheAlong(PROFILE.thigh, 0.42, 0.06, 0.82, 0.012, false, 0.004), m.steel);
     TH(new THREE.BoxGeometry(0.012, 0.3, 0.012), edge, [0, -0.2, 0.094]); // ås fram
-    SH(new THREE.SphereGeometry(0.074, 12, 8), m.steel, [0, 0, 0.022], [1, 1, 1.12]);
-    SH(new THREE.CylinderGeometry(0.062, 0.062, 0.01, 10), m.steel, [0.062 * s, 0.0, 0.0], [1, 1, 1.2], [0, 0, Math.PI / 2]);
-    SH(new THREE.SphereGeometry(0.01, 5, 4), m.trim, [0.07 * s, 0, 0]);
-    SH(latheAlong(PROFILE.shin, 0.4, 0.14, 0.94, 0.011, false, 0.003), m.steel);
-    if (gilded) SH(new THREE.TorusGeometry(0.067, 0.006, 4, 14), m.gold, [0, -0.06, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
+    SH(new THREE.SphereGeometry(0.077, 12, 8), m.steel, [0, 0, 0.022], [1, 1, 1.12]);
+    SH(new THREE.CylinderGeometry(0.064, 0.064, 0.01, 10), m.steel, [0.064 * s, 0.0, 0.0], [1, 1, 1.2], [0, 0, Math.PI / 2]);
+    SH(new THREE.SphereGeometry(0.01, 5, 4), m.trim, [0.072 * s, 0, 0]);
+    SH(latheAlong(PROFILE.shin, 0.4, 0.14, 1, 0.011, false, 0.003), m.steel);
+    SH(new THREE.CylinderGeometry(0.066, 0.06, 0.03, 14, 1, true), m.steel, [0, -0.39, 0]); // utvikt nederkant över fotleden
+    if (gilded) SH(new THREE.TorusGeometry(0.07, 0.006, 4, 14), m.gold, [0, -0.06, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
     // Spetsiga sabatoner i lameller
-    this.addPointedShoe(FT, m.steel, edge, 0.24, true);
+    this.addPointedShoe(FT, m.steel, edge, 0.27, true);
   }
 
   buildChainLimbs(side, s, upper, fore, hand, thigh, shin, foot, m) {
@@ -489,11 +648,12 @@ export class Knight {
       const a = (i / 10) * Math.PI * 2;
       F(new THREE.SphereGeometry(0.011, 4, 3), m.chain, [Math.sin(a) * 0.04, -0.235, Math.cos(a) * 0.04]);
     }
-    // Läderhandskar och läderskor med spets (poulainer)
+    // Läderhandskar och läderskor med spets (poulainer), med skaft upp över fotleden
     H(new THREE.SphereGeometry(1, 12, 8), m.leatherDark, [0, -0.05, 0.005], [0.046, 0.06, 0.05]);
     F(new THREE.CylinderGeometry(0.048, 0.04, 0.07, 12, 1, true), m.leatherDark, [0, -0.225, 0]);
-    SH(new THREE.CylinderGeometry(0.05, 0.046, 0.1, 12, 1, true), m.leatherDark, [0, -0.36, 0]);
-    this.addPointedShoe(FT, m.leatherDark, m.leatherDark, 0.17, false);
+    SH(new THREE.CylinderGeometry(0.056, 0.052, 0.12, 12, 1, true), m.leatherDark, [0, -0.35, 0]);
+    SH(new THREE.TorusGeometry(0.056, 0.006, 4, 14), m.strap, [0, -0.29, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
+    this.addPointedShoe(FT, m.leatherDark, m.strap, 0.2, false);
   }
 
   buildLeatherLimbs(side, s, upper, fore, hand, thigh, shin, foot, m) {
@@ -502,20 +662,23 @@ export class Knight {
     const H = (...a) => hand.add(this.shape(...a));
     const SH = (...a) => shin.add(this.shape(...a));
     const FT = (...a) => foot.add(this.shape(...a));
-    // Axelskydd i läder
-    U(new THREE.SphereGeometry(0.085, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), m.leatherDark, [0.01 * s, -0.01, 0], [1.05, 0.8, 1.15]);
-    U(new THREE.SphereGeometry(0.008, 5, 4), m.brass, [0.07 * s, 0.03, 0.05]);
+    // Axelskydd i läder i två lager, med nit
+    U(new THREE.SphereGeometry(0.09, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), m.leatherDark, [0.012 * s, -0.008, 0], [1.08, 0.7, 1.18]);
+    U(new THREE.CylinderGeometry(0.088, 0.096, 0.04, 14, 1, true), m.leather, [0.015 * s, -0.04, 0], [1.06, 1, 1.15]);
+    U(new THREE.SphereGeometry(0.009, 5, 4), m.brass, [0.07 * s, 0.03, 0.05]);
     // Armskydd med två remmar och spänne
     F(latheAlong(PROFILE.forearm, 0.26, 0.2, 0.85, 0.009, false), m.leatherDark);
     for (const y of [-0.1, -0.18]) {
-      F(new THREE.TorusGeometry(0.053, 0.005, 4, 14), m.leather, [0, y, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
-      F(new THREE.BoxGeometry(0.014, 0.014, 0.008), m.brass, [0, y, 0.056]);
+      F(new THREE.TorusGeometry(0.053, 0.006, 4, 14), m.strap, [0, y, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
+      F(new THREE.BoxGeometry(0.016, 0.016, 0.008), m.brass, [0, y, 0.056]);
     }
     H(new THREE.SphereGeometry(1, 12, 8), m.leatherDark, [0, -0.05, 0.005], [0.046, 0.06, 0.05]);
-    // Höga stövlar med nedvikt kant och spetsig tå
-    SH(new THREE.CylinderGeometry(0.07, 0.056, 0.26, 12, 1, true), m.leatherDark, [0, -0.25, 0]);
-    SH(new THREE.CylinderGeometry(0.078, 0.072, 0.045, 12, 1, true), m.leather, [0, -0.115, 0]);
-    this.addPointedShoe(FT, m.leatherDark, m.leatherDark, 0.15, false);
+    // Höga stövlar med nedvikt kant, spänne och spetsig tå
+    SH(new THREE.CylinderGeometry(0.074, 0.06, 0.29, 12, 1, true), m.leatherDark, [0, -0.26, 0]);
+    SH(new THREE.CylinderGeometry(0.082, 0.076, 0.045, 12, 1, true), m.leather, [0, -0.115, 0]);
+    SH(new THREE.TorusGeometry(0.066, 0.006, 4, 14), m.strap, [0, -0.3, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
+    SH(new THREE.BoxGeometry(0.018, 0.018, 0.008), m.brass, [0.066 * s, -0.3, 0]);
+    this.addPointedShoe(FT, m.leatherDark, m.strap, 0.17, false);
   }
 
   buildPeasantLimbs(side, s, upper, fore, hand, thigh, shin, foot, m) {
@@ -526,8 +689,10 @@ export class Knight {
     // Lappad armbåge, bara händer, benlindor och klumpiga rundade skor
     F(new THREE.SphereGeometry(0.04, 8, 6), m.leather, [0, -0.01, -0.035], [1, 1, 0.5]);
     H(new THREE.SphereGeometry(1, 12, 8), m.skin, [0, -0.05, 0.005], [0.043, 0.056, 0.047]);
-    SH(latheAlong(PROFILE.shin, 0.4, 0.35, 0.95, 0.006, false), m.wool);
-    FT(new THREE.SphereGeometry(1, 12, 8), m.leatherDark, [0, -0.06, 0.05], [0.06, 0.05, 0.12]);
+    SH(latheAlong(PROFILE.shin, 0.4, 0.35, 1, 0.006, false), m.wool);
+    FT(new THREE.CylinderGeometry(0.056, 0.06, 0.08, 12, 1, true), m.leatherDark, [0, -0.04, 0]); // skoskaft över fotleden
+    FT(new THREE.SphereGeometry(1, 12, 8), m.leatherDark, [0, -0.065, 0.055], [0.068, 0.055, 0.135]);
+    FT(new THREE.TorusGeometry(0.058, 0.007, 4, 12), m.rope, [0, -0.02, 0], [1, 1, 1], [Math.PI / 2, 0, 0]); // snöre
   }
 
   // Handske i plåt: handrygg, fyra fingrar runt greppet och en tumme
@@ -541,70 +706,97 @@ export class Knight {
     H(new THREE.BoxGeometry(0.016, 0.04, 0.016), metal, [0.035 * s, -0.05, 0.022], [1, 1, 1], [0.5, 0, -0.4 * s]);
   }
 
-  // Spetsig sko eller sabaton: häl, lameller över foten och en lång, lite uppåtböjd spets
+  // Spetsig sko eller sabaton: skaft över fotleden, häl, lameller över foten och en lång, lite uppåtböjd spets
   addPointedShoe(FT, mat, edge, pointLength, lames) {
-    FT(new THREE.SphereGeometry(1, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat, [0, -0.1, -0.005], [0.058, 0.07, 0.07]); // häl
+    FT(new THREE.CylinderGeometry(0.056, 0.062, 0.1, 14, 1, true), mat, [0, -0.04, -0.003]);                     // skaft (täcker fotleden)
+    FT(new THREE.TorusGeometry(0.057, 0.005, 4, 14), edge, [0, 0.01, -0.003], [1, 1, 1], [Math.PI / 2, 0, 0]);
+    FT(new THREE.SphereGeometry(1, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat, [0, -0.1, -0.008], [0.066, 0.08, 0.08]); // häl
     if (lames) {
       for (let i = 0; i < 4; i++) {
-        FT(new THREE.CylinderGeometry(0.052 - i * 0.004, 0.052 - i * 0.004, 0.05, 12, 1, true, Math.PI / 2, Math.PI), mat,
-          [0, -0.09, 0.02 + i * 0.04], [1.05, 1, 0.75], [Math.PI / 2, 0, 0]);
-        FT(new THREE.TorusGeometry(0.05 - i * 0.004, 0.003, 3, 10, Math.PI), edge, [0, -0.09, 0.045 + i * 0.04], [1.05, 0.75, 1], [0, 0, 0]);
+        FT(new THREE.CylinderGeometry(0.06 - i * 0.0045, 0.06 - i * 0.0045, 0.055, 12, 1, true, Math.PI / 2, Math.PI), mat,
+          [0, -0.09, 0.02 + i * 0.045], [1.05, 1, 0.75], [Math.PI / 2, 0, 0]);
+        FT(new THREE.TorusGeometry(0.058 - i * 0.0045, 0.0035, 3, 10, Math.PI), edge, [0, -0.09, 0.047 + i * 0.045], [1.05, 0.75, 1], [0, 0, 0]);
       }
+      FT(new THREE.BoxGeometry(0.1, 0.012, 0.25), mat, [0, -0.1, 0.08]); // sula
     } else {
-      FT(new THREE.CapsuleGeometry(0.045, 0.12, 4, 10), mat, [0, -0.06, 0.06], [1.05, 0.9, 1], [Math.PI / 2, 0, 0]);
+      FT(new THREE.CapsuleGeometry(0.052, 0.14, 4, 10), mat, [0, -0.06, 0.07], [1.05, 0.9, 1], [Math.PI / 2, 0, 0]);
     }
     // Spetsen (cirka 1400-tal)
-    FT(new THREE.ConeGeometry(0.036, pointLength, 10), mat, [0, -0.085, 0.17 + pointLength / 2], [1, 1, 0.75], [Math.PI / 2 - 0.12, 0, 0]);
+    FT(new THREE.ConeGeometry(0.042, pointLength, 10), mat, [0, -0.085, 0.19 + pointLength / 2], [1, 1, 0.75], [Math.PI / 2 - 0.12, 0, 0]);
   }
 
   // ---------- Hjälmar ----------
+  // Stängda hjälmar byggs av band med riktiga öppningar för ögonen, så man ser ansiktet innanför.
 
-  buildHelmet(head, kind, m, gilded) {
-    const add = (...args) => head.add(this.shape(...args));
+  buildHelmet(helmet, kind, m, gilded) {
+    const add = (...args) => helmet.add(this.shape(...args));
+    // Plåt med mörk insida (syns genom ögonspringan)
+    const shell = (geometry, pos, scale, rot) => {
+      add(geometry, m.steel, pos, scale, rot);
+      add(geometry.clone(), m.helmInner, pos, scale, rot);
+    };
     const trim = gilded ? m.gold : m.brass;
-    const rivetRing = (radius, y, count, scaleZ = 1, skipFront = false) => {
+    const rivetRing = (radius, y, count, scaleZ = 1, skipFront = 0) => {
       for (let i = 0; i < count; i++) {
         const a = (i / count) * Math.PI * 2;
-        if (skipFront && Math.abs(Math.sin(a / 2)) < 0.2) continue;
+        if (skipFront && Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) < skipFront) continue;
         add(new THREE.SphereGeometry(0.0075, 5, 4), trim, [Math.sin(a) * radius, y, Math.cos(a) * radius * scaleZ]);
       }
     };
-    const face = () => {
-      // Ansikte med ögon, näsa och mustasch (för öppna hjälmar)
-      add(new THREE.SphereGeometry(0.1, 14, 10), m.skin, [0, 0.12, 0.01], [1, 1.1, 1]);
-      add(new THREE.SphereGeometry(0.014, 6, 4), m.visor, [0.035, 0.14, 0.095]);
-      add(new THREE.SphereGeometry(0.014, 6, 4), m.visor, [-0.035, 0.14, 0.095]);
-      add(new THREE.ConeGeometry(0.018, 0.05, 6), m.skin, [0, 0.11, 0.11], [1, 1, 1], [Math.PI / 2 + 0.3, 0, 0]);
-      add(new THREE.BoxGeometry(0.08, 0.015, 0.02), m.leatherDark, [0, 0.085, 0.1]);
-    };
+    const cyl = (r1, r2, h, y, start = 0, length = Math.PI * 2, segs = 22) =>
+      shell(new THREE.CylinderGeometry(r1, r2, h, segs, 1, true, start, length), [0, y, 0]);
+    this.visor = null;
 
     if (kind === 1) {
-      // Visirhjälm: spetsig topp, "grisnosvisir" med andningshål, gångjärn och mässingskant
-      add(new THREE.CylinderGeometry(0.11, 0.12, 0.15, 18), m.steel, [0, 0.12, 0]);
-      add(new THREE.ConeGeometry(0.11, 0.17, 18), m.steel, [0, 0.275, -0.01]);
-      add(new THREE.ConeGeometry(0.078, 0.18, 14), m.steel, [0, 0.12, 0.12], [1, 1, 1], [Math.PI / 2, 0, 0]);
-      add(new THREE.TorusGeometry(0.078, 0.006, 4, 16), trim, [0, 0.12, 0.035]);
-      add(new THREE.BoxGeometry(0.15, 0.016, 0.04), m.visor, [0, 0.158, 0.13]);
-      for (let r = 0; r < 2; r++) for (let c = -2; c <= 2; c++) add(new THREE.SphereGeometry(0.005, 4, 3), m.visor, [c * 0.018 + 0.02, 0.09 - r * 0.02, 0.15 - r * 0.01]); // andningshål
-      for (const s of [1, -1]) add(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 8), trim, [0.115 * s, 0.13, 0.02], [1, 1, 1], [0, 0, Math.PI / 2]); // gångjärn
-      rivetRing(0.118, 0.055, 14, 1, true);
+      // Visirhjälm (bascinet med "hundsnos"): öppen framtill, visiret sitter på gångjärn och kan fällas upp
+      const R = 0.122;
+      cyl(R, R + 0.002, 0.15, 0.13, 1.0, Math.PI * 2 - 2.0);           // sidor och bak (öppet framtill)
+      shell(new THREE.ConeGeometry(R, 0.17, 22, 1, true), [0, 0.29, -0.012]); // spetsig topp
+      for (const s of [1, -1]) add(new THREE.CylinderGeometry(0.016, 0.016, 0.014, 8), trim, [0.124 * s, 0.15, 0.02], [1, 1, 1], [0, 0, Math.PI / 2]); // gångjärn
+      rivetRing(R + 0.002, 0.06, 14, 1, 1.0);
       add(new THREE.CylinderGeometry(0.13, 0.17, 0.09, 16, 1, true), m.chain, [0, 0.025, 0]); // ringbrynja över halsen
+      // Visiret: pannplåt ovanför ögonen, nosplåt under, och en snos med andningshål
+      const visor = new THREE.Group();
+      visor.position.set(0, 0.15, 0.02);
+      const V = (...a) => visor.add(this.shape(...a));
+      const VS = (geometry, pos, scale, rot) => {
+        V(geometry, m.steel, pos, scale, rot);
+        V(geometry.clone(), m.helmInner, pos, scale, rot);
+      };
+      const front = 1.08;
+      VS(new THREE.CylinderGeometry(R + 0.006, R + 0.006, 0.04, 16, 1, true, -front, front * 2), [0, 0.032, -0.02]);  // panna
+      VS(new THREE.CylinderGeometry(R + 0.006, R + 0.006, 0.085, 16, 1, true, -front, front * 2), [0, -0.0525, -0.02]);  // under ögonen
+      VS(new THREE.ConeGeometry(0.07, 0.13, 16, 1, true), [0, -0.05, 0.135], [1, 1, 0.9], [Math.PI / 2, 0, 0]);   // snos
+      V(new THREE.SphereGeometry(0.008, 6, 4), m.steel, [0, -0.05, 0.2]);
+      // Andningshål på snosens ovansida (snosen är en kon: radien minskar mot spetsen)
+      for (const z of [0.11, 0.135]) {
+        const r = 0.07 * 0.9 * (0.2 - z) / 0.13;
+        for (let c = -2; c <= 2; c++) {
+          const a = c * 0.38;
+          V(new THREE.SphereGeometry(0.0048, 4, 3), m.hole, [Math.sin(a) * r, -0.05 + Math.cos(a) * r, z]);
+        }
+      }
+      V(new THREE.TorusGeometry(0.07, 0.005, 4, 18), trim, [0, -0.05, 0.072], [1, 0.9, 1]); // mässingskant
+      helmet.add(visor);
+      this.visor = visor;
+      this.mergeChildren(visor);
     } else if (kind === 2) {
-      // Järnhatt med brätte och nitar
-      face();
+      // Järnhatt med brätte och nitar (öppen: ansiktet syns)
       add(new THREE.SphereGeometry(0.118, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), m.steel, [0, 0.16, 0], [1, 0.95, 1]);
       add(new THREE.CylinderGeometry(0.215, 0.215, 0.014, 22), m.steel, [0, 0.163, 0], [1, 1, 1], [0.05, 0, 0]);
       add(new THREE.TorusGeometry(0.215, 0.007, 4, 24), trim, [0, 0.165, 0.01], [1, 1, 1], [Math.PI / 2 + 0.05, 0, 0]);
-      add(new THREE.BoxGeometry(0.015, 0.11, 0.24), m.steel, [0, 0.24, 0], [1, 1, 1], [0, 0, 0]); // ås
+      add(new THREE.BoxGeometry(0.015, 0.11, 0.24), m.steel, [0, 0.24, 0]); // ås
       rivetRing(0.118, 0.175, 12);
+      add(new THREE.CylinderGeometry(0.1, 0.12, 0.05, 16, 1, true), m.strap, [0, 0.16, 0]); // läderfoder
     } else if (kind === 3) {
-      // Hornhjälm med nässkydd, mässingsband och nitar
-      add(new THREE.CylinderGeometry(0.115, 0.11, 0.2, 18), m.steel, [0, 0.13, 0]);
-      add(new THREE.SphereGeometry(0.115, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2), m.steel, [0, 0.23, 0]);
-      add(new THREE.BoxGeometry(0.16, 0.025, 0.02), m.visor, [0, 0.16, 0.108]);
-      add(new THREE.BoxGeometry(0.025, 0.1, 0.02), m.steel, [0, 0.12, 0.118]); // nässkydd
+      // Hornhjälm med nässkydd och kindskydd (öppen framtill)
+      const R = 0.115;
+      cyl(R, R, 0.06, 0.2);                                      // pannband runt hela huvudet
+      shell(new THREE.SphereGeometry(R, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2), [0, 0.23, 0]);
+      cyl(R, R + 0.006, 0.12, 0.11, 0.95, Math.PI * 2 - 1.9);   // kindskydd och nacke
+      add(new THREE.BoxGeometry(0.024, 0.1, 0.012), m.steel, [0, 0.135, 0.118]); // nässkydd
       add(new THREE.TorusGeometry(0.116, 0.01, 5, 20), trim, [0, 0.21, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
-      rivetRing(0.117, 0.06, 12);
+      rivetRing(0.117, 0.185, 12);
       const bone = this.mat(0xe8dcc0, 0.55, 0);
       for (const s of [1, -1]) {
         add(new THREE.ConeGeometry(0.035, 0.16, 10), bone, [0.13 * s, 0.25, 0], [1, 1, 1], [0, 0, -1.1 * s]);
@@ -612,18 +804,24 @@ export class Knight {
         add(new THREE.TorusGeometry(0.036, 0.007, 4, 10), trim, [0.115 * s, 0.24, 0], [1, 1, 1], [0, Math.PI / 2, -1.1 * s]);
       }
     } else if (kind === 4) {
-      // Plymhjälm: rundad med nackskydd, graverade linjer, plymhållare och en stor fjäderplym
-      add(new THREE.SphereGeometry(0.126, 18, 12), m.steel, [0, 0.15, 0], [1, 0.95, 1.12]);
+      // Plymhjälm (armet): rundad, med en smal springa för ögonen, nackskydd och fjäderplym
+      const R = 0.126;
+      const sphere = (t0, t1, p0 = 0, p1 = Math.PI * 2) =>
+        shell(new THREE.SphereGeometry(R, 20, 6, p0, p1, t0, t1 - t0), [0, 0.15, 0], [1, 0.95, 1.12]);
+      const gap = 0.62;
+      sphere(0, 1.47);                                           // kupan
+      sphere(1.47, 1.69, Math.PI / 2 + gap, Math.PI * 2 - gap * 2); // ögonspringan (öppen framtill)
+      sphere(1.69, 2.45);                                        // hakan och kinderna
       add(new THREE.ConeGeometry(0.1, 0.18, 14), m.steel, [0, 0.08, -0.12], [1.2, 1, 0.5], [-Math.PI / 2 - 0.5, 0, 0]);
-      add(new THREE.BoxGeometry(0.17, 0.02, 0.03), m.visor, [0, 0.15, 0.13]);
-      for (const y of [0.2, 0.23]) add(new THREE.TorusGeometry(0.115, 0.004, 4, 20), trim, [0, y, 0.005], [1, 1.12, 1], [Math.PI / 2 - 0.15, 0, 0]);
+      for (const y of [0.205, 0.235]) add(new THREE.TorusGeometry(0.115, 0.004, 4, 20), trim, [0, y, 0.005], [1, 1.12, 1], [Math.PI / 2 - 0.15, 0, 0]);
+      add(new THREE.BoxGeometry(0.006, 0.07, 0.01), m.steel, [0, 0.105, 0.14]); // ås nertill
+      for (let c = 0; c < 4; c++) add(new THREE.SphereGeometry(0.005, 4, 3), m.hole, [0.04 + c * 0.012, 0.1 - c * 0.006, 0.128 - c * 0.008]);
       add(new THREE.CylinderGeometry(0.015, 0.02, 0.06, 8), trim, [0, 0.28, -0.02]); // plymhållare
       const plume = [[0, 0.32, -0.02, 0.06], [0, 0.38, -0.07, 0.07], [0, 0.41, -0.14, 0.065], [0, 0.39, -0.21, 0.055], [0, 0.34, -0.26, 0.045]];
       plume.forEach(([x, y, z, r], i) => add(new THREE.SphereGeometry(r, 10, 8), i % 2 ? m.white : m.cloth, [x, y, z], [0.7, 1.3, 1]));
       if (gilded) add(new THREE.TorusGeometry(0.12, 0.012, 5, 20), m.gold, [0, 0.12, 0], [1, 1, 1.1], [Math.PI / 2, 0, 0]);
     } else if (kind === 5) {
       // Kastrull, med skaftet ut åt sidan
-      face();
       const pot = this.mat(0x4a4d52, 0.4, 0.7);
       add(new THREE.CylinderGeometry(0.13, 0.125, 0.13, 18), pot, [0, 0.23, 0]);
       add(new THREE.TorusGeometry(0.128, 0.01, 6, 20), pot, [0, 0.165, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
@@ -631,40 +829,135 @@ export class Knight {
       add(new THREE.SphereGeometry(0.03, 8, 6), pot, [-0.07, 0.29, 0.03], [1, 0.4, 1]); // en buckla
     } else if (kind === 6) {
       // Halmhatt med band i spelarens färg
-      face();
       add(new THREE.CylinderGeometry(0.26, 0.26, 0.018, 22), m.straw, [0, 0.17, 0]);
       add(new THREE.CylinderGeometry(0.1, 0.12, 0.12, 16), m.straw, [0, 0.235, 0]);
       add(new THREE.CylinderGeometry(0.121, 0.121, 0.03, 16, 1, true), m.cloth, [0, 0.195, 0]);
     } else {
-      // Tunnhjälm: kors i mässing över ansiktet, nitrader, andningshål och hjälmkam
-      add(new THREE.CylinderGeometry(0.115, 0.11, 0.2, 18), m.steel, [0, 0.13, 0]);
-      add(new THREE.SphereGeometry(0.115, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2), m.steel, [0, 0.23, 0]);
-      add(new THREE.BoxGeometry(0.16, 0.025, 0.02), m.visor, [0, 0.16, 0.108]); // ögonspringa
-      add(new THREE.BoxGeometry(0.018, 0.16, 0.012), trim, [0, 0.12, 0.116]);  // kors i mässing
-      add(new THREE.BoxGeometry(0.2, 0.014, 0.012), trim, [0, 0.185, 0.112]);
-      for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) add(new THREE.SphereGeometry(0.005, 4, 3), m.visor, [-0.035 - c * 0.016, 0.1 - r * 0.018, 0.112]); // andningshål
-      rivetRing(0.114, 0.04, 16);
-      rivetRing(0.114, 0.215, 16);
-      add(new THREE.BoxGeometry(0.035, 0.07, 0.22), m.cloth, [0, 0.36, -0.01]); // hjälmkam
+      // Tunnhjälm: riktiga ögonspringor på var sin sida om ett kors i mässing, andningshål och hjälmkam
+      const R = 0.122;
+      cyl(R, R - 0.004, 0.112, 0.076);                        // nedre delen
+      cyl(R, R, 0.03, 0.147, 0.6, Math.PI * 2 - 1.2);         // ögonspringorna i ögonhöjd (öppet framtill)
+      cyl(R, R, 0.068, 0.196);                                // övre delen
+      shell(new THREE.SphereGeometry(R, 22, 8, 0, Math.PI * 2, 0, Math.PI / 2), [0, 0.23, 0], [1, 0.75, 1]); // topp
+      add(new THREE.BoxGeometry(0.024, 0.19, 0.012), trim, [0, 0.125, R + 0.004]);  // korsets lodräta del (delar springorna)
+      add(new THREE.BoxGeometry(0.22, 0.016, 0.012), trim, [0, 0.172, R - 0.002], [1, 1, 1], [0, 0, 0]);
+      add(new THREE.TorusGeometry(R, 0.006, 4, 24), trim, [0, 0.022, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
+      for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+        add(new THREE.SphereGeometry(0.0055, 4, 3), m.hole, [-0.03 - c * 0.016, 0.1 - r * 0.018, R - 0.004 - c * 0.0035]); // andningshål
+      }
+      rivetRing(R + 0.001, 0.04, 16);
+      rivetRing(R + 0.001, 0.215, 16, 1, 0.3);
+      add(new THREE.BoxGeometry(0.035, 0.07, 0.22), m.cloth, [0, 0.355, -0.01]); // hjälmkam
       if (gilded) add(new THREE.TorusGeometry(0.1, 0.014, 5, 18), m.gold, [0, 0.33, 0], [1, 1, 1], [Math.PI / 2, 0, 0]); // guldkrans
     }
   }
 
-  // ---------- Svärd ----------
+  // ---------- Vapen ----------
+  // Alla vapen hålls i handen med greppet i origo och pekar längs +Y. Eggen (yxans blad) vänds mot +Z,
+  // som är hållet vapnet rör sig åt i ett nedåtgående hugg.
 
-  buildSword(m, gilded) {
-    const sword = new THREE.Group();
-    const hilt = gilded ? m.gold : m.steelDark;
-    const add = (...a) => sword.add(this.shape(...a));
-    add(new THREE.BoxGeometry(0.05, 0.85, 0.01), m.blade, [0, 0.52, 0]);        // klinga
-    add(new THREE.BoxGeometry(0.012, 0.66, 0.014), m.steelDark, [0, 0.46, 0]);  // blodränna
-    add(new THREE.ConeGeometry(0.025, 0.08, 4), m.blade, [0, 0.985, 0], [1, 1, 0.22]); // spets
-    add(new THREE.BoxGeometry(0.2, 0.03, 0.04), hilt, [0, 0.085, 0]);          // parerstång
-    for (const s of [1, -1]) add(new THREE.SphereGeometry(0.02, 8, 6), hilt, [0.1 * s, 0.095, 0]); // böjda ändar
-    add(new THREE.CylinderGeometry(0.017, 0.019, 0.14, 8), m.leatherDark, [0, 0, 0]); // läderlindat fäste
-    for (let i = 0; i < 5; i++) add(new THREE.TorusGeometry(0.019, 0.003, 3, 8), m.leather, [0, -0.05 + i * 0.025, 0], [1, 1, 1], [Math.PI / 2, 0, 0.4]);
-    add(new THREE.SphereGeometry(0.03, 10, 8), hilt, [0, -0.085, 0], [1, 0.8, 0.6]); // knapp
-    return sword;
+  buildWeapon(kind, m, gilded) {
+    const g = new THREE.Group();
+    const add = (...a) => g.add(this.shape(...a));
+    const fit = gilded ? m.gold : m.steelDark;
+    if (kind === 1) {
+      // Skäggyxa: träskaft med lindat grepp, holk med skenor och ett brett blad med "skägg" nertill
+      add(new THREE.CylinderGeometry(0.016, 0.019, 0.8, 8), m.wood, [0, 0.28, 0]);
+      for (let i = 0; i < 6; i++) add(new THREE.TorusGeometry(0.02, 0.003, 3, 8), m.leatherDark, [0, -0.06 + i * 0.022, 0], [1, 1, 1], [Math.PI / 2, 0, 0.4]);
+      add(new THREE.CylinderGeometry(0.022, 0.02, 0.03, 8), fit, [0, -0.125, 0]);  // ändbeslag
+      add(new THREE.CylinderGeometry(0.024, 0.024, 0.11, 10), m.iron, [0, 0.6, 0]);  // holk
+      for (const s of [1, -1]) add(new THREE.BoxGeometry(0.006, 0.16, 0.024), m.iron, [0.019 * s, 0.48, 0]); // skenor längs skaftet
+      const s = new THREE.Shape();
+      s.moveTo(0, 0.05);
+      s.lineTo(0.06, 0.045);
+      s.quadraticCurveTo(0.12, 0.06, 0.175, 0.1);   // övre hornet
+      s.quadraticCurveTo(0.22, -0.01, 0.165, -0.13); // den böjda eggen
+      s.quadraticCurveTo(0.09, -0.09, 0.045, -0.045); // skägget tillbaka mot skaftet
+      s.lineTo(0, -0.045);
+      s.lineTo(0, 0.05);
+      const blade = new THREE.ExtrudeGeometry(s, { depth: 0.01, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 1 });
+      blade.translate(0, 0, -0.005);
+      blade.rotateY(-Math.PI / 2); // formens X blir framåt (+Z)
+      add(blade, m.steel, [0, 0.6, 0]);
+      this.weaponBloodGeo = blade.clone();
+      this.weaponBloodPos = [0, 0.6, 0];
+      add(new THREE.BoxGeometry(0.004, 0.2, 0.012), m.blade, [0, 0.585, 0.176], [1, 1, 1], [0.12, 0, 0]); // slipad egg
+      add(new THREE.ConeGeometry(0.013, 0.07, 6), m.steel, [0, 0.69, 0]);                                // spets upptill (för stöten)
+      add(new THREE.BoxGeometry(0.026, 0.04, 0.04), m.iron, [0, 0.6, -0.04]);                              // nacke bakåt
+      for (const x of [0.009, -0.009]) add(new THREE.SphereGeometry(0.006, 5, 4), fit, [x, 0.6, 0.03]);
+      g.userData.trail = { tip: [0, 0.68, 0.19], base: [0, 0.48, 0.15] };
+    } else if (kind === 2) {
+      // Slagkedja: handtag, kedja och en spikboll längst ut (kedjan och bollen styrs av fysiken)
+      add(new THREE.CylinderGeometry(0.018, 0.021, 0.42, 8), m.wood, [0, 0.09, 0]);
+      for (let i = 0; i < 6; i++) add(new THREE.TorusGeometry(0.022, 0.003, 3, 8), m.leatherDark, [0, -0.06 + i * 0.022, 0], [1, 1, 1], [Math.PI / 2, 0, 0.4]);
+      add(new THREE.SphereGeometry(0.026, 8, 6), fit, [0, -0.13, 0], [1, 0.8, 1]);   // knapp
+      add(new THREE.CylinderGeometry(0.024, 0.022, 0.06, 10), m.iron, [0, 0.31, 0]); // beslag upptill
+      add(new THREE.TorusGeometry(0.014, 0.004, 4, 10), m.iron, [0, 0.35, 0]);      // ögla
+      this.buildFlailChain(m);
+      g.userData.anchor = [0, 0.35, 0];
+    } else {
+      // Svärd
+      const hilt = gilded ? m.gold : m.steelDark;
+      add(new THREE.BoxGeometry(0.05, 0.85, 0.01), m.blade, [0, 0.52, 0]);        // klinga
+      add(new THREE.BoxGeometry(0.012, 0.66, 0.014), m.steelDark, [0, 0.46, 0]);  // blodränna
+      add(new THREE.ConeGeometry(0.025, 0.08, 4), m.blade, [0, 0.985, 0], [1, 1, 0.22]); // spets
+      add(new THREE.BoxGeometry(0.2, 0.03, 0.04), hilt, [0, 0.085, 0]);          // parerstång
+      for (const s of [1, -1]) add(new THREE.SphereGeometry(0.02, 8, 6), hilt, [0.1 * s, 0.095, 0]); // böjda ändar
+      add(new THREE.CylinderGeometry(0.017, 0.019, 0.14, 8), m.leatherDark, [0, 0, 0]); // läderlindat fäste
+      for (let i = 0; i < 5; i++) add(new THREE.TorusGeometry(0.019, 0.003, 3, 8), m.leather, [0, -0.05 + i * 0.025, 0], [1, 1, 1], [Math.PI / 2, 0, 0.4]);
+      add(new THREE.SphereGeometry(0.03, 10, 8), hilt, [0, -0.085, 0], [1, 0.8, 0.6]); // knapp
+      g.userData.trail = { tip: [0, 0.98, 0], base: [0, 0.3, 0] };
+    }
+    g.userData.kind = kind;
+    return g;
+  }
+
+  // Kedjans länkar och spikbollen ligger direkt i riddarens grupp och flyttas varje bildruta
+  buildFlailChain(m) {
+    const LINKS = 6;
+    const chain = new Chain(LINKS, 0.055, 0.065);
+    // Alla länkar ritas med en enda ritning
+    const links = new THREE.InstancedMesh(new THREE.TorusGeometry(0.014, 0.0042, 4, 10), m.iron, LINKS - 1);
+    links.userData.equipment = true;
+    links.castShadow = true;
+    links.frustumCulled = false;
+    this.group.add(links);
+    const ball = new THREE.Group();
+    ball.userData.equipment = true;
+    ball.add(this.shape(new THREE.SphereGeometry(0.058, 14, 10), m.iron));
+    // Spikar åt alla håll (jämnt fördelade på klotet)
+    const n = 14;
+    for (let i = 0; i < n; i++) {
+      const y = 1 - (2 * (i + 0.5)) / n;
+      const r = Math.sqrt(1 - y * y);
+      const a = i * 2.39996;
+      const dir = new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r);
+      const spike = this.shape(new THREE.ConeGeometry(0.014, 0.045, 6), m.steel, [dir.x * 0.07, dir.y * 0.07, dir.z * 0.07]);
+      spike.quaternion.setFromUnitVectors(_up, dir);
+      ball.add(spike);
+    }
+    ball.add(this.shape(new THREE.TorusGeometry(0.014, 0.004, 4, 10), m.iron, [0, 0.065, 0]));
+    this.mergeChildren(ball);
+    this.group.add(ball);
+    this.flail = { chain, links, ball, frozen: false };
+  }
+
+  addWeaponBlood(kind) {
+    let mesh;
+    if (kind === 1 && this.weaponBloodGeo) {
+      mesh = new THREE.Mesh(this.weaponBloodGeo, this.bladeBloodMat);
+      mesh.position.set(...this.weaponBloodPos);
+      mesh.scale.set(1.25, 1.02, 1.02);
+      this.weapon.add(mesh);
+    } else if (kind === 2 && this.flail) {
+      mesh = new THREE.Mesh(new THREE.SphereGeometry(0.066, 12, 8), this.bladeBloodMat);
+      this.flail.ball.add(mesh);
+    } else {
+      mesh = new THREE.Mesh(new THREE.BoxGeometry(0.054, 0.6, 0.016), this.bladeBloodMat);
+      mesh.position.set(0, 0.62, 0);
+      this.weapon.add(mesh);
+    }
+    mesh.userData.equipment = true;
   }
 
   // ---------- Sköldar ----------
@@ -714,10 +1007,28 @@ export class Knight {
     m.emissiveIntensity = 0;
     if (metalness >= 0.3 && ENVIRONMENT) {
       m.envMap = ENVIRONMENT; // blank metall speglar himlen och marken
-      m.envMapIntensity = 1;
+      m.envMapIntensity = 1.25;
     }
+    // Enfärgade material utan bilder kan slås ihop: färgen läggs då i själva formen (se mergeChildren)
+    const plain = !extra.map && !extra.roughnessMap && !extra.alphaMap && !extra.bumpMap && !extra.transparent && !extra.vertexColors
+      && (extra.side === undefined || extra.side === THREE.FrontSide);
+    m.userData.vcKind = plain ? (metalness >= 0.3 ? "metal" : "plain") : null;
     this.materials.push(m);
     return m;
+  }
+
+  // Ett gemensamt material för alla enfärgade delar (ett för tyg/hud/trä, ett för metall)
+  vcMaterial(kind) {
+    if (!this.vcMats) this.vcMats = {};
+    if (!this.vcMats[kind]) {
+      // All metall (plåt, mässing, guld, järn) delar på ett material med lätt slitage i ytan
+      const m = kind === "metal"
+        ? this.mat(0xffffff, this.gilded ? 0.3 : 0.38, this.gilded ? 0.82 : 0.78, { vertexColors: true, roughnessMap: metalWearTexture() })
+        : this.mat(0xffffff, 0.8, 0, { vertexColors: true });
+      m.userData.baseColor = m.color.clone();
+      this.vcMats[kind] = m;
+    }
+    return this.vcMats[kind];
   }
 
   shape(geometry, material, pos = [0, 0, 0], scale = [1, 1, 1], rot = [0, 0, 0]) {
@@ -737,17 +1048,33 @@ export class Knight {
     return g;
   }
 
-  // Slå ihop alla direkta småbitar i en grupp som har samma material till en enda
+  // Slå ihop alla direkta småbitar i en grupp som har samma material till en enda.
+  // Enfärgade delar slås ihop även om färgen skiljer sig: färgen sparas per punkt i formen.
   mergeChildren(group) {
     const buckets = new Map();
     for (const child of [...group.children]) {
       if (!child.isMesh) continue;
       child.updateMatrix();
       const geo = (child.geometry.index ? child.geometry.toNonIndexed() : child.geometry.clone()).applyMatrix4(child.matrix);
-      for (const key of Object.keys(geo.attributes)) if (!["position", "normal", "uv"].includes(key)) geo.deleteAttribute(key);
+      const vcKind = child.material.userData?.vcKind;
+      let material = child.material;
+      if (vcKind) {
+        material = this.vcMaterial(vcKind);
+        const n = geo.attributes.position.count;
+        const colors = new Float32Array(n * 3);
+        const c = child.material.color;
+        for (let i = 0; i < n; i++) {
+          colors[i * 3] = c.r;
+          colors[i * 3 + 1] = c.g;
+          colors[i * 3 + 2] = c.b;
+        }
+        geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      }
+      const keep = material.vertexColors ? ["position", "normal", "uv", "color"] : ["position", "normal", "uv"];
+      for (const key of Object.keys(geo.attributes)) if (!keep.includes(key)) geo.deleteAttribute(key);
       geo.clearGroups?.();
-      if (!buckets.has(child.material)) buckets.set(child.material, []);
-      buckets.get(child.material).push(geo);
+      if (!buckets.has(material)) buckets.set(material, []);
+      buckets.get(material).push(geo);
       group.remove(child);
       child.geometry.dispose();
     }
@@ -758,28 +1085,349 @@ export class Knight {
     }
   }
 
-  // ---------- Blod på rustningen och svärdet ----------
+  // En kroppsdels egna ritningar (inte vapen, tyg eller andra kroppsdelar som sitter längre ut)
+  ownMeshes(seg, includeHelmet = true) {
+    const list = [];
+    const walk = (obj) => {
+      for (const child of obj.children) {
+        if (child.userData?.segment || child.userData?.equipment || child.userData?.face || child.userData?.decal) continue;
+        if (child.userData?.helmet && !includeHelmet) continue;
+        if (child.isMesh) list.push(child);
+        else walk(child);
+      }
+    };
+    walk(seg);
+    return list;
+  }
 
-  // En blodfläck på kroppsdelen som träffades
-  addBloodSplat(segName) {
+  // ---------- Mjukt tyg ----------
+
+  // Fästpunkter och klot (för att tyget inte ska gå igenom kroppen) anges i kroppsdelarnas egna koordinater
+  // side = -1: tyget hålls bakom kroppsdelen (mantel), +1: framför (vapenrockens framstycke)
+  addSoft(cloth, pins, colliders, freezeTo, side, offset) {
+    this.group.add(cloth.mesh);
+    this.soft.push({
+      cloth, pins, colliders, freezeTo, side, offset,
+      pinWorld: pins.map(() => [0, 0, 0]), colWorld: colliders.map(() => ({ x: 0, y: 0, z: 0, r: 0 })), plane: { nx: 0, nz: 0, d: 0 },
+    });
+  }
+
+  addCape(m, gilded) {
+    const cols = 7;
+    const cloth = new Cloth({ cols, rows: 10, widthTop: 0.34, widthBottom: 0.62, height: 1.02, material: m.capeCloth });
+    const torso = this.seg.torso;
+    const pins = [];
+    for (let c = 0; c < cols; c++) {
+      const f = c / (cols - 1) - 0.5;
+      pins.push([torso, [f * 0.34, 0.425 - Math.abs(f) * 0.03, -0.12 - (1 - Math.abs(f) * 2) * 0.03]]);
+    }
+    const T = this.seg;
+    const colliders = [
+      [T.torso, [0.08, 0.3, 0], 0.15], [T.torso, [-0.08, 0.3, 0], 0.15],
+      [T.torso, [0.07, 0.1, 0], 0.15], [T.torso, [-0.07, 0.1, 0], 0.15],
+      [T.pelvis, [0.07, -0.06, 0], 0.15], [T.pelvis, [-0.07, -0.06, 0], 0.15],
+      [T.thighL, [0, -0.12, 0], 0.1], [T.thighR, [0, -0.12, 0], 0.1],
+      [T.thighL, [0, -0.32, 0], 0.085], [T.thighR, [0, -0.32, 0], 0.085],
+      [T.shinL, [0, -0.12, 0], 0.075], [T.shinR, [0, -0.12, 0], 0.075],
+    ];
+    this.addSoft(cloth, pins, colliders, "torso", -1, 0.1);
+    // Rullad krage över axlarna och ett mantelspänne på bröstet
+    const tor = (...a) => torso.add(this.shape(...a));
+    tor(new THREE.CylinderGeometry(0.026, 0.026, 0.36, 10), m.cloth, [0, 0.425, -0.125], [1, 1, 1], [0, 0, Math.PI / 2]);
+    for (const s of [1, -1]) {
+      tor(new THREE.CylinderGeometry(0.022, 0.022, 0.012, 12), gilded ? m.gold : m.brass, [0.12 * s, 0.4, 0.13], [1, 1, 1], [Math.PI / 2, 0, 0]);
+      tor(new THREE.BoxGeometry(0.035, 0.012, 0.18), m.cloth, [0.15 * s, 0.43, 0.0], [1, 1, 1], [0, 0, 0.5 * s]); // kanten över axeln
+    }
+    tor(new THREE.CylinderGeometry(0.004, 0.004, 0.24, 4), gilded ? m.gold : m.brass, [0, 0.4, 0.135], [1, 1, 1], [0, 0, Math.PI / 2]); // kedja mellan spännena
+    this.mergeChildren(torso);
+  }
+
+  // Vapenrockens skört fram och bak: mjukt tyg som gungar runt benen
+  addTabard(m) {
+    const P = this.seg.pelvis;
+    const T = this.seg;
+    for (const side of [1, -1]) {
+      const cols = 5;
+      const cloth = new Cloth({ cols, rows: 6, widthTop: 0.3, widthBottom: 0.36, height: 0.46, material: m.tabardCloth, damping: 0.96 });
+      const pins = [];
+      for (let c = 0; c < cols; c++) {
+        const f = c / (cols - 1) - 0.5;
+        pins.push([P, [f * 0.3 * side, -0.02, (0.128 - Math.abs(f) * 0.05) * side]]);
+      }
+      const colliders = [
+        [T.pelvis, [0.06, -0.08, 0], 0.13], [T.pelvis, [-0.06, -0.08, 0], 0.13],
+        [T.thighL, [0, -0.1, 0], 0.1], [T.thighR, [0, -0.1, 0], 0.1],
+        [T.thighL, [0, -0.28, 0], 0.088], [T.thighR, [0, -0.28, 0], 0.088],
+        [T.shinL, [0, -0.02, 0], 0.08], [T.shinR, [0, -0.02, 0], 0.08],
+      ];
+      this.addSoft(cloth, pins, colliders, "pelvis", side, 0.06);
+    }
+  }
+
+  // Flytta tyget och kedjan (anropas efter att lederna flyttats)
+  updateSoft(dt) {
+    if (this.soft.length === 0 && !this.flail) return;
+    this.group.updateMatrixWorld(true);
+    _inv.copy(this.group.matrixWorld).invert();
+    // Vände sig riddaren blixtsnabbt (t.ex. ny runda)? Då börjar tyget om och hänger rakt ner,
+    // annars kan det fastna på fel sida om kroppen.
+    const yaw = this.group.rotation.y;
+    let turn = this.lastYaw === undefined ? 0 : yaw - this.lastYaw;
+    turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+    this.lastYaw = yaw;
+    const snapped = Math.abs(turn) > 0.9;
+    for (const s of this.soft) {
+      if (s.cloth.frozen) continue;
+      s.pins.forEach(([seg, p], i) => {
+        _v.set(p[0], p[1], p[2]).applyMatrix4(seg.matrixWorld);
+        const w = s.pinWorld[i];
+        w[0] = _v.x;
+        w[1] = _v.y;
+        w[2] = _v.z;
+      });
+      const cols = [];
+      s.colliders.forEach(([seg, p, r], i) => {
+        if (seg.userData.detached) return;
+        _v.set(p[0], p[1], p[2]).applyMatrix4(seg.matrixWorld);
+        const c = s.colWorld[i];
+        c.x = _v.x;
+        c.y = _v.y;
+        c.z = _v.z;
+        c.r = r;
+        cols.push(c);
+      });
+      // Planet som tyget inte får passera: genom kroppsdelens mitt, vinkelrätt mot dess framåtriktning
+      const e = this.seg[s.freezeTo].matrixWorld.elements;
+      const fl = Math.hypot(e[8], e[10]) || 1;
+      const fx = e[8] / fl;
+      const fz = e[10] / fl;
+      const along = fx * e[12] + fz * e[14];
+      if (s.side < 0) Object.assign(s.plane, { nx: fx, nz: fz, d: along - s.offset });
+      else Object.assign(s.plane, { nx: -fx, nz: -fz, d: -along - s.offset });
+      if (snapped) s.cloth.reset(s.pinWorld, [fx * 0.02 * s.side, 0, fz * 0.02 * s.side]);
+      s.cloth.update(dt, s.pinWorld, cols, _inv, 0.02, s.plane);
+    }
+    if (this.flail && !this.flail.frozen) this.updateFlail(dt);
+  }
+
+  updateFlail(dt) {
+    const { chain, links, ball } = this.flail;
+    const a = this.weapon.userData.anchor;
+    _v.set(a[0], a[1], a[2]).applyMatrix4(this.weapon.matrixWorld);
+    chain.update(dt, [_v.x, _v.y, _v.z]);
+    // Länkarna mellan punkterna, varannan vriden ett kvarts varv (som en riktig kedja)
+    for (let i = 0; i < links.count; i++) {
+      chain.point(i + 1, _v).applyMatrix4(_inv);
+      chain.point(i + 2, _v2).applyMatrix4(_inv);
+      _mid.copy(_v).add(_v2).multiplyScalar(0.5);
+      _v2.sub(_v).normalize();
+      _q.setFromUnitVectors(_up, _v2);
+      _q2.setFromAxisAngle(_up, i % 2 ? Math.PI / 2 : 0);
+      _q.multiply(_q2);
+      _mat.compose(_mid, _q, _linkScale);
+      links.setMatrixAt(i, _mat);
+    }
+    links.instanceMatrix.needsUpdate = true;
+    chain.point(chain.count, _v).applyMatrix4(_inv);
+    chain.point(chain.count - 1, _v2).applyMatrix4(_inv);
+    ball.position.copy(_v);
+    _v2.sub(_v).normalize();
+    ball.quaternion.setFromUnitVectors(_up, _v2);
+  }
+
+  // Tyg och kedja slutar röra sig och följer med kroppen (vid död eller avhuggning)
+  freezeSoft(which = null) {
+    for (const s of this.soft) {
+      if (which && s.freezeTo !== which) continue;
+      s.cloth.freeze(this.seg[s.freezeTo]);
+    }
+    if (this.flail && !this.flail.frozen && (!which || which === "weapon")) {
+      this.flail.frozen = true;
+      for (const obj of [this.flail.links, this.flail.ball]) this.weapon.attach(obj);
+    }
+  }
+
+  // ---------- Blod, bucklor, repor och smuts ----------
+
+  // En punkt på ytan av en kroppsdel (för fläckar och repor) och åt vilket håll ytan pekar.
+  // En stråle skjuts in mot kroppsdelen utifrån, så punkten hamnar exakt på plåten/tyget.
+  surfacePoint(segName) {
+    const guess = this.guessSurfacePoint(segName);
     const seg = this.seg[segName];
-    if (!seg || seg.userData.detached || this.bloodSplats > 45) return;
-    this.bloodSplats += 1;
+    const meshes = this.ownMeshes(seg).filter((mesh) => !mesh.userData.decal && mesh.material !== this.m.helmInner);
+    if (meshes.length === 0) return guess;
+    if (!this.raycaster) this.raycaster = new THREE.Raycaster();
+    this.group.updateMatrixWorld(true);
+    const inward = guess.normal.clone().negate();
+    const from = guess.pos.clone().addScaledVector(guess.normal, 0.25);
+    const origin = from.applyMatrix4(seg.matrixWorld);
+    const dir = inward.transformDirection(seg.matrixWorld);
+    this.raycaster.set(origin, dir);
+    this.raycaster.far = 0.6;
+    const hit = this.raycaster.intersectObjects(meshes, false)[0];
+    if (!hit || !hit.face || !hit.point) return guess;
+    const pos = seg.worldToLocal(hit.point.clone());
+    const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+    _inv.copy(seg.matrixWorld).invert();
+    normal.transformDirection(_inv);
+    if (normal.dot(guess.normal) < 0) normal.negate();
+    pos.addScaledVector(normal, 0.0015); // en hårsmån utanför ytan
+    return { pos, normal };
+  }
+
+  guessSurfacePoint(segName) {
+    const seg = this.seg[segName];
     const pts = seg.userData.points;
     const isTorso = segName === "torso";
     const isHead = segName === "head";
     const angle = Math.random() * Math.PI * 2;
-    const y = isTorso ? 0.08 + Math.random() * 0.34 : isHead ? 0.1 + Math.random() * 0.12 : pts[1][1] * (0.15 + Math.random() * 0.7);
-    const r = isTorso ? 0.2 : isHead ? 0.125 : seg.userData.radius * 1.35 + 0.01;
+    const y = isTorso ? 0.08 + Math.random() * 0.34 : isHead ? 0.06 + Math.random() * 0.16 : pts[1][1] * (0.15 + Math.random() * 0.7);
+    const r = isTorso ? 0.2 : isHead ? (this.helmetOff ? 0.1 : 0.126) : seg.userData.radius * 1.35 + 0.01;
     const sx = isTorso ? 1.15 : 1;
     const sz = isTorso ? 0.78 : 1;
     const normal = new THREE.Vector3(Math.sin(angle) * sx, 0, Math.cos(angle) * sz).normalize();
-    const size = 0.025 + Math.random() * 0.04;
-    const splat = new THREE.Mesh(new THREE.CircleGeometry(size, 7), bloodDecal());
-    splat.position.set(Math.sin(angle) * r * sx, y, Math.cos(angle) * r * sz);
-    splat.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
-    splat.scale.set(1, 0.6 + Math.random() * 0.9, 1);
-    seg.add(splat);
+    return { pos: new THREE.Vector3(Math.sin(angle) * r * sx, isHead ? 0.135 + (y - 0.135) * 0.6 : y, Math.cos(angle) * r * sz), normal };
+  }
+
+  addDecal(segName, mesh) {
+    const seg = this.seg[segName];
+    if (!seg || seg.userData.detached || this.decals > 70) return false;
+    this.decals += 1;
+    const { pos, normal } = this.surfacePoint(segName);
+    mesh.position.copy(pos);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+    // Fläckar på hjälmen följer med hjälmen om den flyger av
+    (segName === "head" && !this.helmetOff ? this.helmet : seg).add(mesh);
+    return true;
+  }
+
+  // En blodfläck på kroppsdelen som träffades
+  addBloodSplat(segName) {
+    if (this.bloodSplats > 45) return;
+    const size = 0.06 + Math.random() * 0.08;
+    const splat = new THREE.Mesh(new THREE.PlaneGeometry(size, size), bloodDecal());
+    splat.rotation.z = Math.random() * Math.PI * 2;
+    splat.scale.set(1, 0.7 + Math.random() * 0.6, 1);
+    const holder = new THREE.Group(); // hållaren vänds mot ytan, stänket vrids slumpvis i den
+    holder.userData.decal = true;
+    holder.add(splat);
+    if (this.addDecal(segName, holder)) this.bloodSplats += 1;
+  }
+
+  // En blank repa (metall) eller ljus skråma (läder och tyg)
+  addScratch(segName) {
+    const len = 0.025 + Math.random() * 0.04;
+    const scratch = new THREE.Mesh(new THREE.BoxGeometry(len, 0.0035, 0.002), this.m.scratch);
+    scratch.rotation.z = Math.random() * Math.PI;
+    const holder = new THREE.Group();
+    holder.userData.decal = true;
+    holder.add(scratch);
+    this.addDecal(segName, holder);
+  }
+
+  // Plåten trycks faktiskt in: punkterna runt en slumpad plats flyttas inåt mot kroppsdelens mitt
+  addDent(segName, depth = 0.012) {
+    const seg = this.seg[segName];
+    if (!seg || seg.userData.detached || !this.isMetal) return false;
+    const metal = this.vcMats?.metal;
+    const meshes = this.ownMeshes(seg).filter((mesh) => (mesh.material === metal || mesh.material === this.m.steel) && mesh.geometry.attributes.position);
+    if (meshes.length === 0) return false;
+    const mesh = meshes[Math.floor(Math.random() * meshes.length)];
+    const pos = mesh.geometry.attributes.position;
+    const normal = mesh.geometry.attributes.normal;
+    if (!pos.count || !normal) return false;
+    const arr = pos.array;
+    const nrm = normal.array;
+    const vi = Math.floor(Math.random() * pos.count) * 3;
+    const cx = arr[vi];
+    const cy = arr[vi + 1];
+    const cz = arr[vi + 2];
+    const radius = 0.028 + Math.random() * 0.025;
+    const isHead = segName === "head";
+    const moved = new Uint8Array(pos.count);
+    for (let i = 0; i < pos.count; i++) {
+      const x = arr[i * 3];
+      const y = arr[i * 3 + 1];
+      const z = arr[i * 3 + 2];
+      const d = Math.hypot(x - cx, y - cy, z - cz);
+      if (d >= radius) continue;
+      // Utåt från mitten: huvudet från en punkt mitt i skallen, bål och lemmar från sin lodräta axel
+      const ox = x;
+      const oy = isHead ? y - 0.13 : 0;
+      const oz = z;
+      const len = Math.hypot(ox, oy, oz) || 1;
+      const f = (1 - d / radius) ** 2 * depth;
+      arr[i * 3] -= (ox / len) * f;
+      arr[i * 3 + 1] -= (oy / len) * f;
+      arr[i * 3 + 2] -= (oz / len) * f;
+      moved[i] = 1;
+    }
+    // Nya normaler för trianglarna i bucklan (så ljuset bryts i den)
+    for (let t = 0; t + 2 < pos.count; t += 3) {
+      if (!moved[t] && !moved[t + 1] && !moved[t + 2]) continue;
+      const a = t * 3;
+      const b = a + 3;
+      const c = a + 6;
+      const ux = arr[b] - arr[a];
+      const uy = arr[b + 1] - arr[a + 1];
+      const uz = arr[b + 2] - arr[a + 2];
+      const vx = arr[c] - arr[a];
+      const vy = arr[c + 1] - arr[a + 1];
+      const vz = arr[c + 2] - arr[a + 2];
+      let nx = uy * vz - uz * vy;
+      let ny = uz * vx - ux * vz;
+      let nz = ux * vy - uy * vx;
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      nx /= nl;
+      ny /= nl;
+      nz /= nl;
+      // Behåll riktningen utåt (samma håll som den gamla normalen)
+      if (nx * nrm[a] + ny * nrm[a + 1] + nz * nrm[a + 2] < 0) {
+        nx = -nx;
+        ny = -ny;
+        nz = -nz;
+      }
+      for (const k of [a, b, c]) {
+        nrm[k] = nx;
+        nrm[k + 1] = ny;
+        nrm[k + 2] = nz;
+      }
+    }
+    pos.needsUpdate = true;
+    normal.needsUpdate = true;
+    return true;
+  }
+
+  // Smuts: alla färger dras lite mot jordbrunt (0 = ren, 1 = riktigt smutsig)
+  setDirt(amount) {
+    this.dirt = Math.max(0, Math.min(1, amount));
+    for (const mat of this.materials) {
+      const base = mat.userData?.baseColor;
+      if (!base || mat === this.m.blood || mat === this.m.eyeWhite || mat === this.m.iris || mat === this.m.helmInner) continue;
+      mat.color.copy(base).lerp(DIRT, this.dirt * 0.38);
+    }
+  }
+
+  // Slitage efter en träff (anropas av spelet). Returnerar vad som hände så spelet kan spara det.
+  addWear(segName, heavy) {
+    const seg = segName && this.seg[segName] && !this.seg[segName].userData.detached ? segName : "torso";
+    let dents = 0;
+    for (let i = 0; i < (heavy ? 2 : 1); i++) if (this.addDent(seg, heavy ? 0.016 : 0.01)) dents += 1;
+    this.addScratch(seg);
+    if (Math.random() < 0.5) this.addScratch(Math.random() < 0.5 ? "torso" : seg);
+    this.setDirt((this.dirt || 0) + 0.04);
+    return dents;
+  }
+
+  // Återskapa slitaget från tidigare rundor i matchen (en ny riddare skapas varje runda)
+  applyWear(wear) {
+    if (!wear) return;
+    const parts = ["torso", "torso", "head", "upperArmL", "upperArmR", "thighL", "thighR", "shinL", "shinR", "forearmL", "forearmR"];
+    const pick = () => parts[Math.floor(Math.random() * parts.length)];
+    for (let i = 0; i < Math.min(30, wear.dents || 0); i++) this.addDent(pick(), 0.008 + Math.random() * 0.008);
+    for (let i = 0; i < Math.min(25, wear.scratches || 0); i++) this.addScratch(pick());
+    for (let i = 0; i < Math.min(12, wear.blood || 0); i++) this.addBloodSplat(pick());
+    this.setDirt(wear.dirt || 0);
   }
 
   bloodySword() {
@@ -787,7 +1435,19 @@ export class Knight {
     this.bladeBloodMat.opacity = this.swordBlood * 0.8;
   }
 
-  // ---------- Svärdsspår (en ljus båge som följer klingan i slaget) ----------
+  // ---------- Vapenspår (en ljus båge som följer vapnets huvud i slaget) ----------
+
+  trailEnds(tip, base) {
+    const t = this.weapon.userData.trail;
+    if (this.flail && !this.flail.frozen) {
+      this.flail.chain.point(this.flail.chain.count, tip);
+      const a = this.weapon.userData.anchor;
+      base.set(a[0], a[1], a[2]).applyMatrix4(this.weapon.matrixWorld);
+      return;
+    }
+    tip.set(...t.tip).applyMatrix4(this.weapon.matrixWorld);
+    base.set(...t.base).applyMatrix4(this.weapon.matrixWorld);
+  }
 
   updateTrail(scene) {
     const SAMPLES = 12;
@@ -810,9 +1470,10 @@ export class Knight {
     if (!trail.mesh.parent && scene) scene.add(trail.mesh);
     const active = this.attack && !this.seg.handR.userData.detached && this.attack.t > 0.06 && this.attack.t < 0.42;
     if (active) {
-      this.sword.updateWorldMatrix(true, false);
-      const tip = new THREE.Vector3(0, 0.98, 0).applyMatrix4(this.sword.matrixWorld);
-      const base = new THREE.Vector3(0, 0.3, 0).applyMatrix4(this.sword.matrixWorld);
+      this.weapon.updateWorldMatrix(true, false);
+      const tip = new THREE.Vector3();
+      const base = new THREE.Vector3();
+      this.trailEnds(tip, base);
       trail.samples.unshift({ tip, base, age: 0 });
     }
     for (const s of trail.samples) s.age += 1;
@@ -842,16 +1503,85 @@ export class Knight {
     }
   }
 
-  // ---------- Reaktioner ----------
+  // ---------- Reaktioner och ansiktsuttryck ----------
 
   // Rycker till bort från slaget. dirLocal = [x, z] i riddarens egna koordinater (varifrån slaget kom)
   playHit(dirLocal) {
     this.hitT = 0;
     this.hitDir = dirLocal;
+    this.squint = 1;
+    this.shout(0.55, 0.35);
   }
 
   playLand() {
     this.landT = 0;
+  }
+
+  // Öppna munnen (stön, skrik): amount 0–1, under så många sekunder
+  shout(amount = 1, seconds = 0.5) {
+    if (amount >= this.mouthTarget || this.mouthTimer <= 0) {
+      this.mouthTarget = amount;
+      this.mouthTimer = seconds;
+    }
+  }
+
+  // Hjälmen flyger av (tungt slag). Returnerar en ragdoll för hjälmen, eller null.
+  knockHelmet(velocity, scene, bounds) {
+    if (this.helmetOff || !this.helmet.parent) return null;
+    this.helmetOff = true;
+    this.visorOpen = 0;
+    const helmet = this.helmet;
+    this.group.updateMatrixWorld(true);
+    const local = [[0, 0.1, 0], [0, 0.26, 0], [0, 0.15, 0.12]];
+    const tmp = new THREE.Vector3();
+    const world = local.map((p) => tmp.set(p[0], p[1], p[2]).applyMatrix4(helmet.matrixWorld).toArray());
+    scene.attach(helmet);
+    this.hairGroup.visible = true;
+    helmet.traverse((obj) => {
+      if (obj.isMesh) obj.material = this.calmMaterial(obj.material);
+    });
+    const spin = () => (Math.random() - 0.5) * 10;
+    return new Ragdoll([{ object: helmet, local, world, radius: 0.13, velocity, spin: [spin(), spin(), spin()] }], bounds);
+  }
+
+  // Utan hjälm från början (t.ex. om man kommer in mitt i en runda där hjälmen redan åkt av)
+  removeHelmet() {
+    this.helmetOff = true;
+    this.hairGroup.visible = true;
+    this.helmet.removeFromParent();
+  }
+
+  updateFace(dt) {
+    if (!this.face) return;
+    // Munnen
+    this.mouthTimer -= dt;
+    const target = this.mouthTimer > 0 ? this.mouthTarget : 0;
+    this.mouthOpen += (target - this.mouthOpen) * (1 - Math.exp(-dt * (target > this.mouthOpen ? 30 : 10)));
+    this.mouthMesh.scale.set(1 - this.mouthOpen * 0.15, 0.2 + this.mouthOpen * 1.5, 1);
+    this.mouthMesh.position.y = 0.088 - this.mouthOpen * 0.01;
+    this.lips.visible = this.mouthOpen < 0.25;
+    // Kisar vid träff, blinkar ibland
+    this.squint = Math.max(0, this.squint - dt * 2.5);
+    this.blinkTimer -= dt;
+    let lid = 1 - this.squint * 0.6;
+    if (this.blinkTimer < 0) {
+      lid = 0.1;
+      if (this.blinkTimer < -0.12) this.blinkTimer = 2 + Math.random() * 4;
+    }
+    for (const eye of this.eyes) eye.scale.y = lid;
+    // Ögonbrynen: arg i strid, höjda vid skratt
+    const laughing = this.emote && this.emote.e === 2;
+    const angry = laughing ? -0.2 : 0.35 + this.squint * 0.3 + this.mouthOpen * 0.2;
+    for (const brow of this.brows) {
+      brow.rotation.z = brow.userData.side * angry;
+      brow.position.y = 0.168 + (laughing ? 0.008 : -this.squint * 0.004);
+    }
+    // Visiret fälls upp när man hånar (så man ser flinet)
+    if (this.visor) {
+      const open = laughing && !this.helmetOff ? 1 : 0;
+      this.visorOpen += (open - this.visorOpen) * (1 - Math.exp(-dt * 8));
+      this.visor.rotation.x = -1.35 * this.visorOpen;
+    }
   }
 
   // ---------- Namnskylt med livmätare ----------
@@ -873,6 +1603,7 @@ export class Knight {
 
   setHp(hp) {
     if (!this.labelCanvas) return;
+    this.hp = hp;
     const ctx = this.labelCanvas.getContext("2d");
     ctx.clearRect(0, 0, 512, 128);
     ctx.font = "bold 44px Georgia, serif";
@@ -881,7 +1612,7 @@ export class Knight {
     ctx.lineWidth = 8;
     ctx.strokeStyle = "rgba(20, 14, 8, 0.85)";
     ctx.strokeText(this.name, 256, 42);
-    ctx.fillStyle = "#" + new THREE.Color(this.colorHex).lerp(new THREE.Color(0xffffff), 0.55).getHexString();
+    ctx.fillStyle = "#" + new THREE.Color(this.labelColor ?? this.colorHex).lerp(new THREE.Color(0xffffff), 0.55).getHexString();
     ctx.fillText(this.name, 256, 42);
 
     const w = 260;
@@ -895,11 +1626,18 @@ export class Knight {
     this.labelTexture.needsUpdate = true;
   }
 
+  // Namnet i en annan färg (t.ex. lagfärgen)
+  setLabelColor(hex) {
+    this.labelColor = hex;
+    if (this.labelCanvas) this.setHp(this.hp ?? COMBAT.maxHp);
+  }
+
   // ---------- Stridshändelser (anropas från spelet) ----------
 
   playAttack(kind) {
     this.attack = { kind, t: 0 };
     this.charging = false;
+    this.shout(kind === "h" ? 0.7 : 0.4, kind === "h" ? 0.35 : 0.22); // ansträngning
   }
 
   setCharging(on) {
@@ -981,6 +1719,10 @@ export class Knight {
     const seg = segName && this.seg[segName];
     if (!seg || seg.userData.detached) return null;
 
+    // Tyg och kedja som sitter på delen som lossnar slutar röra sig och följer med den
+    if (segName === "torso") this.freezeSoft();
+    if (["handR", "forearmR", "upperArmR"].includes(segName)) this.freezeSoft("weapon");
+
     // Blodig stump på kroppen och på den lösa delen
     const parent = seg.parent;
     const stump = this.shape(new THREE.SphereGeometry(0.055, 10, 8), this.m.blood, seg.position.toArray());
@@ -988,6 +1730,7 @@ export class Knight {
     seg.add(this.shape(new THREE.SphereGeometry(0.05, 10, 8), this.m.blood));
     this.stumps.push({ object: parent, local: seg.position.clone(), time: 0, segName });
     if (LEG_JOINTS.includes(joint)) this.legLoss += 1;
+    if (segName === "head") this.shout(1, 99); // munnen står öppen
 
     return this.makeRagdoll(this.subtree(seg), velocity, scene, bounds, 6);
   }
@@ -996,6 +1739,14 @@ export class Knight {
   die(velocity, scene, bounds) {
     if (this.label) this.label.removeFromParent();
     this.removeTrail();
+    // Sista ansiktsuttrycket: gapande mun och slutna ögon
+    this.mouthTarget = 1;
+    this.mouthTimer = 99;
+    this.mouthOpen = 0.9;
+    this.blinkTimer = -0.05;
+    this.updateFace(0);
+    for (const eye of this.eyes) eye.scale.y = 0.1;
+    this.freezeSoft();
     const ragdoll = this.makeRagdoll(this.subtree(this.seg.pelvis), velocity, scene, bounds, 2);
     this.group.removeFromParent();
     return ragdoll;
@@ -1034,8 +1785,8 @@ export class Knight {
     // Återställ förra (en avhuggen del har redan fått egna material)
     if (this.highlighted && this.seg[this.highlighted]) {
       const old = this.seg[this.highlighted];
-      for (const child of old.children) {
-        if (child.isMesh && child.userData.baseMaterial) {
+      for (const child of this.ownMeshes(old)) {
+        if (child.userData.baseMaterial) {
           if (!old.userData.detached) child.material = child.userData.baseMaterial;
           delete child.userData.baseMaterial;
         }
@@ -1045,8 +1796,7 @@ export class Knight {
     const seg = segName && this.seg[segName];
     if (!seg || seg.userData.detached) return;
     if (!this.glowMats) this.glowMats = new Map();
-    for (const child of seg.children) {
-      if (!child.isMesh) continue;
+    for (const child of this.ownMeshes(seg)) {
       if (!this.glowMats.has(child.material)) {
         const glow = child.material.clone();
         glow.emissive = new THREE.Color(0xffc23a);
@@ -1065,6 +1815,7 @@ export class Knight {
     this.emote = null;
     this.attack = null;
     this.charging = false;
+    this.shout(0.6, 0.25);
   }
 
   // 1 = buga, 2 = peka och skratta, 3 = dansa
@@ -1101,21 +1852,22 @@ export class Knight {
     if (this.emote && (motion.speed > 0.8 || this.attack || this.kickT >= 0 || this.parryT >= 0 || this.charging)) this.emote = null;
 
     // ----- Gångcykel -----
+    // Cykeln går alltid framåt, oavsett åt vilket håll man går (annars spritter benen när man går snett bakåt)
     const speed = motion.airborne ? 0 : motion.speed;
     const run = Math.min(1, Math.max(0, (speed - 3.5) / 2.5)); // 0 = gå, 1 = spring
-    const stride = lerp(1.35, 2.0, run);
-    const backwards = motion.forward < -0.3 && Math.abs(motion.forward) > Math.abs(motion.side);
-    if (speed > 0.3) this.phase += ((speed * dt) / stride) * Math.PI * 2 * (backwards ? -1 : 1);
+    const stride = gaitStride(run, motion.forward, motion.side);
+    this.stride = stride;
+    if (speed > 0.3) this.phase += ((speed * dt) / stride) * Math.PI * 2;
     const targetAmp = Math.min(1, speed / 3.5) * lerp(0.5, 0.8, run);
     this.amp += (targetAmp - this.amp) * (1 - Math.exp(-dt * 8));
     const amp = this.amp;
     const moving = Math.min(1, amp * 2.2); // 0 = stilla (stridsställning), 1 = i rörelse
 
-    let dirFwd = 1;
-    if (speed > 0.1) {
-      const len = Math.hypot(motion.forward, motion.side) || 1;
-      dirFwd = (motion.forward / len) * (backwards ? -1 : 1);
-    }
+    // Hur mycket av farten är framåt (+1) eller bakåt (-1)? Jämnas ut så att det inte hoppar.
+    const len = Math.hypot(motion.forward, motion.side) || 1;
+    const wantFwd = speed > 0.1 ? motion.forward / len : 1;
+    this.dirFwd = (this.dirFwd ?? 1) + (wantFwd - (this.dirFwd ?? 1)) * (1 - Math.exp(-dt * 6));
+    const dirFwd = this.dirFwd;
     const swing = Math.sin(this.phase) * amp;
 
     // ----- Höfterna -----
@@ -1131,7 +1883,7 @@ export class Knight {
       else pelvisY -= Math.sin((this.landT / 0.35) * Math.PI) * 0.12; // knäböj vid landning
     }
 
-    // ----- Svärdsarmen: stridsställning/gång, laddning eller slag -----
+    // ----- Vapenarmen: stridsställning/gång, laddning eller slag -----
     let pose = STANCE_R.map((v, i) => lerp(v, CARRY_R[i], moving));
     pose[0] -= swing * 0.3 * dirFwd;
     this.chargeAmount += ((this.charging ? 1 : 0) - this.chargeAmount) * Math.min(1, dt * 8);
@@ -1223,7 +1975,7 @@ export class Knight {
         const w = Math.min(1, t / 0.25, (len - t) / 0.3);
         const mix = (from, to) => lerp(from, to, w);
         if (this.emote.e === 1) {
-          // Buga djupt med svärdet utsträckt åt sidan
+          // Buga djupt med vapnet utsträckt åt sidan
           lean = mix(lean, 0.85);
           headX = mix(0, 0.35);
           pelvisRotY = mix(pelvisRotY, 0);
@@ -1232,7 +1984,7 @@ export class Knight {
           set("upperArmL", mix(shield[0], 0.2), 0, mix(shield[1], 0.3));
           set("forearmL", mix(shield[2], -1.6));
         } else if (this.emote.e === 2) {
-          // Peka med svärdet och skaka av skratt
+          // Peka med vapnet och skaka av skratt (munnen öppnas i takt med skrattet)
           const shake = Math.sin(t * 22) * 0.07;
           lean = mix(lean, -0.22 + shake);
           headX = mix(0, -0.35 + shake * 1.5);
@@ -1242,6 +1994,7 @@ export class Knight {
           set("upperArmL", mix(shield[0], -0.2), 0, mix(shield[1], -0.2));
           set("forearmL", mix(shield[2], -2.0));
           pelvisY += Math.abs(shake) * 0.3 * w;
+          this.shout(0.45 + Math.abs(Math.sin(t * 11)) * 0.5, 0.05);
         } else {
           // Dansa: armarna i luften, knäna upp växelvis, höfterna vickar
           const beat = t * 7;
@@ -1261,6 +2014,7 @@ export class Knight {
           pelvisY = mix(pelvisY, 0.97 + Math.abs(Math.sin(beat)) * 0.06);
           torsoY = mix(torsoY, Math.sin(beat * 0.5) * 0.35);
           headX = mix(0, Math.sin(beat) * 0.15);
+          this.shout(0.5, 0.05);
         }
       }
     }
@@ -1283,6 +2037,10 @@ export class Knight {
 
     // ----- Benen -----
     this.animateLegs(dt, motion, T, legsFree, k);
+
+    // ----- Ansiktet, tyget och kedjan -----
+    this.updateFace(dt);
+    this.updateSoft(dt);
 
     // ----- Röd blinkning vid träff -----
     if (this.flashT > 0) this.flashT = Math.max(0, this.flashT - dt);
@@ -1328,7 +2086,7 @@ export class Knight {
     const run = Math.min(1, Math.max(0, (motion.speed - 3.5) / 2.5));
     const feet = this.feet.update(dt, [pos.x, pos.y, pos.z], yaw, [vx, vz], this.phase, run, (side, spot) => {
       this.onFootstep?.(side, spot, yaw);
-    });
+    }, this.stride);
 
     // Höftledernas position i världen
     const pelvis = this.seg.pelvis;

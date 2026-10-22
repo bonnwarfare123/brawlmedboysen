@@ -5,6 +5,10 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { ARENA_RX, ARENA_RZ } from "./shared.js";
 import { CONFIG } from "./config.js";
+import { Crowd, Throwables, makeRoyals, mergeFigure } from "./crowd.js";
+import {
+  plankTexture, stripeTexture, rakedSandTexture, glowTexture, heraldryTexture, daggedTexture, linenTexture, strawTexture,
+} from "./textures.js";
 
 const PALETTE = {
   grass: 0x7d9a55,
@@ -88,13 +92,15 @@ function groundTexture(base, spots, size, repeat) {
   return texture;
 }
 
-// Returnerar { group, colliders, update, cheer }.
-//   colliders = rektanglar spelare inte kan gå igenom
-//   update(dt) = animerar publiken, cheer(styrka) = publiken jublar
+// Returnerar ett objekt med:
+//   group, colliders (rektanglar spelare inte kan gå igenom),
+//   update(dt, fokus) = animerar allt, cheer(styrka) = publiken jublar,
+//   throwAt(sort, mål) = publiken kastar tomater/rosor, royalReact(upp), heraldBlow(),
+//   quintain (träningsdockan), setQuality(låg), clearThrown()
 export function buildArena() {
   const group = new THREE.Group();
   const colliders = [];
-  const crowds = []; // publiken på läktarna
+  const crowdSpots = []; // alla platser på läktarna (fylls i när läktarna byggs)
   wavingFlags = [];
 
   const FX = ARENA_RX + 0.7; // staketets radier
@@ -115,15 +121,9 @@ export function buildArena() {
   grass.rotation.x = -Math.PI / 2;
   group.add(grass);
 
-  const dirtMat = new THREE.MeshStandardMaterial({
-    roughness: 1,
-    map: groundTexture("#8a6a48", [
-      { color: "#7a5c3d", count: 220, min: 4, max: 14, alpha: 0.55 },
-      { color: "#9c7b56", count: 180, min: 3, max: 10, alpha: 0.5 },
-      { color: "#6a4f34", count: 120, min: 1, max: 3, alpha: 0.8 }, // småsten
-      { color: "#b09070", count: 90, min: 1, max: 2.5, alpha: 0.7 },
-    ], 256, 9),
-  });
+  // Krattad sand med halm, småsten och gamla blodfläckar
+  const dirtMat = new THREE.MeshStandardMaterial({ roughness: 1, map: rakedSandTexture() });
+  dirtMat.map.repeat.set(4, 4);
   const dirt = new THREE.Mesh(new THREE.CircleGeometry(1, 64), dirtMat);
   dirt.receiveShadow = true;
   dirt.rotation.x = -Math.PI / 2;
@@ -131,7 +131,8 @@ export function buildArena() {
   dirt.position.y = 0.01;
   group.add(dirt);
 
-  // ---------- Staket runt arenan ----------
+  // ---------- Tornerbarriär runt arenan ----------
+  // Plankväggar klädda med randigt tyg, en överliggare, en tandad tygkant och sköldar på stolparna
   const POSTS = 56;
   const points = [];
   for (let i = 0; i < POSTS; i++) {
@@ -139,45 +140,84 @@ export function buildArena() {
   }
 
   const dummy = new THREE.Object3D();
-
-  const postMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.26, 1.4, 0.26), mat(PALETTE.woodDark), POSTS);
-  points.forEach((p, i) => {
-    dummy.position.set(p.x, 0.7, p.z);
-    dummy.rotation.set(0, 0, 0);
-    dummy.updateMatrix();
-    postMesh.setMatrixAt(i, dummy.matrix);
+  const BARRIER_COLORS = [PALETTE.red, PALETTE.blue, PALETTE.gold, 0x3f8a3a];
+  const panelMeshes = BARRIER_COLORS.map((color) => {
+    const m = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 0.07),
+      new THREE.MeshStandardMaterial({ map: stripeTexture(color, PALETTE.cream, 6), roughness: 0.92 }),
+      Math.ceil(POSTS / BARRIER_COLORS.length),
+    );
+    m.count = 0;
+    m.castShadow = true;
+    m.receiveShadow = true;
+    group.add(m);
+    return m;
   });
-  postMesh.castShadow = true;
-  postMesh.receiveShadow = true;
-  group.add(postMesh);
-
-  const railMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.14, 0.1), mat(PALETTE.wood), POSTS * 2);
+  const railMat = new THREE.MeshStandardMaterial({ map: plankTexture(), color: PALETTE.wood, roughness: 0.85 });
+  const railMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.1, 0.18), railMat, POSTS);
+  const valance = new THREE.InstancedMesh(
+    new THREE.PlaneGeometry(1, 0.2),
+    new THREE.MeshStandardMaterial({ alphaMap: daggedTexture(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.9, map: linenTexture() }),
+    POSTS,
+  );
   points.forEach((a, i) => {
     const b = points[(i + 1) % POSTS];
     const dx = b.x - a.x;
     const dz = b.z - a.z;
     const length = Math.hypot(dx, dz);
-    [0.55, 1.05].forEach((y, k) => {
-      dummy.position.set((a.x + b.x) / 2, y, (a.z + b.z) / 2);
-      dummy.rotation.set(0, -Math.atan2(dz, dx), 0);
-      dummy.scale.set(length, 1, 1);
-      dummy.updateMatrix();
-      railMesh.setMatrixAt(i * 2 + k, dummy.matrix);
-    });
+    const mx = (a.x + b.x) / 2;
+    const mz = (a.z + b.z) / 2;
+    const angle = -Math.atan2(dz, dx);
+    // Tygklädd plankvägg
+    const pm = panelMeshes[i % BARRIER_COLORS.length];
+    dummy.position.set(mx, 0.56, mz);
+    dummy.rotation.set(0, angle, 0);
+    dummy.scale.set(length + 0.02, 1.02, 1);
+    dummy.updateMatrix();
+    pm.setMatrixAt(pm.count++, dummy.matrix);
+    // Överliggare
+    dummy.position.set(mx, 1.12, mz);
+    dummy.scale.set(length + 0.05, 1, 1);
+    dummy.updateMatrix();
+    railMesh.setMatrixAt(i, dummy.matrix);
+    // Tandad tygkant på insidan
+    const inv = 1 / Math.hypot(mx, mz);
+    dummy.position.set(mx - mx * inv * 0.06, 0.98, mz - mz * inv * 0.06);
+    dummy.scale.set(length, 1, 1);
+    dummy.updateMatrix();
+    valance.setMatrixAt(i, dummy.matrix);
+    valance.setColorAt(i, new THREE.Color(BARRIER_COLORS[(i + 2) % BARRIER_COLORS.length]));
   });
   dummy.scale.set(1, 1, 1);
   railMesh.castShadow = true;
   railMesh.receiveShadow = true;
-  group.add(railMesh);
+  group.add(railMesh, valance);
 
-  // Sköldar på staketet, vända mot mitten
+  // Stolpar med mässingsknoppar
+  const postMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.2, 1.3, 0.2), mat(PALETTE.woodDark), POSTS);
+  const knobMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.075, 10, 8), new THREE.MeshStandardMaterial({ color: 0xc49440, metalness: 0.8, roughness: 0.35 }), POSTS);
   points.forEach((p, i) => {
-    if (i % 4 !== 2) return;
-    const isRed = (i / 4) % 2 < 1;
-    const shield = makeShield(isRed ? PALETTE.red : PALETTE.blue, isRed);
-    const inward = p.clone().multiplyScalar(0.985);
-    shield.position.set(inward.x, 0.8, inward.z);
-    shield.lookAt(center.x, 0.8, center.z);
+    dummy.position.set(p.x, 0.65, p.z);
+    dummy.rotation.set(0, 0, 0);
+    dummy.updateMatrix();
+    postMesh.setMatrixAt(i, dummy.matrix);
+    dummy.position.set(p.x, 1.35, p.z);
+    dummy.updateMatrix();
+    knobMesh.setMatrixAt(i, dummy.matrix);
+  });
+  postMesh.castShadow = true;
+  postMesh.receiveShadow = true;
+  knobMesh.castShadow = true;
+  group.add(postMesh, knobMesh);
+
+  // Sköldar med vapenmönster på varannan stolpe, vända mot mitten
+  const shieldColors = [PALETTE.red, PALETTE.blue, PALETTE.gold, 0x3f8a3a, 0x7a3fa0, 0x2a2a2e];
+  points.forEach((p, i) => {
+    if (i % 2 !== 1) return;
+    const shield = makeHeraldicShield(shieldColors[(i >> 1) % shieldColors.length], (i >> 1) % 3);
+    const inward = p.clone().multiplyScalar(0.982);
+    shield.position.set(inward.x, 0.72, inward.z);
+    shield.lookAt(center.x, 0.72, center.z);
     group.add(shield);
   });
 
@@ -236,35 +276,35 @@ export function buildArena() {
     group.add(pole);
   }
 
-  // Facklor (bara dekor, inget riktigt ljus – det kostar prestanda)
-  [Math.PI * 0.25, Math.PI * 0.75, Math.PI * 1.25, Math.PI * 1.75].forEach((t) => {
-    const p = ellipsePoint(t, FX + 0.5, FZ + 0.5);
-    const pole = box(0.14, 1.9, 0.14, PALETTE.woodDark);
-    pole.position.set(p.x, 0.95, p.z);
-    const basket = mesh(new THREE.ConeGeometry(0.22, 0.3, 6), PALETTE.woodDark);
-    basket.rotation.x = Math.PI;
-    basket.position.set(p.x, 2.0, p.z);
-    const flame = new THREE.Mesh(
-      new THREE.ConeGeometry(0.14, 0.35, 6),
-      new THREE.MeshBasicMaterial({ color: 0xffa23a })
-    );
-    flame.position.set(p.x, 2.3, p.z);
-    group.add(pole, basket, flame);
+  // Eldkorgar med riktig eld, rök och fladdrande ljus
+  const fires = [];
+  [0.35, 1.2, Math.PI - 1.25, Math.PI + 1.25, -1.2, -0.35].forEach((t, i) => {
+    const p = ellipsePoint(t, FX + 0.75, FZ + 0.75);
+    const fire = makeBrazier(i);
+    fire.group.position.set(p.x, 0, p.z);
+    group.add(fire.group);
+    fires.push(fire);
   });
 
   // ---------- Läktare på baksidan ----------
   const standAngles = [-0.95, -0.5, 0.5, 0.95]; // relativt baksidan (t = PI)
-  standAngles.forEach((offset) => {
+  standAngles.forEach((offset, si) => {
     const leftSide = offset < 0;
-    const stand = makeStand(leftSide ? PALETTE.blue : PALETTE.red, crowds);
+    const { stand, spots } = makeStand(leftSide ? PALETTE.blue : PALETTE.red, si);
     const p = ellipsePoint(Math.PI + offset, FX + 2.6, FZ + 2.6);
     stand.position.copy(p);
     stand.lookAt(center);
     group.add(stand);
+    // Platserna i världen (publiken ritas gemensamt för alla läktare)
+    stand.updateMatrixWorld(true);
+    const e = stand.matrixWorld.elements;
+    const yaw = Math.atan2(e[8], e[10]);
+    for (const spot of spots) crowdSpots.push({ pos: spot.pos.clone().applyMatrix4(stand.matrixWorld), yaw, row: spot.row });
   });
 
-  // Kungliga logen i mitten av baksidan
-  const royal = makeRoyalBox(crowds);
+  // Kungliga logen i mitten av baksidan, med kungaparet, vakter och en härold
+  const royals = makeRoyals();
+  const royal = makeRoyalBox(royals);
   const rp = ellipsePoint(Math.PI, FX + 3, FZ + 3);
   royal.position.copy(rp);
   royal.lookAt(center);
@@ -524,17 +564,36 @@ export function buildArena() {
     group.add(horse);
   });
 
+  // Träningsdocka ("quintain") vid kanten: snurrar när man slår på den
+  const quintain = makeQuintain();
+  quintain.group.position.set(-10.6, 0, 3.6);
+  quintain.group.rotation.y = 0.9;
+  group.add(quintain.group);
+  colliders.push({ minX: -10.6 - 0.22, maxX: -10.6 + 0.22, minZ: 3.6 - 0.22, maxZ: 3.6 + 0.22 });
+
   // Slå ihop alla stillastående bitar till några få stora (mycket bättre FPS)
   group.add(mergeStatic(group));
 
-  // Publiken: gungar lite hela tiden och hoppar upp och jublar vid häftiga händelser
+  // Publiken (alla läktare tillsammans) och sakerna de kastar
+  const crowd = new Crowd(crowdSpots, 11);
+  group.add(crowd.group);
+  const throwables = new Throwables(group);
+
+  // Publiken: gungar lite hela tiden, följer striden och reser sig och jublar vid häftiga händelser
   let excitement = 0;
   let time = 0;
-  const update = (dt) => {
+  const focus = new THREE.Vector3();
+  const update = (dt, focusPoint = null) => {
     time += dt;
     windTime.value = time;
-    excitement = Math.max(0, excitement - dt * 0.4);
-    for (const crowd of crowds) crowd.update(time, excitement);
+    excitement = Math.max(0, excitement - dt * 0.35);
+    if (focusPoint) focus.lerp(focusPoint, Math.min(1, dt * 2));
+    crowd.setFocus(focus);
+    crowd.update(dt, time, excitement);
+    royals.update(dt);
+    throwables.update(dt);
+    quintain.update(dt);
+    for (const fire of fires) fire.update(dt, time);
     // Flaggor fladdrar i vinden
     for (const flag of wavingFlags) waveFlag(flag, time);
     // Vimplarna vajar lite på sina snören
@@ -551,126 +610,14 @@ export function buildArena() {
     excitement = Math.min(1.5, excitement + strength);
   };
 
-  return { group, colliders, update, cheer };
-}
-
-// ---------- Publik ----------
-// Enkla figurer (kropp + huvud) i en enda ritning per läktare. Varje person får egen färg och takt.
-const CROWD_COLORS = [0x8a3b2e, 0x2e5a8a, 0x6b8a2e, 0x8a6b2e, 0x5a2e8a, 0x2e8a7a, 0x9a9a8a, 0x7a4a2a, 0xb07a3a, 0x4a4a5a];
-const SKIN_COLORS = [0xf0c8a0, 0xd9a878, 0xb98058, 0x8a5a3a];
-
-// Varje person: kropp (tunika), huvud, två armar och ibland en huvudbonad.
-// Allt ritas med en ritning per kroppsdel och läktare, så hundra personer kostar nästan inget.
-const HAT_COLORS = [0x6a2e22, 0x2e3e6a, 0x3e5a2a, 0x5a4a2a, 0x7a2a5a, 0x2a2a2a];
-
-function makeCrowd(spots, seed, royal = false) {
-  const rand = seededRandom(seed);
-  const n = spots.length;
-  const material = () => new THREE.MeshStandardMaterial({ roughness: 0.9 });
-  const bodyGeo = new THREE.CapsuleGeometry(0.15, 0.3, 3, 8);
-  const headGeo = new THREE.SphereGeometry(0.11, 10, 8);
-  const armGeo = new THREE.CapsuleGeometry(0.045, 0.24, 2, 6);
-  armGeo.translate(0, -0.14, 0); // armen hänger från axeln
-  const hoodGeo = new THREE.ConeGeometry(0.14, 0.24, 8);
-  const hatGeo = new THREE.CylinderGeometry(0.11, 0.2, 0.09, 10); // brättad hatt
-  const capGeo = new THREE.SphereGeometry(0.12, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
-  const crownGeo = new THREE.CylinderGeometry(0.1, 0.12, 0.09, 6, 1, true);
-
-  const bodies = new THREE.InstancedMesh(bodyGeo, material(), n);
-  const heads = new THREE.InstancedMesh(headGeo, material(), n);
-  const armsL = new THREE.InstancedMesh(armGeo, material(), n);
-  const armsR = new THREE.InstancedMesh(armGeo, material(), n);
-
-  const people = spots.map((pos, i) => {
-    const clothes = new THREE.Color(royal ? [0x6a1a8a, 0x8a1a2a][i % 2] : CROWD_COLORS[Math.floor(rand() * CROWD_COLORS.length)]);
-    bodies.setColorAt(i, clothes);
-    armsL.setColorAt(i, clothes);
-    armsR.setColorAt(i, clothes);
-    heads.setColorAt(i, new THREE.Color(SKIN_COLORS[Math.floor(rand() * SKIN_COLORS.length)]));
-    return {
-      pos,
-      phase: rand() * Math.PI * 2,
-      speed: 0.8 + rand() * 1.2,
-      jump: 0.6 + rand() * 0.6,
-      height: 0.88 + rand() * 0.24,
-      hat: royal ? 4 : Math.floor(rand() * 5), // 0 ingen, 1 luva, 2 hatt, 3 mössa
-      style: rand() < 0.3 ? "clap" : "wave",   // klappar händerna eller viftar med armarna
-    };
-  });
-
-  // Huvudbonader: en ritning per sort, bara för dem som har den sorten
-  const hatTypes = [null, hoodGeo, hatGeo, capGeo, crownGeo];
-  const hatMeshes = hatTypes.map((geo, type) => {
-    if (!geo) return null;
-    const owners = people.filter((p) => p.hat === type);
-    if (!owners.length) return null;
-    const m = type === 4
-      ? new THREE.MeshStandardMaterial({ color: 0xd4a83a, roughness: 0.3, metalness: 0.8, side: THREE.DoubleSide })
-      : material();
-    const im = new THREE.InstancedMesh(geo, m, owners.length);
-    owners.forEach((p, k) => {
-      p.hatIndex = k;
-      if (type !== 4) im.setColorAt(k, new THREE.Color(HAT_COLORS[Math.floor(rand() * HAT_COLORS.length)]));
-    });
-    return im;
-  });
-
-  bodies.castShadow = true;
-  const group = new THREE.Group();
-  group.add(bodies, heads, armsL, armsR, ...hatMeshes.filter(Boolean));
-
-  // Osynliga hjälpobjekt för att räkna ut var varje kroppsdel hamnar
-  const person = new THREE.Object3D();
-  const headD = new THREE.Object3D();
-  const armLD = new THREE.Object3D();
-  const armRD = new THREE.Object3D();
-  const hatD = new THREE.Object3D();
-  person.add(headD, armLD, armRD);
-  headD.add(hatD);
-  headD.position.set(0, 0.36, 0);
-  armLD.position.set(0.19, 0.17, 0);
-  armRD.position.set(-0.19, 0.17, 0);
-  const hatOffsets = [0, 0.15, 0.09, 0.03, 0.12];
-
-  group.update = (time, excitement) => {
-    const cheer = Math.min(1, excitement);
-    people.forEach((p, i) => {
-      const t = time * p.speed + p.phase;
-      const idle = Math.sin(t) * 0.015;
-      const hop = cheer > 0.05 ? Math.max(0, Math.sin(time * 9 * p.jump + p.phase)) * 0.2 * cheer : 0;
-      person.position.set(p.pos.x, p.pos.y + 0.3 * p.height + idle + hop, p.pos.z);
-      person.rotation.set(0, Math.sin(t * 0.3) * 0.25, Math.sin(t * 0.7) * 0.05);
-      person.scale.set(1, p.height, 1);
-      headD.rotation.set(Math.sin(t * 0.9) * 0.1, Math.sin(t * 0.5) * 0.3, 0);
-
-      // Armarna: hänger i vila, åker upp och viftar (eller klappar) när publiken jublar
-      if (p.style === "wave") {
-        const up = 2.6 + Math.sin(time * 10 + p.phase) * 0.35;
-        armLD.rotation.set(0, 0, lerpN(0.15, up, cheer));
-        armRD.rotation.set(0, 0, -lerpN(0.15, up + Math.sin(time * 11 + p.phase) * 0.2, cheer));
-      } else {
-        const clap = Math.abs(Math.sin(time * 12 + p.phase)) * 0.5;
-        armLD.rotation.set(lerpN(0, -1.3, cheer), 0, lerpN(0.15, 0.2 + clap * 0.6, cheer));
-        armRD.rotation.set(lerpN(0, -1.3, cheer), 0, -lerpN(0.15, 0.2 + clap * 0.6, cheer));
-      }
-      hatD.position.set(0, hatOffsets[p.hat], 0);
-      hatD.rotation.set(p.hat === 1 ? -0.15 : 0, 0, 0);
-
-      person.updateMatrixWorld(true);
-      bodies.setMatrixAt(i, person.matrixWorld);
-      heads.setMatrixAt(i, headD.matrixWorld);
-      armsL.setMatrixAt(i, armLD.matrixWorld);
-      armsR.setMatrixAt(i, armRD.matrixWorld);
-      if (hatMeshes[p.hat]) hatMeshes[p.hat].setMatrixAt(p.hatIndex, hatD.matrixWorld);
-    });
-    for (const im of [bodies, heads, armsL, armsR, ...hatMeshes.filter(Boolean)]) im.instanceMatrix.needsUpdate = true;
+  return {
+    group, colliders, update, cheer, quintain,
+    throwAt: (kind, target, count = 8) => crowd.throwAt(kind, target, count, throwables),
+    clearThrown: () => throwables.clear(),
+    royalReact: (up) => royals.react(up),
+    heraldBlow: () => royals.blow(),
+    setQuality: (low) => fires.forEach((f) => (f.light.visible = !low)),
   };
-  group.update(0, 0);
-  return group;
-}
-
-function lerpN(a, b, t) {
-  return a + (b - a) * t;
 }
 
 // ---------- Rekvisita ----------
@@ -887,17 +834,20 @@ export function makeSky() {
   return sky;
 }
 
+let cloudMaterial = null;
 function makeCloud(rand) {
   const g = new THREE.Group();
-  const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: true, fog: false });
+  // Ett gemensamt material, så alla moln slås ihop till en enda ritning
+  if (!cloudMaterial) cloudMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: true, fog: false });
+  const material = cloudMaterial;
   const parts = 3 + Math.floor(rand() * 3);
   for (let i = 0; i < parts; i++) {
     const puff = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), material);
     puff.scale.set(6 + rand() * 6, 3 + rand() * 2, 5 + rand() * 4);
     puff.position.set(i * 7 - parts * 3.5 + rand() * 3, rand() * 2, rand() * 4);
+    puff.castShadow = false;
     g.add(puff);
   }
-  g.userData.noMerge = true;
   return g;
 }
 
@@ -962,26 +912,6 @@ function mergeStatic(root) {
   return merged;
 }
 
-// En sköld med märke. Framsidan pekar mot +Z (använd lookAt för att vända den).
-function makeShield(color, withCross) {
-  const shield = new THREE.Group();
-  const disc = mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.05, 12), color);
-  disc.rotation.x = Math.PI / 2;
-  shield.add(disc);
-  if (withCross) {
-    const v = box(0.08, 0.38, 0.02, PALETTE.white);
-    const h = box(0.3, 0.08, 0.02, PALETTE.white);
-    v.position.z = h.position.z = 0.035;
-    shield.add(v, h);
-  } else {
-    const emblem = mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.02, 8), PALETTE.gold);
-    emblem.rotation.x = Math.PI / 2;
-    emblem.position.z = 0.035;
-    shield.add(emblem);
-  }
-  return shield;
-}
-
 // Randigt tak av omväxlande färgade remsor
 function makeStripedRoof(width, depth, color, strips = 8) {
   const roof = new THREE.Group();
@@ -994,24 +924,66 @@ function makeStripedRoof(width, depth, color, strips = 8) {
   return roof;
 }
 
-// En läktare: trappsteg med bänkar och randigt tak. Framsidan mot +Z.
-function makeStand(color, crowds) {
+// Delade material med plankstruktur (läktare, logen)
+const plankMats = new Map();
+function plankMat(color) {
+  if (!plankMats.has(color)) plankMats.set(color, new THREE.MeshStandardMaterial({ color, map: plankTexture(), roughness: 0.88 }));
+  return plankMats.get(color);
+}
+
+// Tygtak som hänger lite i mitten (mellan stolparna) och sluttar framåt
+function saggingRoof(width, depth, material, sag = 0.18, slope = 0.12) {
+  const geo = new THREE.PlaneGeometry(width, depth, 12, 6);
+  geo.rotateX(-Math.PI / 2);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i) / (width / 2);
+    const z = pos.getZ(i) / (depth / 2);
+    pos.setY(i, -sag * (1 - x * x) * (1 - z * z * 0.6) - z * slope * (depth / 2));
+  }
+  geo.computeVertexNormals();
+  const roof = new THREE.Mesh(geo, material);
+  roof.castShadow = true;
+  roof.receiveShadow = true;
+  return roof;
+}
+
+// En tygbanderoll med vapenmönster (hänger från en överkant)
+const bannerMats = new Map();
+function heraldBanner(color, variant, w = 0.6, h = 0.85) {
+  const key = color + ":" + variant;
+  if (!bannerMats.has(key)) {
+    bannerMats.set(key, new THREE.MeshStandardMaterial({ map: heraldryTexture(color, variant), alphaMap: daggedTexture(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.9 }));
+  }
+  const geo = new THREE.PlaneGeometry(w, h);
+  geo.translate(0, -h / 2, 0);
+  const m = new THREE.Mesh(geo, bannerMats.get(key));
+  m.castShadow = true;
+  return m;
+}
+
+// En läktare: trappsteg av plankor, räcke med banderoller och ett randigt tygtak med tandad kant.
+// Framsidan mot +Z. Returnerar läktaren och platserna där publiken sitter (i läktarens koordinater).
+function makeStand(color, seed) {
   const stand = new THREE.Group();
   const width = 5;
   const spots = [];
-  const rand = seededRandom(Math.floor(color % 1000) + crowds.length * 17);
+  const rand = seededRandom(31 + seed * 17);
   for (let i = 0; i < 3; i++) {
-    const step = box(width, 0.5 * (i + 1), 0.9, i % 2 ? PALETTE.wood : PALETTE.woodLight);
+    const step = new THREE.Mesh(new THREE.BoxGeometry(width, 0.5 * (i + 1), 0.9), plankMat(i % 2 ? PALETTE.wood : PALETTE.woodLight));
+    step.castShadow = true;
+    step.receiveShadow = true;
     step.position.set(0, 0.25 * (i + 1), -i * 0.9);
     stand.add(step);
+    // Bänkkant (en mörkare list där man sitter)
+    const lip = box(width, 0.05, 0.08, PALETTE.woodDark);
+    lip.position.set(0, 0.5 * (i + 1) + 0.025, -i * 0.9 + 0.41);
+    stand.add(lip);
     // Publik på varje trappsteg (några platser står tomma)
     for (let x = -width / 2 + 0.4; x <= width / 2 - 0.3; x += 0.55) {
-      if (rand() < 0.75) spots.push(new THREE.Vector3(x + (rand() - 0.5) * 0.15, 0.5 * (i + 1), -i * 0.9 - 0.05));
+      if (rand() < 0.8) spots.push({ pos: new THREE.Vector3(x + (rand() - 0.5) * 0.12, 0.5 * (i + 1), -i * 0.9 - 0.08), row: i });
     }
   }
-  const crowd = makeCrowd(spots, crowds.length + 3);
-  stand.add(crowd);
-  crowds.push(crowd);
   // Stolpar
   [-width / 2 + 0.1, width / 2 - 0.1].forEach((x) => {
     [0.4, -2.2].forEach((z) => {
@@ -1020,35 +992,117 @@ function makeStand(color, crowds) {
       stand.add(post);
     });
   });
-  const roof = makeStripedRoof(width + 0.4, 3.2, color);
+  // Räcke framtill (lågt, så man ser publiken) med banderoller i läktarens färg
+  for (const x of [-width / 2 + 0.1, -0.85, 0.85, width / 2 - 0.1]) {
+    const post = box(0.09, 0.75, 0.09, PALETTE.woodDark);
+    post.position.set(x, 0.375, 0.52);
+    stand.add(post);
+  }
+  const rail = box(width, 0.08, 0.1, PALETTE.wood);
+  rail.position.set(0, 0.74, 0.52);
+  stand.add(rail);
+  [-1.7, 0, 1.7].forEach((x, k) => {
+    const banner = heraldBanner(k === 1 ? PALETTE.gold : color, seed + k, 0.55, 0.62);
+    banner.position.set(x, 0.72, 0.58);
+    stand.add(banner);
+  });
+  // Tygtaket: randigt, hänger lite i mitten, med en tandad kant framtill
+  const roofMat = new THREE.MeshStandardMaterial({ map: stripeTexture(color, PALETTE.cream, 10), side: THREE.DoubleSide, roughness: 0.9 });
+  const roof = saggingRoof(width + 0.4, 3.2, roofMat);
   roof.position.set(0, 3.45, -0.9);
-  roof.rotation.x = 0.12;
   stand.add(roof);
+  const valanceMat = new THREE.MeshStandardMaterial({ color, map: linenTexture(), alphaMap: daggedTexture(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.9 });
+  const valance = new THREE.Mesh(new THREE.PlaneGeometry(width + 0.4, 0.32), valanceMat);
+  valance.position.set(0, 3.45 - 0.19 - 0.16, -0.9 + 1.6);
+  stand.add(valance);
   // Flagga
   const flag = makeFlag(color);
   flag.position.set(width / 2 - 0.1, 3.4, -2.2);
   stand.add(flag);
-  return stand;
+  return { stand, spots };
 }
 
-function makeRoyalBox(crowds) {
+// Kungliga logen: hög plattform med tronstolar, gobelänger, guldkant, kungaparet, vakter och en härold.
+function makeRoyalBox(royals) {
   const royal = new THREE.Group();
-  // Kungen och drottningen i logen
-  const crowd = makeCrowd([new THREE.Vector3(-0.6, 2, 0.2), new THREE.Vector3(0.6, 2, 0.2)], 77, true);
-  royal.add(crowd);
-  crowds.push(crowd);
-  // Tronstolar
-  [-0.6, 0.6].forEach((x) => {
-    const back = box(0.5, 0.9, 0.08, PALETTE.red);
-    back.position.set(x, 2.45, -0.15);
-    royal.add(back);
-  });
-  const base = box(4, 2, 3, PALETTE.wood);
+  const gold = new THREE.MeshStandardMaterial({ color: 0xd8ae42, metalness: 0.85, roughness: 0.3 });
+  const goldBox = (w, h, d, x, y, z) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), gold);
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    royal.add(m);
+    return m;
+  };
+  // Plattformen
+  const base = new THREE.Mesh(new THREE.BoxGeometry(4, 2, 3), plankMat(PALETTE.woodDark));
   base.position.set(0, 1, -0.5);
+  base.castShadow = true;
+  base.receiveShadow = true;
   royal.add(base);
-  const rail = box(4, 0.6, 0.15, PALETTE.woodDark);
-  rail.position.set(0, 2.3, 0.95);
+  // Röd matta på golvet och trappa på sidan
+  const carpet = box(1.0, 0.02, 2.6, 0x8a1a2a);
+  carpet.position.set(0, 2.01, -0.5);
+  royal.add(carpet);
+  for (let i = 0; i < 5; i++) {
+    const step = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.4 * (i + 1), 0.4), plankMat(PALETTE.wood));
+    step.position.set(2.4, 0.2 * (i + 1), 0.6 - i * 0.4);
+    step.castShadow = true;
+    royal.add(step);
+  }
+  // Bakvägg med gobelänger
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(4, 2.6, 0.12), plankMat(PALETTE.woodDark));
+  wall.position.set(0, 3.3, -1.9);
+  royal.add(wall);
+  [-1.3, 0, 1.3].forEach((x, k) => {
+    const tapestry = heraldBanner(k === 1 ? 0x6a1a8a : PALETTE.blue, 3 + k, 1.0, 1.9);
+    tapestry.position.set(x, 4.4, -1.83);
+    royal.add(tapestry);
+  });
+  // Tronstolar: hög rygg med guldknoppar, armstöd och röd dyna
+  [-0.6, 0.6].forEach((x) => {
+    const seat = box(0.62, 0.45, 0.55, PALETTE.woodDark);
+    seat.position.set(x, 2.225, -0.12);
+    royal.add(seat);
+    const cushion = box(0.56, 0.06, 0.5, 0x8a1a2a);
+    cushion.position.set(x, 2.48, -0.1);
+    royal.add(cushion);
+    const back = box(0.62, 1.35, 0.1, 0x8a1a2a);
+    back.position.set(x, 3.1, -0.42);
+    royal.add(back);
+    goldBox(0.66, 0.06, 0.12, x, 3.8, -0.42);
+    for (const s of [1, -1]) {
+      const knob = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), gold);
+      knob.position.set(x + 0.3 * s, 3.88, -0.42);
+      royal.add(knob);
+      const arm = box(0.07, 0.3, 0.5, PALETTE.woodDark);
+      arm.position.set(x + 0.3 * s, 2.6, -0.12);
+      royal.add(arm);
+    }
+  });
+  // Kungaparet sitter på tronerna
+  royals.king.group.position.set(-0.6, 2.52, -0.08);
+  royals.queen.group.position.set(0.6, 2.52, -0.08);
+  royal.add(royals.king.group, royals.queen.group);
+  // Härolden står längst fram på plattformen, vakterna nedanför
+  royals.herald.group.position.set(1.45, 2.0, 0.6);
+  royals.herald.group.rotation.y = -0.25;
+  royal.add(royals.herald.group);
+  royals.guards[0].group.position.set(-1.6, 0, 1.55);
+  royals.guards[1].group.position.set(1.6, 0, 1.55);
+  royal.add(royals.guards[0].group, royals.guards[1].group);
+  // Kungaparet och härolden rör sig; vakterna står still och bakas ihop med resten av logen
+  for (const f of [royals.king, royals.queen, royals.herald]) f.group.userData.noMerge = true;
+  // Räcke framtill med guldkant och banderoller
+  const rail = box(4, 0.55, 0.12, PALETTE.woodDark);
+  rail.position.set(0, 2.28, 0.95);
   royal.add(rail);
+  goldBox(4.05, 0.05, 0.16, 0, 2.58, 0.95);
+  [-1.5, -0.5, 0.5, 1.5].forEach((x, i) => {
+    const banner = heraldBanner(i % 2 ? PALETTE.blue : PALETTE.red, i, 0.62, 1.35);
+    banner.position.set(x, 1.95, 1.04);
+    royal.add(banner);
+  });
+  // Stolpar och tak med guldkant och tandad tygkant runt om
   [-1.9, 1.9].forEach((x) => {
     [0.95, -1.9].forEach((z) => {
       const post = box(0.18, 3, 0.18, PALETTE.woodDark);
@@ -1056,21 +1110,202 @@ function makeRoyalBox(crowds) {
       royal.add(post);
     });
   });
-  // Tältliknande tak (fyrsidig kon)
   const roof = mesh(new THREE.ConeGeometry(3.2, 1.8, 4), PALETTE.blue);
   roof.rotation.y = Math.PI / 4;
   roof.position.set(0, 5.9, -0.5);
   royal.add(roof);
+  const valanceMat = new THREE.MeshStandardMaterial({ color: PALETTE.gold, map: linenTexture(), alphaMap: daggedTexture(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.6, metalness: 0.2 });
+  for (const [x, z, ry, w] of [[0, 0.98, 0, 4.4], [0, -1.98, 0, 4.4], [2.0, -0.5, Math.PI / 2, 3.0], [-2.0, -0.5, Math.PI / 2, 3.0]]) {
+    const v = new THREE.Mesh(new THREE.PlaneGeometry(w, 0.35), valanceMat);
+    v.position.set(x, 4.85, z);
+    v.rotation.y = ry;
+    royal.add(v);
+  }
   const flag = makeFlag(PALETTE.blue);
   flag.position.set(0, 6.8, -0.5);
   royal.add(flag);
-  // Hängande fanor på framsidan
-  [-1.2, -0.4, 0.4, 1.2].forEach((x, i) => {
-    const banner = makeBanner(i % 2 ? PALETTE.blue : PALETTE.red, i % 2 === 0);
-    banner.position.set(x, 1.4, 1.02);
-    royal.add(banner);
-  });
   return royal;
+}
+
+// Eldkorg på tre ben: glödande kol, fladdrande lågor, glöd, rök och ett riktigt ljus
+function makeBrazier(index) {
+  const g = new THREE.Group();
+  const iron = new THREE.MeshStandardMaterial({ color: 0x2e2a28, roughness: 0.6, metalness: 0.5 });
+  const add = (geo, m, pos, rot = [0, 0, 0]) => {
+    const x = new THREE.Mesh(geo, m);
+    x.position.set(...pos);
+    x.rotation.set(...rot);
+    x.castShadow = true;
+    g.add(x);
+    return x;
+  };
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    add(new THREE.CylinderGeometry(0.025, 0.03, 1.15, 6), iron, [Math.sin(a) * 0.2, 0.55, Math.cos(a) * 0.2], [Math.cos(a) * 0.22, 0, -Math.sin(a) * 0.22]);
+  }
+  add(new THREE.TorusGeometry(0.3, 0.025, 6, 16), iron, [0, 1.0, 0], [Math.PI / 2, 0, 0]);
+  const bowl = add(new THREE.CylinderGeometry(0.34, 0.2, 0.26, 14, 1, true), new THREE.MeshStandardMaterial({ color: 0x2e2a28, roughness: 0.6, metalness: 0.5, side: THREE.DoubleSide }), [0, 1.08, 0]);
+  bowl.castShadow = true;
+  add(new THREE.TorusGeometry(0.34, 0.02, 6, 16), iron, [0, 1.21, 0], [Math.PI / 2, 0, 0]);
+  add(new THREE.SphereGeometry(0.29, 12, 6), new THREE.MeshStandardMaterial({ color: 0x3a1408, emissive: 0xff4a10, emissiveIntensity: 1.6, roughness: 1 }), [0, 1.14, 0]).scale.set(1, 0.3, 1);
+  // Det som rör sig ska inte slås ihop med resten
+  const fx = new THREE.Group();
+  fx.userData.noMerge = true;
+  g.add(fx);
+  const flameColors = [0xffe08a, 0xffa040, 0xff5a1a];
+  const flames = flameColors.map((color, i) => {
+    const m = new THREE.Mesh(
+      new THREE.ConeGeometry(0.2 - i * 0.03, 0.6 + i * 0.1, 8, 1, true),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.75 - i * 0.12, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    m.position.set((i - 1) * 0.06, 1.45 + i * 0.03, (i % 2) * 0.05);
+    fx.add(m);
+    return m;
+  });
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffa050, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.55, depthWrite: false }));
+  glow.position.y = 1.45;
+  glow.scale.set(1.8, 1.8, 1);
+  fx.add(glow);
+  const smoke = [];
+  for (let i = 0; i < 3; i++) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0x4a4644, transparent: true, opacity: 0.2, depthWrite: false }));
+    s.userData.phase = i / 3;
+    fx.add(s);
+    smoke.push(s);
+  }
+  const light = new THREE.PointLight(0xff8a3a, 4, 8, 1.6);
+  light.position.y = 1.7;
+  fx.add(light);
+  const seed = index * 1.7;
+  return {
+    group: g,
+    light,
+    update(dt, time) {
+      const flicker = Math.sin(time * 13 + seed) * 0.5 + Math.sin(time * 23.7 + seed * 2) * 0.3 + (Math.random() - 0.5) * 0.4;
+      flames.forEach((f, i) => {
+        const s = 1 + flicker * (0.18 + i * 0.05);
+        f.scale.set(1 - flicker * 0.06, s, 1 - flicker * 0.06);
+        f.rotation.y = time * (1.5 + i);
+        f.position.y = 1.45 + i * 0.03 + (s - 1) * 0.25;
+      });
+      glow.material.opacity = 0.45 + flicker * 0.12;
+      light.intensity = 4 + flicker * 1.3;
+      for (const s of smoke) {
+        const k = (time * 0.35 + s.userData.phase) % 1;
+        s.position.set(Math.sin(time * 0.7 + s.userData.phase * 9) * 0.15 + k * 0.4, 1.8 + k * 2.4, k * 0.2);
+        s.scale.setScalar(0.5 + k * 1.6);
+        s.material.opacity = 0.22 * Math.sin(k * Math.PI);
+      }
+    },
+  };
+}
+
+// Träningsdocka ("quintain"): en stolpe med en snurrande arm. Ena änden har en sköld,
+// andra en sandsäck. Slår man på den snurrar den runt.
+function makeQuintain() {
+  const g = new THREE.Group();
+  const wood = mat(PALETTE.wood);
+  const dark = mat(PALETTE.woodDark);
+  const add = (parent, geo, m, pos, rot = [0, 0, 0], scale = [1, 1, 1]) => {
+    const x = new THREE.Mesh(geo, m);
+    x.position.set(...pos);
+    x.rotation.set(...rot);
+    x.scale.set(...scale);
+    x.castShadow = true;
+    x.receiveShadow = true;
+    parent.add(x);
+    return x;
+  };
+  add(g, new THREE.CylinderGeometry(0.09, 0.11, 1.7, 8), wood, [0, 0.85, 0]);
+  add(g, new THREE.BoxGeometry(1.0, 0.12, 0.14), dark, [0, 0.06, 0]);
+  add(g, new THREE.BoxGeometry(0.14, 0.12, 1.0), dark, [0, 0.06, 0]);
+  // Snedstöd från stolpen ner mot fötterna
+  for (const [x, z] of [[0.3, 0], [-0.3, 0], [0, 0.3], [0, -0.3]]) add(g, new THREE.BoxGeometry(0.06, 0.42, 0.06), dark, [x * 0.6, 0.24, z * 0.6], [-z * 2.2, 0, x * 2.2]);
+  // Den snurrande delen
+  const spinner = new THREE.Group();
+  spinner.userData.noMerge = true;
+  spinner.position.y = 1.62;
+  g.add(spinner);
+  add(spinner, new THREE.CylinderGeometry(0.11, 0.11, 0.16, 10), dark, [0, 0, 0]);
+  add(spinner, new THREE.BoxGeometry(1.55, 0.08, 0.08), wood, [-0.02, 0.02, 0]);
+  // Ett målat trähuvud med turban överst
+  add(spinner, new THREE.SphereGeometry(0.13, 12, 10), mat(0xc89a6a), [0, 0.22, 0]);
+  add(spinner, new THREE.TorusGeometry(0.11, 0.05, 8, 14), mat(PALETTE.cream), [0, 0.3, 0], [Math.PI / 2, 0, 0]);
+  add(spinner, new THREE.SphereGeometry(0.1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), mat(PALETTE.red), [0, 0.31, 0]);
+  for (const s of [1, -1]) add(spinner, new THREE.BoxGeometry(0.035, 0.018, 0.01), mat(0x1a1a1a), [0.045 * s, 0.25, 0.125]);
+  add(spinner, new THREE.BoxGeometry(0.06, 0.012, 0.01), mat(0x6a1a1a), [0, 0.17, 0.125]);
+  // Skölden på ena änden
+  const shield = makeHeraldicShield(PALETTE.blue, 1);
+  shield.position.set(0.74, -0.08, 0.05);
+  spinner.add(shield);
+  // Sandsäcken på andra änden, i ett rep (svänger ut när armen snurrar)
+  const bagPivot = new THREE.Group();
+  bagPivot.position.set(-0.78, 0, 0);
+  spinner.add(bagPivot);
+  add(bagPivot, new THREE.CylinderGeometry(0.008, 0.008, 0.35, 4), mat(0xa08850), [0, -0.175, 0]);
+  add(bagPivot, new THREE.SphereGeometry(0.13, 10, 8), mat(0xb8a070), [0, -0.42, 0], [0, 0, 0], [1, 1.25, 1]);
+  add(bagPivot, new THREE.TorusGeometry(0.04, 0.012, 4, 8), mat(0xa08850), [0, -0.3, 0], [Math.PI / 2, 0, 0]);
+
+  mergeFigure(spinner);
+
+  const state = { angle: 0, vel: 0 };
+  return {
+    group: g,
+    // Ett slag från (x, z) med vridningen yaw och räckvidden reach. Returnerar true om dockan träffades.
+    hit(x, z, yaw, reach, strength = 1) {
+      const px = g.position.x;
+      const pz = g.position.z;
+      const dx = px - x;
+      const dz = pz - z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > reach + 0.7) return false;
+      const fx = Math.sin(yaw);
+      const fz = Math.cos(yaw);
+      if (dist > 0.3 && (fx * dx + fz * dz) / dist < 0.4) return false;
+      const side = fx * dz - fz * dx >= 0 ? 1 : -1; // snurrar åt olika håll beroende på var den träffas
+      state.vel += side * (5 + Math.random() * 3) * strength;
+      state.vel = Math.max(-16, Math.min(16, state.vel));
+      return true;
+    },
+    update(dt) {
+      state.angle += state.vel * dt;
+      state.vel *= Math.exp(-dt * 0.8);
+      spinner.rotation.y = state.angle;
+      bagPivot.rotation.z = -Math.min(1.25, state.vel * state.vel * 0.01); // säcken svänger utåt
+    },
+  };
+}
+
+// En sköld med vapenmönster (rak överkant, rundad spets). Framsidan mot +Z.
+const heraldShieldMats = new Map();
+function makeHeraldicShield(color, variant) {
+  const g = new THREE.Group();
+  const s = new THREE.Shape();
+  s.moveTo(-0.22, 0.25);
+  s.lineTo(0.22, 0.25);
+  s.lineTo(0.22, 0.05);
+  s.quadraticCurveTo(0.2, -0.18, 0, -0.3);
+  s.quadraticCurveTo(-0.2, -0.18, -0.22, 0.05);
+  s.lineTo(-0.22, 0.25);
+  const body = new THREE.ExtrudeGeometry(s, { depth: 0.04, bevelEnabled: false });
+  body.translate(0, 0, -0.045);
+  const bodyMesh = new THREE.Mesh(body, mat(PALETTE.woodDark));
+  bodyMesh.castShadow = true;
+  g.add(bodyMesh);
+  const key = color + ":" + variant;
+  if (!heraldShieldMats.has(key)) heraldShieldMats.set(key, new THREE.MeshStandardMaterial({ map: heraldryTexture(color, variant), roughness: 0.75 }));
+  const face = new THREE.ShapeGeometry(s, 10);
+  face.computeBoundingBox();
+  const box3 = face.boundingBox;
+  const uv = face.attributes.uv;
+  const pos = face.attributes.position;
+  for (let i = 0; i < uv.count; i++) {
+    uv.setXY(i, (pos.getX(i) - box3.min.x) / (box3.max.x - box3.min.x), (pos.getY(i) - box3.min.y) / (box3.max.y - box3.min.y));
+  }
+  const faceMesh = new THREE.Mesh(face, heraldShieldMats.get(key));
+  faceMesh.position.z = 0.002;
+  g.add(faceMesh);
+  return g;
 }
 
 function makeTower(color, emblemRed) {

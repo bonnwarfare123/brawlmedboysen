@@ -347,75 +347,204 @@ export class Sound {
   }
 
   // ---------- Röster (stön och skrik) ----------
-  // Röstsyntes: en surrande ton (stämbanden) genom filter som formar vokaler.
-  // voice = 0–1, ger varje riddare sin egen röst.
+  // ---------- Röster ----------
+  // Röstsyntes: två lätt förstimmade "stämband" (sågtandsvågor) med darr och ojämnhet i tonhöjden,
+  // luft (brus), knarr (en ton en oktav under) och raspighet (förvrängning), genom fyra filter
+  // ("formanter") som formar vokalerna. voice = 0–1 ger varje riddare sin egen röst.
 
-  voiceSound(pos, voice, { duration, pitchStart, pitchEnd, vowels, rasp, volume }) {
-    const t = this.ctx.currentTime;
+  vocal(pos, voice, { duration, contour, vowels, breath = 0.15, grit = 0, fry = 0, volume = 0.7, onset = 0, gurgle = 0, delay = 0 }) {
+    const t = this.ctx.currentTime + delay;
     const v = this.volumeAt(pos) * volume;
-    const base = 95 + voice * 70;
-    const shift = 0.9 + voice * 0.25;
+    if (v < 0.01) return;
+    const base = (92 + voice * 62) * (0.94 + Math.random() * 0.12);
+    const shift = 0.9 + voice * 0.22; // ljusare röst = högre formanter
 
-    const src = this.ctx.createOscillator();
-    src.type = "sawtooth";
-    src.frequency.setValueAtTime(base * pitchStart, t);
-    src.frequency.exponentialRampToValueAtTime(base * pitchEnd, t + duration);
-    const wobble = this.ctx.createOscillator(); // darr på rösten
-    wobble.frequency.value = 6 + voice * 3;
-    const wobbleDepth = this.ctx.createGain();
-    wobbleDepth.gain.value = base * 0.04;
-    wobble.connect(wobbleDepth);
-    wobbleDepth.connect(src.frequency);
+    // Tonhöjden följer en kurva (t.ex. upp och sedan ner)
+    const curve = new Float32Array(contour.length);
+    contour.forEach((c, i) => (curve[i] = base * c));
+    const voices = [];
+    for (const detune of [-0.012, 0.012]) {
+      const osc = this.ctx.createOscillator();
+      osc.type = "sawtooth";
+      osc.frequency.setValueCurveAtTime(curve.map((f) => f * (1 + detune)), t, duration);
+      voices.push(osc);
+    }
+    // Ojämnhet: långsamt brus som rubbar tonhöjden (gör rösten mänsklig, inte robotlik)
+    const jitterSrc = this.ctx.createBufferSource();
+    jitterSrc.buffer = this.noise;
+    jitterSrc.loop = true;
+    const jitterLp = this.ctx.createBiquadFilter();
+    jitterLp.type = "lowpass";
+    jitterLp.frequency.value = 18;
+    const jitterGain = this.ctx.createGain();
+    jitterGain.gain.value = base * (0.06 + grit * 0.12);
+    jitterSrc.connect(jitterLp);
+    jitterLp.connect(jitterGain);
+    voices.forEach((o) => jitterGain.connect(o.frequency));
 
-    const out = this.envelope(v, t, 0.02, duration * 0.5, duration * 0.5, this.sfx, 0.35);
-    // Tre formanter (vokalens "färg") som glider från första till sista vokalen
-    const [from, to] = vowels;
-    for (let i = 0; i < 3; i++) {
+    // Stämbandens ljud mjukas upp (mer övertoner när man skriker)
+    const glottis = this.ctx.createBiquadFilter();
+    glottis.type = "lowpass";
+    glottis.frequency.value = 1800 + grit * 2600;
+    glottis.Q.value = 0.5;
+    const mix = this.ctx.createGain();
+    mix.gain.value = 0.5;
+    voices.forEach((o) => o.connect(mix));
+    mix.connect(glottis);
+
+    // Knarr: en fyrkantsvåg en oktav under (låter som ett stön eller ett morrande)
+    let fryOsc = null;
+    if (fry > 0) {
+      fryOsc = this.ctx.createOscillator();
+      fryOsc.type = "square";
+      fryOsc.frequency.setValueCurveAtTime(curve.map((f) => f * 0.5), t, duration);
+      const g = this.ctx.createGain();
+      g.gain.value = fry * 0.35;
+      fryOsc.connect(g);
+      g.connect(glottis);
+    }
+
+    // Raspighet: förvrängning
+    let source = glottis;
+    if (grit > 0) {
+      const shaper = this.ctx.createWaveShaper();
+      const n = 256;
+      const c = new Float32Array(n);
+      const k = 2 + grit * 30;
+      for (let i = 0; i < n; i++) {
+        const x = (i / (n - 1)) * 2 - 1;
+        c[i] = ((1 + k) * x) / (1 + k * Math.abs(x));
+      }
+      shaper.curve = c;
+      glottis.connect(shaper);
+      source = shaper;
+    }
+
+    // Luft i rösten
+    const air = this.ctx.createBufferSource();
+    air.buffer = this.noise;
+    air.loop = true;
+    const airFilter = this.ctx.createBiquadFilter();
+    airFilter.type = "bandpass";
+    airFilter.frequency.value = 1600 * shift;
+    airFilter.Q.value = 0.6;
+    const airGain = this.ctx.createGain();
+    airGain.gain.value = breath;
+    air.connect(airFilter);
+    airFilter.connect(airGain);
+
+    const out = this.envelope(v, t, 0.025, duration * 0.55, duration * 0.45, this.sfx, 0.3);
+    // Gurgel (döende): rösten "bubblar" med en snabb darrning i styrkan
+    let dest = out;
+    let gurgleOsc = null;
+    if (gurgle > 0) {
+      const am = this.ctx.createGain();
+      am.gain.value = 1 - gurgle * 0.5;
+      gurgleOsc = this.ctx.createOscillator();
+      gurgleOsc.frequency.setValueAtTime(14, t);
+      gurgleOsc.frequency.linearRampToValueAtTime(22, t + duration);
+      const depth = this.ctx.createGain();
+      depth.gain.value = gurgle * 0.5;
+      gurgleOsc.connect(depth);
+      depth.connect(am.gain);
+      am.connect(out);
+      dest = am;
+    }
+
+    // Fyra formanter som glider genom vokalerna
+    const steps = vowels.length;
+    const gains = [1, 0.7, 0.32, 0.18];
+    const widths = [90, 110, 160, 220];
+    for (let i = 0; i < 4; i++) {
       const bp = this.ctx.createBiquadFilter();
       bp.type = "bandpass";
-      bp.Q.value = 6 + i * 2;
-      bp.frequency.setValueAtTime(from[i] * shift, t);
-      bp.frequency.linearRampToValueAtTime(to[i] * shift, t + duration);
+      const f0 = vowels[0][i] * shift;
+      bp.frequency.setValueAtTime(f0, t);
+      bp.Q.value = f0 / widths[i];
+      for (let s = 1; s < steps; s++) bp.frequency.linearRampToValueAtTime(vowels[s][i] * shift, t + (duration * s) / (steps - 1));
       const g = this.ctx.createGain();
-      g.gain.value = [1, 0.6, 0.25][i];
-      src.connect(bp);
+      g.gain.value = gains[i] * 2.2;
+      source.connect(bp);
+      airGain.connect(bp);
       bp.connect(g);
-      g.connect(out);
+      g.connect(dest);
     }
-    // Hes rasp
-    if (rasp > 0) {
-      this.noiseBurst({ volume: v * rasp, attack: 0.03, decay: duration, type: "bandpass", freq: 1200 * shift, q: 2 });
-    }
-    [src, wobble].forEach((o) => {
-      o.start(t);
-      o.stop(t + duration + 0.1);
+    // Lite av grundtonen direkt (bröströst)
+    const chest = this.ctx.createBiquadFilter();
+    chest.type = "lowpass";
+    chest.frequency.value = 400;
+    const chestGain = this.ctx.createGain();
+    chestGain.gain.value = 0.35;
+    source.connect(chest);
+    chest.connect(chestGain);
+    chestGain.connect(dest);
+
+    // Start: ett "h" (utandning) eller ett tvärt "k"-stopp i halsen
+    if (onset > 0) this.noiseBurst({ volume: v * onset * 0.5, attack: 0.008, decay: 0.06, type: "bandpass", freq: 1400 * shift, q: 1.2, start: t });
+
+    const end = t + duration + 0.1;
+    [...voices, jitterSrc, air, fryOsc, gurgleOsc].forEach((node) => {
+      if (!node) return;
+      node.start(t);
+      node.stop(end);
     });
   }
 
-  // Kort stön när man blir träffad
-  hurt(pos, voice = 0.5) {
+  // Vokaler (formanter F1–F4 för en mansröst)
+  static V = {
+    a: [730, 1090, 2440, 3400], o: [570, 840, 2410, 3300], u: [300, 870, 2240, 3300], e: [530, 1840, 2480, 3500],
+    ae: [660, 1720, 2410, 3400], uh: [520, 1190, 2390, 3400], i: [270, 2290, 3010, 3500],
+  };
+
+  pick(list) {
+    return list[Math.floor(Math.random() * list.length)];
+  }
+
+  // Ansträngning när man slår: "hngh!", "hah!", "uah!"
+  grunt(pos, voice = 0.5, heavy = false) {
+    if (!this.ready()) return;
+    const V = Sound.V;
+    const vowels = this.pick([[V.uh, V.uh], [V.a, V.uh], [V.e, V.uh], [V.ae, V.a]]);
+    const d = heavy ? 0.28 + Math.random() * 0.1 : 0.13 + Math.random() * 0.06;
+    this.vocal(pos, voice, {
+      duration: d,
+      contour: heavy ? [0.95, 1.25, 1.18, 0.9] : [1.05, 1.15, 0.92],
+      vowels, breath: 0.35, grit: heavy ? 0.35 : 0.15, fry: 0.45, volume: heavy ? 0.65 : 0.45, onset: 0.8,
+    });
+  }
+
+  // Smärta när man blir träffad: hårdare träff = högre, längre och mer raspigt
+  hurt(pos, voice = 0.5, amount = 0.6) {
     if (!this.ready()) return;
     if (this.files.aj.length) {
       const b = this.files.aj[Math.floor(Math.random() * this.files.aj.length)];
-      this.playBuffer(b, this.volumeAt(pos), this.sfx, 0.92 + voice * 0.16);
+      this.playBuffer(b, this.volumeAt(pos) * (0.6 + amount * 0.4), this.sfx, 0.92 + voice * 0.16);
       return;
     }
-    const vowelSets = [
-      [[325, 700, 2530], [700, 1100, 2600]], // "uh-ah"
-      [[450, 800, 2830], [600, 1000, 2700]], // "oh"
-      [[400, 2000, 2550], [700, 1200, 2600]], // "eh-ah"
-    ];
-    this.voiceSound(pos, voice, {
-      duration: 0.18 + Math.random() * 0.1,
-      pitchStart: 1.25 + Math.random() * 0.2,
-      pitchEnd: 0.9,
-      vowels: vowelSets[Math.floor(Math.random() * vowelSets.length)],
-      rasp: 0.25,
-      volume: 0.7,
+    const V = Sound.V;
+    const vowels = amount > 0.75
+      ? this.pick([[V.a, V.a, V.uh], [V.ae, V.a, V.o], [V.e, V.a, V.uh]])   // "AAARGH"
+      : this.pick([[V.uh, V.u], [V.o, V.uh], [V.e, V.uh]]);              // "uhh", "ooh"
+    this.vocal(pos, voice, {
+      duration: 0.18 + amount * 0.3 + Math.random() * 0.08,
+      contour: amount > 0.75 ? [1.3, 1.75, 1.6, 1.2, 0.9] : [1.25, 1.35, 1.0, 0.85],
+      vowels, breath: 0.25, grit: 0.15 + amount * 0.45, fry: 0.25, volume: 0.55 + amount * 0.3, onset: 0.9,
     });
   }
 
-  // Skrik när man dör
+  // Vrål när en arm eller ett ben huggs av (men man lever)
+  roar(pos, voice = 0.5) {
+    if (!this.ready()) return;
+    if (this.files.skrik.length) return this.scream(pos, voice);
+    const V = Sound.V;
+    this.vocal(pos, voice, {
+      duration: 0.9 + Math.random() * 0.35,
+      contour: [1.5, 2.15, 2.25, 2.05, 2.2, 1.8, 1.3],
+      vowels: [V.ae, V.a, V.a, V.a, V.o], breath: 0.3, grit: 0.75, fry: 0.15, volume: 0.9, onset: 0.6,
+    });
+  }
+
+  // Dödsskrik med gurgel på slutet
   scream(pos, voice = 0.5) {
     if (!this.ready()) return;
     if (this.files.skrik.length) {
@@ -423,46 +552,101 @@ export class Sound {
       this.playBuffer(b, this.volumeAt(pos), this.sfx, 0.92 + voice * 0.16);
       return;
     }
-    this.voiceSound(pos, voice, {
-      duration: 0.7 + Math.random() * 0.3,
-      pitchStart: 1.9 + Math.random() * 0.4,
-      pitchEnd: 0.75,
-      vowels: [[800, 1150, 2900], [450, 800, 2830]], // "aaaa-ooh"
-      rasp: 0.45,
-      volume: 0.85,
+    const V = Sound.V;
+    this.vocal(pos, voice, {
+      duration: 0.65 + Math.random() * 0.25,
+      contour: [1.6, 2.1, 1.9, 1.5, 1.1],
+      vowels: [V.a, V.a, V.o, V.uh], breath: 0.3, grit: 0.6, fry: 0.2, volume: 0.8, onset: 0.7,
     });
+    // ...och sedan ett gurglande, sjunkande stön
+    this.vocal(pos, voice, {
+      duration: 0.8, delay: 0.7, contour: [0.9, 0.75, 0.6, 0.5],
+      vowels: [V.uh, V.o, V.u], breath: 0.5, grit: 0.3, fry: 0.8, volume: 0.45, gurgle: 1,
+    });
+  }
+
+  // "HA HA HA!" när man pekar och skrattar
+  laugh(pos, voice = 0.5) {
+    if (!this.ready()) return;
+    const V = Sound.V;
+    const count = 4 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < count; i++) {
+      this.vocal(pos, voice, {
+        duration: 0.15, delay: i * (0.17 + Math.random() * 0.03),
+        contour: [1.55 - i * 0.06, 1.6 - i * 0.06, 1.35 - i * 0.07],
+        vowels: [V.a, V.ae], breath: 0.5, grit: 0.2, fry: 0.1, volume: 0.7, onset: 1,
+      });
+    }
+  }
+
+  // Dansen: ingen musik längre, bara lite jubel från publiken
+  dance() {
+    this.crowd(0.35);
   }
 
   // ---------- Stridsljud ----------
 
-  // kind: "q" snabbt, "h" tungt, "t" stöt
-  swing(pos, heavy = false, kind = null) {
+  // kind: "q" snabbt, "h" tungt, "t" stöt. weapon: 0 svärd, 1 yxa, 2 slagkedja
+  swing(pos, heavy = false, kind = null, weapon = 0) {
     if (!this.ready()) return;
     const v = this.volumeAt(pos);
-    if (kind === "t") {
-      this.noiseBurst({ volume: 0.45 * v, attack: 0.02, decay: 0.1, freq: 1400, freqEnd: 3800, q: 4 });
+    if (weapon === 2) {
+      // Slagkedja: kulan visslar runt och kedjan skramlar
+      this.noiseBurst({ volume: 0.3 * v, attack: 0.05, decay: heavy ? 0.35 : 0.22, freq: 500, freqEnd: 1300, q: 5 });
+      for (let i = 0; i < 5; i++) {
+        this.tone({ volume: 0.05 * v, type: "triangle", freq: 2400 + Math.random() * 1800, decay: 0.03, start: this.ctx.currentTime + i * 0.035 + Math.random() * 0.02 });
+      }
       return;
     }
+    if (kind === "t") {
+      this.noiseBurst({ volume: 0.45 * v, attack: 0.02, decay: 0.1, freq: weapon === 1 ? 900 : 1400, freqEnd: weapon === 1 ? 2400 : 3800, q: 4 });
+      return;
+    }
+    const low = weapon === 1 ? 0.6 : 1; // yxan är tyngre: djupare sus
     this.noiseBurst({
       volume: 0.4 * v,
       attack: heavy ? 0.07 : 0.035,
-      decay: heavy ? 0.25 : 0.15,
-      freq: heavy ? 400 : 700,
-      freqEnd: heavy ? 1600 : 2600,
+      decay: (heavy ? 0.25 : 0.15) * (weapon === 1 ? 1.25 : 1),
+      freq: (heavy ? 400 : 700) * low,
+      freqEnd: (heavy ? 1600 : 2600) * low,
       q: 3,
     });
   }
 
-  hit(pos, heavy = false) {
+  hit(pos, heavy = false, weapon = 0) {
     if (!this.ready()) return;
     const v = this.volumeAt(pos);
+    const t = this.ctx.currentTime;
     // Duns i kroppen
     this.tone({ volume: (heavy ? 1 : 0.7) * v, freq: heavy ? 130 : 170, freqEnd: 40, decay: heavy ? 0.25 : 0.16 });
     // Köttigt smack
     this.noiseBurst({ volume: 0.6 * v, decay: 0.1, type: "lowpass", freq: 1800, freqEnd: 250, q: 1 });
-    // Svärd mot rustning: kort metallklang med några övertoner
-    const f = 1500 + Math.random() * 600;
-    [1, 1.47, 2.1].forEach((r, i) => this.tone({ volume: (0.12 / (i + 1)) * v, type: "triangle", freq: f * r, decay: 0.12 + i * 0.04 }));
+    if (weapon === 1) {
+      // Yxa: ett tungt "tunk" av trä och järn som biter i
+      this.tone({ volume: 0.45 * v, freq: 105, freqEnd: 48, decay: 0.3 });
+      this.noiseBurst({ volume: 0.45 * v, decay: 0.08, type: "bandpass", freq: 650, q: 4 });
+      [1, 1.62].forEach((r, i) => this.tone({ volume: (0.07 / (i + 1)) * v, type: "triangle", freq: 1100 * r, decay: 0.09 }));
+    } else if (weapon === 2) {
+      // Slagkedja: krasande spikboll och skrammel
+      for (let i = 0; i < 4; i++) {
+        this.noiseBurst({ volume: 0.35 * v, decay: 0.025, type: "highpass", freq: 1800 + Math.random() * 2000, q: 1, start: t + i * 0.018 });
+      }
+      this.tone({ volume: 0.5 * v, freq: 90, freqEnd: 40, decay: 0.22 });
+      for (let i = 0; i < 4; i++) this.tone({ volume: 0.04 * v, type: "triangle", freq: 2600 + Math.random() * 1500, decay: 0.04, start: t + 0.05 + i * 0.04 });
+    } else {
+      // Svärd mot rustning: kort metallklang med några övertoner
+      const f = 1500 + Math.random() * 600;
+      [1, 1.47, 2.1].forEach((r, i) => this.tone({ volume: (0.12 / (i + 1)) * v, type: "triangle", freq: f * r, decay: 0.12 + i * 0.04 }));
+    }
+  }
+
+  // En hjälm som flyger av: klonk
+  helmetOff(pos) {
+    if (!this.ready()) return;
+    const v = this.volumeAt(pos);
+    const base = 620 + Math.random() * 120;
+    [1, 2.7, 4.1].forEach((r, i) => this.tone({ volume: (0.25 / (i + 1)) * v, freq: base * r, decay: 0.5 - i * 0.1 }));
+    this.noiseBurst({ volume: 0.3 * v, decay: 0.05, type: "highpass", freq: 3000, q: 0.5 });
   }
 
   clang(pos) {
@@ -507,31 +691,6 @@ export class Sound {
     [1, 1.6].forEach((r, i) => this.tone({ volume: 0.1 * v / (i + 1), type: "triangle", freq: 900 * r, decay: 0.15 })); // plåtskrammel
   }
 
-  // "HA HA HA!" när man pekar och skrattar
-  laugh(pos, voice = 0.5) {
-    if (!this.ready()) return;
-    for (let i = 0; i < 4; i++) {
-      setTimeout(() => {
-        if (!this.ready()) return;
-        this.voiceSound(pos, voice, {
-          duration: 0.16,
-          pitchStart: 1.5 - i * 0.06,
-          pitchEnd: 1.3 - i * 0.06,
-          vowels: [[750, 1250, 2600], [700, 1150, 2600]],
-          rasp: 0.35,
-          volume: 0.75,
-        });
-      }, i * 190);
-    }
-  }
-
-  // Liten lutslinga till dansen
-  dance() {
-    if (!this.ready()) return;
-    const t = this.ctx.currentTime;
-    [74, 72, 74, 77, 74, 72, 69, 74].forEach((n, i) => this.lute(n, t + i * 0.18, 0.6, this.sfx));
-  }
-
   // Publiken jublar
   crowd(strength = 1) {
     if (!this.ready()) return;
@@ -544,20 +703,14 @@ export class Sound {
         q: 2 + Math.random() * 2,
       });
     }
-    // Några "HEJ!"-rop i publiken
+    // Några "HEJ!" och "JAAA!"-rop i publiken
+    const V = Sound.V;
     for (let i = 0; i < 3; i++) {
-      const voice = Math.random();
-      setTimeout(() => {
-        if (!this.ready()) return;
-        this.voiceSound({ x: this.listener.x + 15, y: 3, z: this.listener.z }, voice, {
-          duration: 0.3,
-          pitchStart: 1.7,
-          pitchEnd: 1.4,
-          vowels: [[600, 1700, 2600], [750, 1200, 2600]],
-          rasp: 0.1,
-          volume: 0.35 * strength,
-        });
-      }, 80 + Math.random() * 500);
+      this.vocal({ x: this.listener.x + 15, y: 3, z: this.listener.z }, Math.random(), {
+        duration: 0.3 + Math.random() * 0.2, delay: 0.08 + Math.random() * 0.5,
+        contour: [1.6, 1.9, 1.7], vowels: this.pick([[V.e, V.i], [V.a, V.a], [V.o, V.a]]),
+        breath: 0.3, grit: 0.25, volume: 0.35 * strength, onset: 0.5,
+      });
     }
   }
 

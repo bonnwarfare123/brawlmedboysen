@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.8";
+export const VERSION = "0.9";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -35,6 +35,16 @@ export const COMBAT = {
 export const ARMORS = ["Plåtrustning", "Ringbrynja", "Läderrustning", "Praktrustning", "Bonde"];
 export const HELMETS = ["Tunnhjälm", "Visirhjälm", "Järnhatt", "Hornhjälm", "Plymhjälm", "Kastrull", "Halmhatt"];
 export const SHIELDS = ["Rund", "Droppformad", "Riddarsköld", "Bucklare", "Pavis"];
+export const WEAPONS = ["Svärd", "Yxa", "Slagkedja"]; // alla exakt lika starka och snabba
+export const CAPES = ["Nej", "Ja"];
+
+// SPELSÄTT
+export const MODES = ["ffa", "team", "tourney"];
+export const MODE_NAMES = { ffa: "Alla mot alla", team: "Lag", tourney: "Turnering 1 mot 1" };
+export const TEAMS = [
+  { name: "Röda laget", color: 1 }, // färgindex i COLORS
+  { name: "Blå laget", color: 0 },
+];
 
 // MATCHREGLER
 export const MATCH = {
@@ -43,6 +53,9 @@ export const MATCH = {
   countdown: 3,        // sekunder innan rundan börjar
   roundEndDelay: 4,    // sekunder mellan rundor
   matchEndDelay: 8,    // sekunder resultattavlan visas innan alla går tillbaka till lobbyn
+  duelRoundsToWin: 2,  // turnering: bäst av 3 rundor per duell
+  bracketDelay: 6,     // sekunder turneringsträdet visas mellan duellerna
+  helmetKnockChance: 0.15, // chans att hjälmen flyger av vid tunga slag som inte siktar på huvudet
 };
 
 // Vilken led huggs av om man siktar på en viss kroppsdel?

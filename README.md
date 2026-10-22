@@ -1,8 +1,14 @@
-# Brawlmedboysen – v0.8
+# Brawlmedboysen – v0.9
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
-**v0.8 innehåller:** lobby där lobbyledaren startar matchen, rundor (först till 5), 5 detaljerade rustningar (plåt i lösa delar, ringbrynja med vapenrock, läder med spännen, praktrustning, bonde), 7 hjälmar och 5 sköldformer att välja mellan, snabbt slag, tungt slag, stöt, spark, parering, hån-gester, skada per kroppsdel och avhuggna lemmar, ragdolls, realistiska rörelser där fötterna sätts i marken (IK), blod som stänker, sprutar, torkar och bildar pölar, svärdsspår, fotspår, gräs som svajar, medeltida musik med volymreglage, och en levande arena med publik, by och natur. Servern avgör alla träffar.
+**Spelsätt** (lobbyledaren väljer): **Alla mot alla** (först till 5 rundor), **Lag** (Röda mot Blå, välj lag själv eller slumpa, inga skador på lagkamrater) och **Turnering** (1 mot 1 med utslagsträd, bäst av 3 per duell, fripass om det inte går jämnt ut).
+
+**Riddarna:** 5 rustningar, 7 hjälmar (med riktiga ögonspringor och ett ansikte under), 5 sköldar, 3 vapen (svärd, yxa, slagkedja – alla lika starka), valfri tygmantel som fladdrar, vapenrock i tyg, bucklor, repor, smuts och blod som byggs på under matchen, hjälmar som kan flyga av, ansiktsuttryck, stön och skrik.
+
+**Strid:** snabbt slag, tungt slag, stöt, spark, parering, hån-gester, skada per kroppsdel och avhuggna lemmar, ragdolls, blod som stänker, sprutar, torkar och bildar pölar. Servern avgör alla träffar.
+
+**Arenan:** tornerbarriär med randigt tyg och sköldar, eldkorgar med eld och rök, träningsdocka som snurrar när man slår på den, levande publik (reser sig, jublar, viftar, kastar tomater på förlorare och rosor till vinnare), kungapar som visar tummen upp eller ner, vakter och en härold med trumpet.
 
 ## Styrning
 
@@ -21,8 +27,10 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 |---|---|
 | `public/index.html` | Själva webbsidan |
 | `public/js/main.js` | Startskärm, styrning, kamera, spel-loop |
-| `public/js/arena.js` | Bygger arenan av enkla former |
-| `public/js/knight.js` | Bygger riddaren (15 kroppsdelar med leder), rustningar, hjälmar, animationer och kapning |
+| `public/js/arena.js` | Bygger arenan av enkla former (barriär, läktare, kungaloge, eldkorgar, träningsdocka) |
+| `public/js/crowd.js` | Publiken, kungaparet, vakterna, härolden och tomaterna/rosorna |
+| `public/js/cloth.js` | Fysik för tyg (mantel, vapenrock) och kedjan på slagkedjan |
+| `public/js/knight.js` | Bygger riddaren (15 kroppsdelar med leder), ansikte, rustningar, hjälmar, vapen, skador, animationer och kapning |
 | `public/js/ik.js` | Räknar ut hur benen ska böjas så att fötterna står på marken |
 | `public/js/textures.js` | Ritar mönster i koden: ringbrynja, läder, vapensköldar, blodfläckar m.m. |
 | `public/js/net.js` | Pratar med servern |
@@ -31,7 +39,7 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 | `public/js/sound.js` | Alla ljud och musiken, skapade direkt i koden |
 | `public/audio/` | Lägg egna ljudfiler här (se LAS-MIG.txt i mappen) |
 | `public/js/config.js` | **Inställningar** – fart, kamera, hopp m.m. Ändra här! |
-| `public/js/shared.js` | **Strids- och matchregler** (skada, räckvidd, väntetider, rundor) som både spel och server använder |
+| `public/js/shared.js` | **Strids- och matchregler** (skada, räckvidd, väntetider, rundor, turneringen) som både spel och server använder |
 | `server/index.js` | Servern (Cloudflare Worker + Durable Object) |
 | `wrangler.jsonc` | Talar om för Cloudflare hur allt ska publiceras |
 
@@ -53,4 +61,3 @@ Därefter publiceras varje ny uppladdning till GitHub automatiskt.
 Allt körs på Cloudflares gratisplan. Räcker kvoten inte till en dag slutar
 servern svara tills gränsen nollställs kl. 01:00 (vintertid) eller 02:00 (sommartid) svensk tid.
 Det kan aldrig bli någon faktura.
- 

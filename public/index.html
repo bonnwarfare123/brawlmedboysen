@@ -43,17 +43,44 @@
       Rum <strong id="lobby-room-code"></strong>
       <button id="lobby-copy-link" class="small">Kopiera inbjudningslänk</button>
     </div>
+    <label>Spelsätt</label>
+    <div class="mode-row">
+      <button class="small mode-btn" data-mode="ffa">Alla mot alla</button>
+      <button class="small mode-btn" data-mode="team">Lag</button>
+      <button class="small mode-btn" data-mode="tourney">Turnering</button>
+    </div>
+    <p id="mode-info" class="rules"></p>
+    <div id="team-row" hidden>
+      <div class="team-buttons">
+        <button class="small team-btn red" data-team="0">Röda laget</button>
+        <button class="small team-btn blue" data-team="1">Blå laget</button>
+      </div>
+      <button id="shuffle-button" class="small" hidden>🎲 Slumpa lag</button>
+    </div>
     <ul id="lobby-players" class="lobby-list"></ul>
-    <label>Din färg</label>
-    <div id="lobby-colors" class="colors"></div>
+    <div id="color-row">
+      <label>Din färg</label>
+      <div id="lobby-colors" class="colors"></div>
+    </div>
     <label>Utseende</label>
     <div class="look-row"><span>Rustning</span><button class="small" data-look="a" data-dir="-1">◀</button><b id="look-a"></b><button class="small" data-look="a" data-dir="1">▶</button></div>
     <div class="look-row"><span>Hjälm</span><button class="small" data-look="h" data-dir="-1">◀</button><b id="look-h"></b><button class="small" data-look="h" data-dir="1">▶</button></div>
     <div class="look-row"><span>Sköld</span><button class="small" data-look="s" data-dir="-1">◀</button><b id="look-s"></b><button class="small" data-look="s" data-dir="1">▶</button></div>
+    <div class="look-row"><span>Vapen</span><button class="small" data-look="w" data-dir="-1">◀</button><b id="look-w"></b><button class="small" data-look="w" data-dir="1">▶</button></div>
+    <div class="look-row"><span>Mantel</span><button class="small" data-look="c" data-dir="-1">◀</button><b id="look-c"></b><button class="small" data-look="c" data-dir="1">▶</button></div>
     <p class="rules">Tips: tryck 1, 2 eller 3 för att buga, håna eller dansa</p>
     <button id="start-button" class="primary" hidden>Starta matchen</button>
     <p id="lobby-wait" class="subtitle"></p>
-    <p class="rules">Sist kvar vinner rundan · Först till <span id="rounds-to-win"></span> rundvinster vinner matchen</p>
+    <p class="rules" id="lobby-rules"></p>
+  </div>
+
+  <!-- Turneringsträdet (visas mellan duellerna) -->
+  <div id="bracket" class="overlay see-through" hidden>
+    <div class="card wide">
+      <h2 id="bracket-title">Turneringen</h2>
+      <div id="bracket-tree"></div>
+      <p id="bracket-next" class="subtitle"></p>
+    </div>
   </div>
 
   <!-- Resultattavla när matchen är slut -->

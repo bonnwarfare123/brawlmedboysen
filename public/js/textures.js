@@ -379,16 +379,235 @@ export function poolTexture() {
   });
 }
 
-// Fotspår (en sula)
+// Fotspår: en spetsig sula med mjuk kant (svagt intryck i sanden, inte ett streck)
 export function footprintTexture() {
   return makeTexture("footprint", 64, (ctx, n) => {
     ctx.clearRect(0, 0, n, n);
+    const sole = (alpha, inset) => {
+      ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+      ctx.beginPath();
+      ctx.moveTo(n / 2, n * 0.04 + inset);                                   // tåspets
+      ctx.quadraticCurveTo(n * 0.7 - inset, n * 0.3, n * 0.66 - inset, n * 0.52);
+      ctx.quadraticCurveTo(n * 0.62 - inset, n * 0.66, n * 0.64 - inset, n * 0.8);
+      ctx.quadraticCurveTo(n * 0.64 - inset, n * 0.96 - inset, n / 2, n * 0.96 - inset); // häl
+      ctx.quadraticCurveTo(n * 0.36 + inset, n * 0.96 - inset, n * 0.36 + inset, n * 0.8);
+      ctx.quadraticCurveTo(n * 0.38 + inset, n * 0.66, n * 0.34 + inset, n * 0.52);
+      ctx.quadraticCurveTo(n * 0.3 + inset, n * 0.3, n / 2, n * 0.04 + inset);
+      ctx.fill();
+    };
+    sole(0.25, 0);
+    sole(0.35, 2);
+    sole(0.3, 4);
+    // Häl och trampdyna trycks ner mer
+    ctx.fillStyle = "rgba(255,255,255,0.15)";
+    ctx.beginPath();
+    ctx.ellipse(n / 2, n * 0.84, n * 0.1, n * 0.08, 0, 0, Math.PI * 2);
+    ctx.ellipse(n / 2, n * 0.38, n * 0.11, n * 0.12, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }, [1, 1], false);
+}
+
+// Tyg (mantlar): fin vävstruktur och mjuka veck
+export function linenTexture() {
+  return makeTexture("linen", 256, (ctx, n) => {
+    const rand = seeded(61);
     ctx.fillStyle = "#ffffff";
-    ctx.beginPath();
-    ctx.ellipse(n / 2, n * 0.35, n * 0.16, n * 0.28, 0, 0, Math.PI * 2); // framfot (lång spets)
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(n / 2, n * 0.78, n * 0.13, n * 0.15, 0, 0, Math.PI * 2); // häl
-    ctx.fill();
+    ctx.fillRect(0, 0, n, n);
+    for (let i = 0; i < n; i += 2) {
+      ctx.fillStyle = `rgba(0,0,0,${0.03 + rand() * 0.04})`;
+      ctx.fillRect(0, i, n, 1);
+      ctx.fillStyle = `rgba(0,0,0,${0.02 + rand() * 0.03})`;
+      ctx.fillRect(i, 0, 1, n);
+    }
+    // Veck och nötta partier
+    for (let i = 0; i < 14; i++) {
+      const x = rand() * n;
+      const g = ctx.createLinearGradient(x - 10, 0, x + 10, 0);
+      g.addColorStop(0, "rgba(0,0,0,0)");
+      g.addColorStop(0.5, `rgba(0,0,0,${0.05 + rand() * 0.08})`);
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(x - 10, 0, 20, n);
+    }
+    // Kantband längst ner (på manteln)
+    ctx.fillStyle = "rgba(255,230,160,0.35)";
+    ctx.fillRect(0, n - 10, n, 5);
+  }, [1, 1]);
+}
+
+// Tandad fåll (vapenrockens nederkant): vitt = tyg, svart = genomskinligt
+export function daggedTexture() {
+  return makeTexture("dagged", 128, (ctx, n) => {
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, n, n);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, n, n * 0.86);
+    // Rundade flikar ("dagging") längst ner
+    const tabs = 6;
+    for (let i = 0; i < tabs; i++) {
+      const cx = ((i + 0.5) / tabs) * n;
+      ctx.beginPath();
+      ctx.ellipse(cx, n * 0.86, n / tabs / 2.4, n * 0.12, 0, 0, Math.PI);
+      ctx.fill();
+    }
+  }, [1, 1], false);
+}
+
+// ---------- Arenan ----------
+
+// Plankor med träådring och spikhål (läktare och barriär)
+export function plankTexture() {
+  return makeTexture("planks", 256, (ctx, n) => {
+    const rand = seeded(83);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, n, n);
+    const boards = 4;
+    const h = n / boards;
+    for (let b = 0; b < boards; b++) {
+      const y0 = b * h;
+      ctx.fillStyle = `rgba(0,0,0,${0.03 + rand() * 0.08})`; // varje planka har lite egen ton
+      ctx.fillRect(0, y0, n, h);
+      // Ådring: vågiga linjer längs plankan
+      for (let i = 0; i < 9; i++) {
+        ctx.strokeStyle = `rgba(60,35,15,${0.12 + rand() * 0.15})`;
+        ctx.lineWidth = 0.6 + rand() * 1.2;
+        const yy = y0 + 4 + rand() * (h - 8);
+        ctx.beginPath();
+        ctx.moveTo(0, yy);
+        for (let x = 0; x <= n; x += 16) ctx.lineTo(x, yy + Math.sin(x * 0.05 + i) * 2 + (rand() - 0.5) * 1.5);
+        ctx.stroke();
+      }
+      // Kvist
+      if (rand() < 0.7) {
+        ctx.fillStyle = "rgba(60,35,15,0.35)";
+        ctx.beginPath();
+        ctx.ellipse(rand() * n, y0 + h / 2, 6, 3, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Fog mellan plankorna och spikar
+      ctx.fillStyle = "rgba(30,18,8,0.55)";
+      ctx.fillRect(0, y0, n, 2);
+      ctx.fillStyle = "rgba(40,40,40,0.8)";
+      for (const x of [10, n / 2, n - 10]) {
+        ctx.beginPath();
+        ctx.arc(x, y0 + h * 0.3, 1.6, 0, Math.PI * 2);
+        ctx.arc(x, y0 + h * 0.7, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }, [2, 1]);
+}
+
+// Ränder i två färger (tyg på barriären och läktartaken). Lodräta ränder.
+export function stripeTexture(colorA, colorB, stripes = 8) {
+  return makeTexture(`stripes-${colorA}-${colorB}-${stripes}`, 256, (ctx, n) => {
+    const a = "#" + colorA.toString(16).padStart(6, "0");
+    const b = "#" + colorB.toString(16).padStart(6, "0");
+    for (let i = 0; i < stripes; i++) {
+      ctx.fillStyle = i % 2 ? b : a;
+      ctx.fillRect((i * n) / stripes, 0, n / stripes + 1, n);
+    }
+    // Tygstruktur och skuggor i vecken
+    const rand = seeded(colorA + 3);
+    for (let y = 0; y < n; y += 2) {
+      ctx.fillStyle = `rgba(0,0,0,${0.02 + rand() * 0.03})`;
+      ctx.fillRect(0, y, n, 1);
+    }
+    for (let i = 0; i < stripes * 2; i++) {
+      const x = ((i + 0.5) * n) / (stripes * 2);
+      const g = ctx.createLinearGradient(x - 8, 0, x + 8, 0);
+      g.addColorStop(0, "rgba(0,0,0,0)");
+      g.addColorStop(0.5, "rgba(0,0,0,0.12)");
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(x - 8, 0, 16, n);
+    }
+  }, [1, 1]);
+}
+
+// Hermelin (vit päls med svarta svansspetsar) till kungens mantel
+export function ermineTexture() {
+  return makeTexture("ermine", 128, (ctx, n) => {
+    ctx.fillStyle = "#f4f1ea";
+    ctx.fillRect(0, 0, n, n);
+    ctx.fillStyle = "#151515";
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 4; x++) {
+        const cx = (x + (y % 2) * 0.5) * (n / 4) + 8;
+        const cy = y * (n / 4) + 10;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx - 4, cy + 12);
+        ctx.lineTo(cx + 4, cy + 12);
+        ctx.fill();
+        ctx.fillRect(cx - 1, cy - 4, 2, 5);
+      }
+    }
+  }, [2, 1]);
+}
+
+// Krattad sand: bågformade krattspår, halmstrån, småsten och gamla mörka fläckar
+export function rakedSandTexture() {
+  return makeTexture("sand", 512, (ctx, n) => {
+    const rand = seeded(19);
+    ctx.fillStyle = "#8f6e4b";
+    ctx.fillRect(0, 0, n, n);
+    for (let i = 0; i < 260; i++) {
+      ctx.fillStyle = rand() < 0.5 ? "rgba(120,92,62,0.45)" : "rgba(160,128,92,0.4)";
+      ctx.beginPath();
+      ctx.ellipse(rand() * n, rand() * n, 4 + rand() * 16, 3 + rand() * 10, rand() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Krattspår: grupper av parallella linjer
+    for (let g = 0; g < 7; g++) {
+      const y = rand() * n;
+      const bend = (rand() - 0.5) * 60;
+      for (let k = 0; k < 6; k++) {
+        ctx.strokeStyle = k % 2 ? "rgba(70,50,30,0.22)" : "rgba(190,160,120,0.22)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-10, y + k * 5);
+        ctx.quadraticCurveTo(n / 2, y + k * 5 + bend, n + 10, y + k * 5);
+        ctx.stroke();
+      }
+    }
+    // Halmstrån
+    for (let i = 0; i < 90; i++) {
+      ctx.strokeStyle = rand() < 0.5 ? "rgba(220,190,110,0.85)" : "rgba(190,160,80,0.8)";
+      ctx.lineWidth = 1.2;
+      const x = rand() * n;
+      const y = rand() * n;
+      const a = rand() * Math.PI;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.cos(a) * (6 + rand() * 10), y + Math.sin(a) * (6 + rand() * 10));
+      ctx.stroke();
+    }
+    // Småsten
+    for (let i = 0; i < 160; i++) {
+      ctx.fillStyle = rand() < 0.5 ? "rgba(90,80,70,0.8)" : "rgba(180,170,150,0.8)";
+      ctx.beginPath();
+      ctx.arc(rand() * n, rand() * n, 0.8 + rand() * 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Gamla, intorkade blodfläckar
+    for (let i = 0; i < 6; i++) {
+      ctx.fillStyle = "rgba(80,25,15,0.25)";
+      ctx.beginPath();
+      ctx.ellipse(rand() * n, rand() * n, 8 + rand() * 18, 6 + rand() * 12, rand() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }, [6, 6]);
+}
+
+// Mjuk rund glöd (eld, ljus)
+export function glowTexture() {
+  return makeTexture("glow", 64, (ctx, n) => {
+    const g = ctx.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2);
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(0.3, "rgba(255,255,255,0.6)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, n, n);
   });
 }

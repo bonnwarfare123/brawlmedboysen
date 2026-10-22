@@ -81,6 +81,17 @@ function smooth(t) {
 // från stridsställningen – då tas ett korrigeringssteg (som när man vänder sig).
 // ---------------------------------------------------------------------------
 
+// Steglängd (meter per hel gångcykel). Kortare steg när man går bakåt eller åt sidan.
+// run = 0 (gå) till 1 (spring), forward/side = fart i riddarens egen riktning.
+export function gaitStride(run, forward, side) {
+  const speed = Math.hypot(forward, side) || 1;
+  const sideness = Math.abs(side) / speed;
+  const back = Math.max(0, -forward) / speed;
+  return (1.35 + 0.65 * run) * (1 - 0.3 * sideness) * (1 - 0.25 * back);
+}
+
+const MIN_GAP = 0.13; // fötterna får aldrig korsa varandra: minst så här långt isär i sidled
+
 // Stridsställning: vänster fot (sköldsidan) lite fram, höger lite bak
 const STANCE = { L: [0.15, 0.08], R: [-0.15, -0.1] }; // [sida, framåt]
 const SIDE_OFFSET = { L: 0.11, R: -0.11 };           // fotbredd när man går
@@ -90,6 +101,7 @@ export class FootPlanner {
     this.feet = { L: null, R: null };
     this.lastPos = null;
     this.lastStepped = "R";
+    this.vel = [0, 0]; // utjämnad fart, så fötterna inte byter mål hela tiden
   }
 
   // Idealplats för en fot runt kroppen (världskoordinater [x, z])
@@ -111,22 +123,35 @@ export class FootPlanner {
 
   // pos = kroppens position [x, y, z], yaw = vridning, vel = fart [vx, vz], phase = gångcykelns fas (radianer)
   // Returnerar fötternas positioner i världen: { L: [x, y, z], R: [...] } och anropar onStep(side, [x, z]) vid nedsättning.
-  update(dt, pos, yaw, vel, phase, run, onStep) {
+  update(dt, pos, yaw, vel, phase, run, onStep, stride = null) {
     if (!this.feet.L || !this.lastPos || Math.hypot(pos[0] - this.lastPos[0], pos[2] - this.lastPos[2]) > 1.5) {
       this.reset(pos, yaw);
+      this.vel = [vel[0], vel[1]];
     }
     this.lastPos = [...pos];
-    const speed = Math.hypot(vel[0], vel[1]);
+    const k = 1 - Math.exp(-dt * 10);
+    this.vel = [this.vel[0] + (vel[0] - this.vel[0]) * k, this.vel[1] + (vel[1] - this.vel[1]) * k];
+    const v = this.vel;
+    const speed = Math.hypot(v[0], v[1]);
+    if (stride === null) {
+      const c = Math.cos(yaw);
+      const s = Math.sin(yaw);
+      stride = gaitStride(run, v[0] * s + v[1] * c, v[0] * c - v[1] * s);
+    }
 
-    if (speed > 0.3) this.gait(pos, yaw, vel, speed, phase, run, onStep);
+    if (speed > 0.3) this.gait(pos, yaw, v, speed, phase, run, onStep, stride);
     else this.idle(dt, pos, yaw, onStep);
 
     return { L: this.feet.L.current, R: this.feet.R.current, pitchL: this.feet.L.pitch, pitchR: this.feet.R.pitch };
   }
 
-  gait(pos, yaw, vel, speed, phase, run, onStep) {
+  // Sidledsposition för en punkt (plus = åt vänster om kroppen)
+  lateral(x, z, pos, yaw) {
+    return (x - pos[0]) * Math.cos(yaw) - (z - pos[2]) * Math.sin(yaw);
+  }
+
+  gait(pos, yaw, vel, speed, phase, run, onStep, stride) {
     const stance = 0.6 - 0.22 * run; // andel av cykeln foten står på marken
-    const stride = 1.35 + 0.65 * run; // meter per hel cykel
     const cycleTime = stride / speed;
     const lift = 0.1 + 0.14 * run;
     const dirX = vel[0] / speed;
@@ -156,8 +181,17 @@ export class FootPlanner {
         const remaining = (1 - s) * (1 - stance) * cycleTime;
         const [ix, iz] = this.ideal(side, pos, yaw, true);
         const ahead = (stride * stance) / 2;
-        const tx = ix + vel[0] * remaining + dirX * ahead;
-        const tz = iz + vel[1] * remaining + dirZ * ahead;
+        let tx = ix + vel[0] * remaining + dirX * ahead;
+        let tz = iz + vel[1] * remaining + dirZ * ahead;
+        // Korsa inte benen: vänster fot ska alltid landa till vänster om den högra (och tvärtom)
+        const other = this.feet[side === "L" ? "R" : "L"].current;
+        const lat = this.lateral(tx, tz, pos, yaw);
+        const otherLat = this.lateral(other[0], other[2], pos, yaw);
+        const wanted = side === "L" ? Math.max(lat, otherLat + MIN_GAP) : Math.min(lat, otherLat - MIN_GAP);
+        if (wanted !== lat) {
+          tx += (wanted - lat) * Math.cos(yaw);
+          tz -= (wanted - lat) * Math.sin(yaw);
+        }
         const e = smooth(s);
         foot.current = [
           foot.from[0] + (tx - foot.from[0]) * e,

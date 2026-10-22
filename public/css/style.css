@@ -324,6 +324,8 @@ button.small {
   transform: translateY(-50%);
   max-width: 360px;
   width: calc(100% - 64px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
   z-index: 5;
 }
 
@@ -415,7 +417,10 @@ body[data-phase="lobby"] #click-hint,
 body[data-phase="lobby"] .top-left,
 body[data-phase="lobby"] #round-banner { display: none; }
 body[data-phase="matchEnd"] #crosshair,
-body[data-phase="matchEnd"] #click-hint { display: none; }
+body[data-phase="matchEnd"] #click-hint,
+body[data-phase="bracket"] #crosshair,
+body[data-phase="bracket"] #click-hint,
+body[data-phase="bracket"] #combat-hud { display: none; }
 
 /* ---------- Utseende och volym ---------- */
 .look-row {
@@ -441,3 +446,32 @@ body[data-phase="matchEnd"] #click-hint { display: none; }
 }
 #volume-panel label { margin: 0; font-size: 14px; }
 #volume-panel input { width: 100%; accent-color: #8a2f22; }
+
+/* ---------- Spelsätt, lag och turnering ---------- */
+.mode-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+.mode-row button.small { margin: 0; }
+.mode-btn.active, .team-btn.active { background: #8a2f22; color: #fff8e8; border-color: #5a1a10; }
+.mode-btn:disabled:not(.active) { opacity: 0.55; cursor: default; }
+.mode-btn:disabled.active { opacity: 1; cursor: default; }
+#team-row { margin-top: 8px; }
+.team-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.team-buttons button.small { margin: 0; }
+.team-btn.red { border-left: 6px solid #b8322f; }
+.team-btn.blue { border-left: 6px solid #2f5fb3; }
+#shuffle-button { width: 100%; margin: 6px 0 0; }
+.lobby-list li.team-head { border-bottom: none; font-weight: bold; padding-bottom: 0; margin-top: 4px; }
+
+.overlay.see-through { background: rgba(20, 14, 8, 0.45); pointer-events: none; }
+.card.wide { max-width: 860px; width: calc(100% - 48px); }
+#bracket-tree { display: flex; gap: 22px; justify-content: center; align-items: stretch; margin-top: 10px; overflow-x: auto; }
+.bracket-round { display: flex; flex-direction: column; justify-content: space-around; gap: 10px; min-width: 170px; }
+.bracket-round h3 { margin: 0 0 4px; font-size: 14px; text-align: center; color: #6b4a2b; }
+.bracket-match { border: 2px solid rgba(107, 74, 43, 0.45); border-radius: 6px; background: rgba(255, 248, 232, 0.6); }
+.bracket-match.current { border-color: #d9a521; box-shadow: 0 0 10px rgba(217, 165, 33, 0.8); }
+.bracket-slot { display: flex; align-items: center; gap: 6px; padding: 4px 8px; font-size: 14px; }
+.bracket-slot + .bracket-slot { border-top: 1px solid rgba(107, 74, 43, 0.25); }
+.bracket-slot.won { font-weight: bold; }
+.bracket-slot.lost { opacity: 0.5; text-decoration: line-through; }
+.bracket-slot.empty { opacity: 0.5; font-style: italic; }
+.bracket-slot .score { margin-left: auto; font-weight: bold; }
+.bracket-champion { align-self: center; text-align: center; font-size: 18px; font-weight: bold; min-width: 140px; }

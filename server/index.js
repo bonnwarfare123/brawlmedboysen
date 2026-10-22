@@ -10,11 +10,16 @@
 //
 // Ett rum går igenom faserna:
 //   lobby → countdown (3, 2, 1) → round (strid) → roundEnd → countdown → ... → matchEnd → lobby
+// I turneringen visas trädet ("bracket") mellan duellerna:
+//   lobby → bracket → countdown → round → roundEnd → ... → bracket → ... → matchEnd → lobby
+//
+// Spelsätt: "ffa" = alla mot alla, "team" = Röda mot Blå, "tourney" = 1 mot 1 med utslag
 
 import { DurableObject } from "cloudflare:workers";
 import {
   MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, MATCH, ARENA_RX, ARENA_RZ,
   JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS, AIM_JOINT, ARMORS, HELMETS, SHIELDS,
+  WEAPONS, CAPES, MODES,
 } from "../public/js/shared.js";
 
 export default {
@@ -57,10 +62,40 @@ function cleanName(value) {
   return name || "Namnlös riddare";
 }
 
-// Utseende: { a: rustning, h: hjälm, s: sköld } som index i listorna
+// Utseende: { a: rustning, h: hjälm, s: sköld, w: vapen, c: mantel } som index i listorna
 function cleanLook(look) {
   const pick = (v, list) => (Number.isInteger(v) && v >= 0 && v < list.length ? v : 0);
-  return { a: pick(look?.a, ARMORS), h: pick(look?.h, HELMETS), s: pick(look?.s, SHIELDS) };
+  return {
+    a: pick(look?.a, ARMORS), h: pick(look?.h, HELMETS), s: pick(look?.s, SHIELDS),
+    w: pick(look?.w, WEAPONS), c: pick(look?.c, CAPES),
+  };
+}
+
+function shuffle(list, random = Math.random) {
+  const a = [...list];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Bygg ett utslagsträd. Går antalet inte jämnt ut får några "fripass" (b = null) i första omgången.
+// rounds[0] = första omgången, sista = finalen. Varje match: { a, b, w, s: [vinster a, vinster b] }
+// a/b = undefined betyder "inte avgjort än" (vinnaren från förra omgången kommer dit).
+function buildBracket(ids, random = Math.random) {
+  let size = 2;
+  while (size < ids.length) size *= 2;
+  const order = shuffle(ids, random);
+  const byes = size - ids.length;
+  const first = [];
+  for (let i = 0; i < byes; i++) first.push({ a: order[i], b: null });
+  for (let i = byes; i < order.length; i += 2) first.push({ a: order[i], b: order[i + 1] });
+  const rounds = [shuffle(first, random).map((m) => ({ ...m, w: undefined, s: [0, 0] }))];
+  for (let n = size / 4; n >= 1; n /= 2) {
+    rounds.push(Array.from({ length: n }, () => ({ a: undefined, b: undefined, w: undefined, s: [0, 0] })));
+  }
+  return rounds;
 }
 
 function finite(n, fallback = 0) {
@@ -77,6 +112,13 @@ function spawnPoint(index, count) {
   const p = [round2(Math.sin(angle) * 6), 0, round2(Math.cos(angle) * 6)];
   const r = round2(angle + Math.PI);
   return { p, r };
+}
+
+// Lagen startar på var sin sida, på en rad, vända mot varandra
+function teamSpawn(team, index, count) {
+  const x = round2((index - (count - 1) / 2) * 2.2);
+  const z = team === 0 ? -6 : 6;
+  return { p: [x, 0, z], r: team === 0 ? 0 : round2(Math.PI) };
 }
 
 function newPlayerState(info) {
@@ -100,6 +142,8 @@ function newPlayerState(info) {
     chargeStart: null,
     severed: [],     // avhuggna leder den här rundan
     limbDamage: {},  // samlad skada per kroppsdel den här rundan
+    helmetOff: false,
+    team: info.team === 0 || info.team === 1 ? info.team : null,
   };
 }
 
@@ -116,6 +160,7 @@ function resetForRound(player) {
   player.staggerUntil = 0;
   player.chargeStart = null;
   player.a = 0;
+  player.helmetOff = false;
 }
 
 // Finns leden kvar? (varken den eller någon led innanför är avhuggen)
@@ -164,6 +209,7 @@ function publicPlayer(pl) {
   return {
     id: pl.id, name: pl.name, color: pl.color, look: pl.look, p: pl.p, r: pl.r, a: pl.a,
     hp: pl.hp, dead: pl.dead, kills: pl.kills, wins: pl.wins, severed: pl.severed,
+    helmetOff: pl.helmetOff, team: pl.team,
   };
 }
 
@@ -175,6 +221,10 @@ export class GameRoom extends DurableObject {
     this.hostId = null;
     this.round = 0;
     this.phaseToken = 0; // ökar vid varje fasbyte, så gamla timers inte gör något
+    this.mode = "ffa";
+    this.teamWins = [0, 0];
+    this.bracket = null; // turneringsträdet
+    this.duel = null;    // pågående duell: { ri, mi }
 
     // Om rummet "sov" (hibernation) och vaknar igen: återskapa spelarlistan
     // från informationen som sparats på varje anslutning.
@@ -225,6 +275,20 @@ export class GameRoom extends DurableObject {
     return Object.fromEntries([...this.players.values()].map((p) => [p.id, p.kills]));
   }
 
+  teamsTable() {
+    return Object.fromEntries([...this.players.values()].map((p) => [p.id, p.team]));
+  }
+
+  // Spara spelarens uppgifter på anslutningen (överlever om rummet somnar)
+  saveInfo(player) {
+    for (const ws of this.ctx.getWebSockets()) {
+      const info = ws.deserializeAttachment();
+      if (info && info.id === player.id) {
+        ws.serializeAttachment({ id: player.id, name: player.name, color: player.color, look: player.look, team: player.team });
+      }
+    }
+  }
+
   async webSocketMessage(ws, message) {
     if (typeof message !== "string" || message.length > 1000) return;
 
@@ -271,6 +335,15 @@ export class GameRoom extends DurableObject {
       case "look":
         this.handleLook(ws, player, msg.look);
         break;
+      case "mode":
+        this.handleMode(player, msg.m);
+        break;
+      case "team":
+        this.handleTeam(player, msg.team);
+        break;
+      case "shuffle":
+        this.handleShuffle(player);
+        break;
       case "par":
         this.handleParry(ws, player);
         break;
@@ -293,10 +366,12 @@ export class GameRoom extends DurableObject {
     let color = Number.isInteger(msg.color) && msg.color >= 0 && msg.color < COLORS.length ? msg.color : 0;
     if (taken.has(color)) color = COLORS.findIndex((_, i) => !taken.has(i));
 
-    const playerInfo = { id: randomId(), name: cleanName(msg.name), color, look: cleanLook(msg.look) };
+    const playerInfo = { id: randomId(), name: cleanName(msg.name), color, look: cleanLook(msg.look), team: null };
+    const player = newPlayerState(playerInfo);
+    if (this.mode === "team") player.team = this.smallerTeam();
+    playerInfo.team = player.team;
     ws.serializeAttachment(playerInfo);
 
-    const player = newPlayerState(playerInfo);
     // Kommer man in mitt i en match får man titta på tills nästa runda
     player.dead = this.phase !== "lobby";
     this.players.set(player.id, player);
@@ -310,6 +385,9 @@ export class GameRoom extends DurableObject {
       phase: this.phase,
       host: this.hostId,
       round: this.round,
+      mode: this.mode,
+      teamWins: this.teamWins,
+      bracket: this.bracket,
     });
     this.broadcast({ t: "join", player: publicPlayer(player) }, ws);
   }
@@ -319,7 +397,7 @@ export class GameRoom extends DurableObject {
     if (!Number.isInteger(color) || color < 0 || color >= COLORS.length) return;
     if ([...this.players.values()].some((p) => p !== player && p.color === color)) return; // upptagen
     player.color = color;
-    ws.serializeAttachment({ id: player.id, name: player.name, color, look: player.look });
+    this.saveInfo(player);
     this.broadcast({ t: "color", id: player.id, color });
   }
 
@@ -327,8 +405,69 @@ export class GameRoom extends DurableObject {
   handleLook(ws, player, look) {
     if (this.phase !== "lobby") return;
     player.look = cleanLook(look);
-    ws.serializeAttachment({ id: player.id, name: player.name, color: player.color, look: player.look });
+    this.saveInfo(player);
     this.broadcast({ t: "look", id: player.id, look: player.look });
+  }
+
+  // ----- Spelsätt och lag -----
+
+  smallerTeam(except = null) {
+    const count = [0, 0];
+    for (const p of this.players.values()) if (p !== except && p.team !== null) count[p.team] += 1;
+    return count[0] <= count[1] ? 0 : 1;
+  }
+
+  // Ge alla utan lag ett lag, så att lagen blir så jämna som möjligt
+  fillTeams() {
+    for (const p of this.players.values()) {
+      if (p.team === null) {
+        p.team = this.smallerTeam(p);
+        this.saveInfo(p);
+      }
+    }
+  }
+
+  broadcastTeams() {
+    this.broadcast({ t: "teams", teams: this.teamsTable() });
+  }
+
+  handleMode(player, mode) {
+    if (player.id !== this.hostId || this.phase !== "lobby" || !MODES.includes(mode)) return;
+    this.mode = mode;
+    if (mode === "team") this.fillTeams();
+    this.broadcast({ t: "mode", m: mode, teams: this.teamsTable() });
+  }
+
+  handleTeam(player, team) {
+    if (this.phase !== "lobby" || this.mode !== "team" || (team !== 0 && team !== 1)) return;
+    player.team = team;
+    this.saveInfo(player);
+    this.broadcastTeams();
+  }
+
+  // Lobbyledaren slumpar jämna lag
+  handleShuffle(player) {
+    if (player.id !== this.hostId || this.phase !== "lobby" || this.mode !== "team") return;
+    shuffle([...this.players.values()]).forEach((p, i) => {
+      p.team = i % 2;
+      this.saveInfo(p);
+    });
+    this.broadcastTeams();
+  }
+
+  // Båda lagen måste ha minst en riddare: annars flyttas någon över
+  balanceTeams() {
+    this.fillTeams();
+    const list = [...this.players.values()];
+    for (const team of [0, 1]) {
+      if (!list.some((p) => p.team === team)) {
+        const other = list.filter((p) => p.team !== team);
+        const mover = other[Math.floor(Math.random() * other.length)];
+        mover.team = team;
+        this.saveInfo(mover);
+      }
+    }
+    this.broadcastTeams();
   }
 
   // Hån-gester: buga, peka och skratta, dansa
@@ -350,6 +489,16 @@ export class GameRoom extends DurableObject {
       p.kills = 0;
     }
     this.round = 0;
+    this.teamWins = [0, 0];
+    this.bracket = null;
+    this.duel = null;
+    if (this.mode === "team") this.balanceTeams();
+    if (this.mode === "tourney") {
+      this.bracket = buildBracket([...this.players.keys()]);
+      this.bracketNames = Object.fromEntries([...this.players.values()].map((p) => [p.id, { name: p.name, color: p.color }]));
+      this.showBracket();
+      return;
+    }
     this.startCountdown();
   }
 
@@ -368,19 +517,35 @@ export class GameRoom extends DurableObject {
     }, seconds * 1000);
   }
 
-  startCountdown() {
+  // fighters = de som ska slåss (i turneringen bara två, de andra tittar på)
+  startCountdown(fighters = null) {
     this.round += 1;
     const token = this.setPhase("countdown");
-    const list = [...this.players.values()];
-    list.forEach((p, i) => {
+    const all = [...this.players.values()];
+    const list = fighters ? all.filter((p) => fighters.includes(p.id)) : all;
+    const spectators = all.filter((p) => !list.includes(p));
+    if (this.mode === "team") {
+      for (const team of [0, 1]) {
+        const members = list.filter((p) => p.team === team);
+        members.forEach((p, i) => Object.assign(p, teamSpawn(team, i, members.length)));
+      }
+    } else if (fighters) {
+      list.forEach((p, i) => Object.assign(p, { p: [0, 0, i === 0 ? -5 : 5], r: i === 0 ? 0 : round2(Math.PI) }));
+    } else {
+      list.forEach((p, i) => Object.assign(p, spawnPoint(i, list.length)));
+    }
+    list.forEach((p) => resetForRound(p));
+    spectators.forEach((p) => {
       resetForRound(p);
-      Object.assign(p, spawnPoint(i, list.length));
+      p.dead = true; // tittar på
     });
     this.broadcast({
       t: "countdown",
       round: this.round,
       seconds: MATCH.countdown,
       players: list.map((p) => ({ id: p.id, p: p.p, r: p.r })),
+      spec: spectators.map((p) => p.id),
+      duel: this.duelInfo(),
     });
     this.later(MATCH.countdown, token, () => {
       this.setPhase("round");
@@ -396,33 +561,146 @@ export class GameRoom extends DurableObject {
     }
     if (this.phase !== "round") return;
     const alive = [...this.players.values()].filter((p) => !p.dead);
-    if (alive.length > 1) return;
 
+    if (this.mode === "team") {
+      const teams = new Set(alive.map((p) => p.team));
+      if (teams.size > 1) return;
+      const team = alive.length ? alive[0].team : null;
+      if (team !== null) {
+        this.teamWins[team] += 1;
+        for (const p of this.players.values()) if (p.team === team) p.wins += 1;
+      }
+      const token = this.setPhase("roundEnd");
+      this.broadcast({ t: "roundEnd", winner: null, team, wins: this.winsTable(), teamWins: this.teamWins });
+      this.later(MATCH.roundEndDelay, token, () => {
+        if (team !== null && this.teamWins[team] >= MATCH.roundsToWin) this.matchEnd(null, team);
+        else this.nextRoundOrLobby();
+      });
+      return;
+    }
+
+    if (alive.length > 1) return;
     const winner = alive[0] || null;
     if (winner) winner.wins += 1;
     const token = this.setPhase("roundEnd");
-    this.broadcast({ t: "roundEnd", winner: winner ? winner.id : null, wins: this.winsTable() });
 
+    if (this.mode === "tourney" && this.duel) {
+      const match = this.currentMatch();
+      if (winner) match.s[winner.id === match.a ? 0 : 1] += 1;
+      this.broadcast({ t: "roundEnd", winner: winner ? winner.id : null, wins: this.winsTable(), duel: this.duelInfo() });
+      this.later(MATCH.roundEndDelay, token, () => {
+        if (winner && match.s[winner.id === match.a ? 0 : 1] >= MATCH.duelRoundsToWin) {
+          this.finishDuel(winner.id);
+        } else if (this.players.has(match.a) && this.players.has(match.b)) {
+          this.startCountdown([match.a, match.b]);
+        } else {
+          this.finishDuel(this.players.has(match.a) ? match.a : match.b);
+        }
+      });
+      return;
+    }
+
+    this.broadcast({ t: "roundEnd", winner: winner ? winner.id : null, wins: this.winsTable() });
     this.later(MATCH.roundEndDelay, token, () => {
       if (winner && winner.wins >= MATCH.roundsToWin && this.players.has(winner.id)) {
-        this.matchEnd(winner);
-      } else if (this.players.size >= MATCH.minPlayers) {
-        this.startCountdown();
+        this.matchEnd(winner.id);
       } else {
-        this.toLobby();
+        this.nextRoundOrLobby();
       }
     });
   }
 
-  matchEnd(winner) {
+  nextRoundOrLobby() {
+    if (this.players.size < MATCH.minPlayers) return this.toLobby();
+    if (this.mode === "team") {
+      // Finns det fortfarande folk i båda lagen?
+      const list = [...this.players.values()];
+      for (const team of [0, 1]) {
+        if (!list.some((p) => p.team === team)) return this.matchEnd(null, 1 - team);
+      }
+    }
+    this.startCountdown();
+  }
+
+  // ----- Turnering -----
+
+  currentMatch() {
+    return this.duel ? this.bracket[this.duel.ri][this.duel.mi] : null;
+  }
+
+  duelInfo() {
+    const m = this.currentMatch();
+    return m && this.mode === "tourney" ? { a: m.a, b: m.b, s: m.s, ri: this.duel.ri, mi: this.duel.mi } : null;
+  }
+
+  // Skriv in vinnaren och flytta den vidare till nästa omgång
+  setMatchWinner(ri, mi, winnerId) {
+    const match = this.bracket[ri][mi];
+    match.w = winnerId ?? null;
+    const next = this.bracket[ri + 1];
+    if (next) next[Math.floor(mi / 2)][mi % 2 === 0 ? "a" : "b"] = match.w;
+  }
+
+  // Leta upp nästa duell. Matcher där någon saknas (fripass eller har lämnat) avgörs direkt.
+  findNextDuel() {
+    for (let ri = 0; ri < this.bracket.length; ri++) {
+      for (let mi = 0; mi < this.bracket[ri].length; mi++) {
+        const m = this.bracket[ri][mi];
+        if (m.w !== undefined) continue;
+        if (m.a === undefined || m.b === undefined) return null; // borde inte hända
+        const present = [m.a, m.b].filter((id) => id && this.players.has(id));
+        if (present.length === 2) return { ri, mi };
+        this.setMatchWinner(ri, mi, present[0] ?? null);
+      }
+    }
+    return null;
+  }
+
+  champion() {
+    const final = this.bracket[this.bracket.length - 1][0];
+    return final.w !== undefined ? final.w : undefined;
+  }
+
+  // Visa trädet en stund, sen börjar nästa duell
+  showBracket() {
+    const token = this.setPhase("bracket");
+    this.duel = this.findNextDuel();
+    const champ = this.champion();
+    this.broadcast({ t: "bracket", bracket: this.bracket, names: this.bracketNames, next: this.duel, champion: champ ?? null });
+    this.later(champ !== undefined ? 2 : MATCH.bracketDelay, token, () => {
+      this.duel = this.findNextDuel();
+      if (!this.duel) {
+        const winner = this.champion();
+        if (winner && this.players.has(winner)) this.matchEnd(winner);
+        else this.toLobby();
+        return;
+      }
+      const m = this.currentMatch();
+      this.startCountdown([m.a, m.b]);
+    });
+  }
+
+  finishDuel(winnerId) {
+    const { ri, mi } = this.duel;
+    this.setMatchWinner(ri, mi, winnerId);
+    this.duel = null;
+    this.showBracket();
+  }
+
+  // winner = spelarens id (eller null), team = vinnande lag i lagspel
+  matchEnd(winner, team = null) {
     const token = this.setPhase("matchEnd");
-    this.broadcast({ t: "matchEnd", winner: winner.id, wins: this.winsTable(), kills: this.killsTable() });
+    this.broadcast({
+      t: "matchEnd", winner, team, mode: this.mode,
+      wins: this.winsTable(), kills: this.killsTable(), teamWins: this.teamWins,
+    });
     this.later(MATCH.matchEndDelay, token, () => this.toLobby());
   }
 
   toLobby() {
     this.setPhase("lobby");
     this.round = 0;
+    this.duel = null;
     for (const p of this.players.values()) resetForRound(p);
     this.broadcast({ t: "lobby" });
   }
@@ -516,6 +794,12 @@ export class GameRoom extends DurableObject {
       const aimSeg = aimInfo && aimInfo.id === target.id ? aimInfo.seg : null;
       const sev = chooseSever(target, kind, dead, aimSeg);
       if (sev) target.severed.push(sev);
+      // Tunga slag kan slå av hjälmen (bara utseende). Siktar man på huvudet åker den alltid.
+      let hk = 0;
+      if (kind === "h" && !target.helmetOff && sev !== "neck" && (aimSeg === "head" || Math.random() < MATCH.helmetKnockChance)) {
+        target.helmetOff = true;
+        hk = 1;
+      }
       if (dead) {
         target.dead = true;
         target.chargeStart = null;
@@ -531,6 +815,7 @@ export class GameRoom extends DurableObject {
         kills: attacker.kills,
         sev,
         seg: aimSeg, // kroppsdelen som träffades (om man siktade)
+        hk,          // 1 = hjälmen flög av
       });
     }
     this.checkRoundEnd();
@@ -544,6 +829,7 @@ export class GameRoom extends DurableObject {
     const result = [];
     for (const target of this.players.values()) {
       if (target === attacker || target.dead) continue;
+      if (this.mode === "team" && target.team === attacker.team) continue; // inga skador på lagkamrater
       const dx = target.p[0] - attacker.p[0];
       const dz = target.p[2] - attacker.p[2];
       const dy = Math.abs(target.p[1] - attacker.p[1]);
@@ -620,12 +906,28 @@ export class GameRoom extends DurableObject {
       this.round = 0;
       return;
     }
-    if (this.phase === "matchEnd" || this.phase === "roundEnd") return;
+    if (this.phase === "matchEnd") return;
     if (this.phase !== "lobby" && this.players.size < MATCH.minPlayers) {
       // Inte nog med spelare kvar: tillbaka till lobbyn (den som är kvar vinner inget)
       this.toLobby();
       return;
     }
+    // Turnering: lämnar en av duellanterna vinner den andra duellen direkt
+    if (this.mode === "tourney" && this.duel && ["countdown", "round", "roundEnd"].includes(this.phase)) {
+      const m = this.currentMatch();
+      if (m.a === info.id || m.b === info.id) {
+        this.finishDuel(m.a === info.id ? m.b : m.a);
+        return;
+      }
+    }
+    if (this.phase === "roundEnd" || this.phase === "bracket") return;
+    if (this.mode === "team" && this.phase === "round") {
+      const list = [...this.players.values()];
+      for (const team of [0, 1]) {
+        if (!list.some((p) => p.team === team)) return this.matchEnd(null, 1 - team);
+      }
+    }
     this.checkRoundEnd();
   }
 }
+
