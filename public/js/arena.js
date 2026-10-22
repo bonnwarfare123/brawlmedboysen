@@ -427,7 +427,25 @@ export function buildArena() {
     const spot = ringSpot(15.5, 60);
     if (spot) (i % 4 === 0 ? flowers : tufts).push(spot);
   }
-  const tuftMesh = new THREE.InstancedMesh(new THREE.ConeGeometry(0.07, 0.32, 4), new THREE.MeshStandardMaterial({ roughness: 1 }), tufts.length);
+  // Gräset svajar i vinden: toppen av varje tuva flyttas lite i sidled i grafikkortet
+  const windTime = { value: 0 };
+  const windGrassMat = new THREE.MeshStandardMaterial({ roughness: 1 });
+  windGrassMat.onBeforeCompile = (shader) => {
+    shader.uniforms.windTime = windTime;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nuniform float windTime;")
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+        float bend = clamp(position.y + 0.16, 0.0, 0.32) / 0.32;
+        vec3 base = vec3(instanceMatrix[3][0], 0.0, instanceMatrix[3][2]);
+        float wave = sin(windTime * 1.7 + base.x * 0.35 + base.z * 0.25) + 0.4 * sin(windTime * 3.1 + base.z * 0.9);
+        transformed.x += wave * 0.06 * bend * bend;
+        transformed.z += wave * 0.03 * bend * bend;`
+      );
+  };
+  const tuftMesh = new THREE.InstancedMesh(new THREE.ConeGeometry(0.07, 0.32, 4), windGrassMat, tufts.length);
+  tuftMesh.userData.noMerge = true;
   tufts.forEach(([x, z], i) => {
     dummy.position.set(x, 0.14, z);
     dummy.rotation.set((rand() - 0.5) * 0.4, rand() * 3, (rand() - 0.5) * 0.4);
@@ -514,6 +532,7 @@ export function buildArena() {
   let time = 0;
   const update = (dt) => {
     time += dt;
+    windTime.value = time;
     excitement = Math.max(0, excitement - dt * 0.4);
     for (const crowd of crowds) crowd.update(time, excitement);
     // Flaggor fladdrar i vinden

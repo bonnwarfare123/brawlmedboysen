@@ -483,6 +483,16 @@ export class Sound {
     this.tone({ volume: 0.6 * v, freq: 85, freqEnd: 35, decay: 0.35 });
   }
 
+  // Tyst knaster i sanden när en fot sätts ner (plus lite skrammel för plåt)
+  footstep(pos, metal = false, loud = 1) {
+    if (!this.ready()) return;
+    const v = this.volumeAt(pos) * loud;
+    if (v < 0.03) return;
+    const f = 500 + Math.random() * 300;
+    this.noiseBurst({ volume: 0.09 * v, attack: 0.004, decay: 0.07, type: "lowpass", freq: f, freqEnd: f * 0.5, q: 0.7 });
+    if (metal) this.tone({ volume: 0.018 * v, type: "triangle", freq: 1300 + Math.random() * 500, decay: 0.08 });
+  }
+
   // Sparkens svisch och dunsen när den träffar
   kick(pos) {
     if (!this.ready()) return;

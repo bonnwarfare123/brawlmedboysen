@@ -36,5 +36,6 @@ export const CONFIG = {
   // Grafik
   shadows: true,
   maxPixelRatio: 1.5,      // högre = skarpare men tyngre (2 = full skärpa på högupplösta skärmar)
-  shadowMapSize: 1024,     // skuggornas upplösning
+  shadowMapSize: 2048,     // skuggornas upplösning (Hög grafik)
+  shadowMapSizeLow: 1024,  // (Låg grafik)
 };

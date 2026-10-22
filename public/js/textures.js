@@ -1,0 +1,394 @@
+// YTSTRUKTURER – ritas direkt i koden (inga bildfiler behövs).
+// Varje struktur ritas en gång och återanvänds av alla riddare.
+
+import * as THREE from "three";
+
+const cache = new Map();
+
+function seeded(seed) {
+  let s = seed % 2147483647 || 1;
+  return () => {
+    s = (s * 16807) % 2147483647;
+    return (s - 1) / 2147483646;
+  };
+}
+
+function makeTexture(key, size, draw, repeat = [1, 1], srgb = true) {
+  if (cache.has(key)) return cache.get(key);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  draw(ctx, size);
+  const texture = new THREE.CanvasTexture(canvas);
+  if (srgb) texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(repeat[0], repeat[1]);
+  texture.anisotropy = 4;
+  cache.set(key, texture);
+  return texture;
+}
+
+// Ringbrynja: rader av små ringar, varannan rad förskjuten
+export function chainmailTexture() {
+  return makeTexture("chain", 128, (ctx, n) => {
+    ctx.fillStyle = "#3a3d42";
+    ctx.fillRect(0, 0, n, n);
+    const r = 5;
+    for (let row = 0; row < n / (r * 1.5) + 1; row++) {
+      for (let col = 0; col < n / (r * 2) + 1; col++) {
+        const x = col * r * 2 + (row % 2) * r;
+        const y = row * r * 1.5;
+        ctx.lineWidth = 2.2;
+        ctx.strokeStyle = "#c9ced6";
+        ctx.beginPath();
+        ctx.arc(x, y, r - 1, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(255,255,255,0.5)"; // glans överst på varje ring
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(x, y, r - 1.5, Math.PI * 1.1, Math.PI * 1.7);
+        ctx.stroke();
+      }
+    }
+  }, [5, 5]);
+}
+
+// Läder: brunt med repor, nötta ljusare fläckar och mörkare skuggor
+export function leatherTexture() {
+  return makeTexture("leather", 256, (ctx, n) => {
+    const rand = seeded(11);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, n, n);
+    for (let i = 0; i < 140; i++) {
+      ctx.fillStyle = rand() < 0.5 ? "rgba(0,0,0,0.07)" : "rgba(255,240,220,0.08)";
+      ctx.beginPath();
+      ctx.ellipse(rand() * n, rand() * n, 6 + rand() * 22, 4 + rand() * 14, rand() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Repor
+    for (let i = 0; i < 60; i++) {
+      ctx.strokeStyle = rand() < 0.7 ? "rgba(255,235,200,0.35)" : "rgba(0,0,0,0.3)";
+      ctx.lineWidth = 0.6 + rand();
+      const x = rand() * n;
+      const y = rand() * n;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.quadraticCurveTo(x + (rand() - 0.5) * 20, y + (rand() - 0.5) * 20, x + (rand() - 0.5) * 40, y + (rand() - 0.5) * 40);
+      ctx.stroke();
+    }
+    // Sömmar
+    ctx.strokeStyle = "rgba(230,210,170,0.6)";
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1.5;
+    for (const y of [6, n / 2, n - 6]) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(n, y);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }, [2, 2]);
+}
+
+// Vadderat tyg (bondens jacka): stickningar i rutor, smuts och lappar
+export function quiltTexture() {
+  return makeTexture("quilt", 256, (ctx, n) => {
+    const rand = seeded(23);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, n, n);
+    // Mjuka "kuddar" mellan stygnen
+    const cell = 32;
+    for (let y = 0; y < n; y += cell) {
+      for (let x = 0; x < n; x += cell) {
+        const g = ctx.createRadialGradient(x + cell / 2, y + cell / 2, 2, x + cell / 2, y + cell / 2, cell * 0.7);
+        g.addColorStop(0, "rgba(255,255,255,0.15)");
+        g.addColorStop(1, "rgba(0,0,0,0.18)");
+        ctx.fillStyle = g;
+        ctx.fillRect(x, y, cell, cell);
+      }
+    }
+    // Stygn diagonalt
+    ctx.strokeStyle = "rgba(90,70,40,0.55)";
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1.2;
+    for (let i = -n; i < n * 2; i += cell) {
+      ctx.beginPath();
+      ctx.moveTo(i, 0);
+      ctx.lineTo(i + n, n);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(i, n);
+      ctx.lineTo(i + n, 0);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    // Smutsfläckar
+    for (let i = 0; i < 30; i++) {
+      ctx.fillStyle = `rgba(70,50,25,${0.08 + rand() * 0.15})`;
+      ctx.beginPath();
+      ctx.ellipse(rand() * n, rand() * n, 5 + rand() * 25, 4 + rand() * 15, rand() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // En lapp med grova stygn
+    ctx.fillStyle = "rgba(120,90,60,0.35)";
+    ctx.fillRect(150, 40, 60, 50);
+    ctx.strokeStyle = "rgba(40,30,20,0.8)";
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 12; i++) {
+      const t = i / 12;
+      const px = 150 + t * 60;
+      ctx.beginPath();
+      ctx.moveTo(px, 36);
+      ctx.lineTo(px + 3, 44);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(px, 86);
+      ctx.lineTo(px + 3, 94);
+      ctx.stroke();
+    }
+  }, [2, 2]);
+}
+
+// Ylle (bondens byxor och benlindor): diagonala lindor
+export function wrapTexture() {
+  return makeTexture("wrap", 128, (ctx, n) => {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, n, n);
+    ctx.strokeStyle = "rgba(0,0,0,0.25)";
+    ctx.lineWidth = 3;
+    for (let i = -n; i < n * 2; i += 16) {
+      ctx.beginPath();
+      ctx.moveTo(i, 0);
+      ctx.lineTo(i + n * 0.5, n);
+      ctx.stroke();
+    }
+    const rand = seeded(5);
+    for (let i = 0; i < 400; i++) {
+      ctx.fillStyle = `rgba(0,0,0,${rand() * 0.08})`;
+      ctx.fillRect(rand() * n, rand() * n, 2, 2);
+    }
+  }, [2, 3]);
+}
+
+// Halm (halmhatten)
+export function strawTexture() {
+  return makeTexture("straw", 128, (ctx, n) => {
+    const rand = seeded(31);
+    ctx.fillStyle = "#d9bf6a";
+    ctx.fillRect(0, 0, n, n);
+    for (let i = 0; i < 300; i++) {
+      ctx.strokeStyle = rand() < 0.5 ? "rgba(140,105,40,0.5)" : "rgba(255,240,170,0.5)";
+      ctx.lineWidth = 1;
+      const y = rand() * n;
+      const x = rand() * n;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + 10 + rand() * 20, y + (rand() - 0.5) * 3);
+      ctx.stroke();
+    }
+  }, [3, 1]);
+}
+
+// Lätt slitage på metall: små repor och fläckar (används som ojämnhet i ytan)
+export function metalWearTexture() {
+  return makeTexture("metalwear", 256, (ctx, n) => {
+    const rand = seeded(47);
+    ctx.fillStyle = "#c8c8c8";
+    ctx.fillRect(0, 0, n, n);
+    for (let i = 0; i < 120; i++) {
+      ctx.strokeStyle = rand() < 0.5 ? "rgba(255,255,255,0.6)" : "rgba(60,60,60,0.5)";
+      ctx.lineWidth = 0.5 + rand();
+      const x = rand() * n;
+      const y = rand() * n;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + (rand() - 0.5) * 30, y + (rand() - 0.5) * 30);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 40; i++) {
+      ctx.fillStyle = `rgba(90,90,90,${rand() * 0.3})`;
+      ctx.beginPath();
+      ctx.arc(rand() * n, rand() * n, 2 + rand() * 8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }, [2, 2], false);
+}
+
+// ---------- Vapenmönster (heraldik) på sköld och vapenrock ----------
+// Mönstret bestäms av spelarens färg, så varje riddare får sin egen vapensköld.
+
+const DIVISIONS = ["kors", "kvadrerad", "sparre", "ränder", "snedbalk", "kluven"];
+const CHARGES = ["stjärna", "halvmåne", "kors", "ring", "lilja", "torn"];
+
+function drawCharge(ctx, kind, cx, cy, r, color) {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = "rgba(0,0,0,0.5)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  if (kind === "stjärna") {
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + (i * Math.PI) / 5;
+      const rr = i % 2 ? r * 0.42 : r;
+      ctx.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+    }
+    ctx.closePath();
+  } else if (kind === "halvmåne") {
+    ctx.arc(cx, cy, r, 0.3, Math.PI * 2 - 0.3);
+    ctx.arc(cx + r * 0.45, cy, r * 0.78, Math.PI * 2 - 0.6, 0.6, true);
+    ctx.closePath();
+  } else if (kind === "kors") {
+    const w = r * 0.32;
+    ctx.rect(cx - w, cy - r, w * 2, r * 2);
+    ctx.rect(cx - r, cy - w, r * 2, w * 2);
+  } else if (kind === "ring") {
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.arc(cx, cy, r * 0.55, 0, Math.PI * 2, true);
+  } else if (kind === "lilja") {
+    // Förenklad lilja: tre blad och ett band
+    ctx.ellipse(cx, cy - r * 0.35, r * 0.22, r * 0.65, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx - r * 0.45, cy - r * 0.05, r * 0.18, r * 0.5, -0.6, 0, Math.PI * 2);
+    ctx.ellipse(cx + r * 0.45, cy - r * 0.05, r * 0.18, r * 0.5, 0.6, 0, Math.PI * 2);
+    ctx.rect(cx - r * 0.5, cy + r * 0.25, r, r * 0.18);
+  } else {
+    // Torn
+    ctx.rect(cx - r * 0.5, cy - r * 0.4, r, r * 1.3);
+    for (let i = 0; i < 3; i++) ctx.rect(cx - r * 0.5 + i * r * 0.38, cy - r * 0.7, r * 0.24, r * 0.32);
+  }
+  ctx.fill("evenodd");
+  ctx.stroke();
+}
+
+export function heraldryTexture(colorHex, variant = 0) {
+  const key = `herald-${colorHex}-${variant}`;
+  return makeTexture(key, 256, (ctx, n) => {
+    const base = "#" + colorHex.toString(16).padStart(6, "0");
+    const light = "#f2ecdc";
+    const gold = "#d9a521";
+    const pick = (colorHex >> 3) + variant * 7;
+    const division = DIVISIONS[pick % DIVISIONS.length];
+    const charge = CHARGES[(pick >> 2) % CHARGES.length];
+    const second = colorHex === 0xe8e4da ? "#2a2a2e" : light;
+
+    ctx.fillStyle = base;
+    ctx.fillRect(0, 0, n, n);
+    ctx.fillStyle = second;
+    if (division === "kors") {
+      ctx.fillRect(n * 0.43, 0, n * 0.14, n);
+      ctx.fillRect(0, n * 0.4, n, n * 0.14);
+    } else if (division === "kvadrerad") {
+      ctx.fillRect(n / 2, 0, n / 2, n / 2);
+      ctx.fillRect(0, n / 2, n / 2, n / 2);
+    } else if (division === "sparre") {
+      ctx.beginPath();
+      ctx.moveTo(0, n * 0.85);
+      ctx.lineTo(n / 2, n * 0.35);
+      ctx.lineTo(n, n * 0.85);
+      ctx.lineTo(n, n);
+      ctx.lineTo(n / 2, n * 0.55);
+      ctx.lineTo(0, n);
+      ctx.fill();
+    } else if (division === "ränder") {
+      for (let i = 1; i < 6; i += 2) ctx.fillRect((i * n) / 6, 0, n / 6, n);
+    } else if (division === "snedbalk") {
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(n * 0.25, 0);
+      ctx.lineTo(n, n * 0.75);
+      ctx.lineTo(n, n);
+      ctx.lineTo(n * 0.75, n);
+      ctx.lineTo(0, n * 0.25);
+      ctx.fill();
+    } else {
+      ctx.fillRect(n / 2, 0, n / 2, n);
+    }
+    // Märket i mitten, i guld med svart kant
+    const centred = division === "kors" || division === "kvadrerad" || division === "kluven";
+    if (!centred || charge !== "kors") drawCharge(ctx, charge, n / 2, n * 0.47, n * 0.2, gold);
+
+    // Slitage: repor och flagnad färg
+    const rand = seeded(colorHex + variant);
+    for (let i = 0; i < 50; i++) {
+      ctx.strokeStyle = rand() < 0.6 ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.25)";
+      ctx.lineWidth = 0.8 + rand() * 1.5;
+      const x = rand() * n;
+      const y = rand() * n;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + (rand() - 0.5) * 30, y + (rand() - 0.5) * 30);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 12; i++) {
+      ctx.fillStyle = "rgba(110,80,50,0.35)"; // träet syns där färgen flagnat
+      ctx.beginPath();
+      ctx.ellipse(rand() * n, rand() * n, 2 + rand() * 7, 2 + rand() * 4, rand() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+}
+
+// ---------- Blodstänk på marken (flera varianter) ----------
+export function splatterTexture(variant) {
+  return makeTexture(`splat-${variant}`, 128, (ctx, n) => {
+    const rand = seeded(100 + variant * 13);
+    ctx.clearRect(0, 0, n, n);
+    ctx.fillStyle = "#ffffff";
+    const cx = n * 0.42;
+    const cy = n / 2;
+    // Huvudfläck med ojämn kant
+    ctx.beginPath();
+    for (let i = 0; i <= 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      const r = n * (0.16 + rand() * 0.08);
+      ctx.lineTo(cx + Math.cos(a) * r * 1.2, cy + Math.sin(a) * r);
+    }
+    ctx.fill();
+    // Utdragna stänk åt höger (stänket flög åt det hållet) och små satellitdroppar
+    for (let i = 0; i < 9; i++) {
+      const a = (rand() - 0.5) * 1.4;
+      const d = n * (0.22 + rand() * 0.25);
+      const x = cx + Math.cos(a) * d;
+      const y = cy + Math.sin(a) * d;
+      const r = 1.5 + rand() * 4;
+      ctx.beginPath();
+      ctx.ellipse(x, y, r * (1.5 + rand() * 2), r, a, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (let i = 0; i < 14; i++) {
+      const a = rand() * Math.PI * 2;
+      const d = n * (0.15 + rand() * 0.32);
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, 0.8 + rand() * 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+}
+
+// Blodpöl: rund med mjuk kant
+export function poolTexture() {
+  return makeTexture("pool", 128, (ctx, n) => {
+    const rand = seeded(77);
+    ctx.clearRect(0, 0, n, n);
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    for (let i = 0; i <= 32; i++) {
+      const a = (i / 32) * Math.PI * 2;
+      const r = n * (0.38 + rand() * 0.1);
+      ctx.lineTo(n / 2 + Math.cos(a) * r, n / 2 + Math.sin(a) * r);
+    }
+    ctx.fill();
+  });
+}
+
+// Fotspår (en sula)
+export function footprintTexture() {
+  return makeTexture("footprint", 64, (ctx, n) => {
+    ctx.clearRect(0, 0, n, n);
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.ellipse(n / 2, n * 0.35, n * 0.16, n * 0.28, 0, 0, Math.PI * 2); // framfot (lång spets)
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(n / 2, n * 0.78, n * 0.13, n * 0.15, 0, 0, Math.PI * 2); // häl
+    ctx.fill();
+  });
+}

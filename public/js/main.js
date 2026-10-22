@@ -67,7 +67,10 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, CONFIG.maxPixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = CONFIG.shadows;
-renderer.shadowMap.type = THREE.PCFShadowMap; // snabbare än "mjuka" skuggor
+renderer.shadowMap.type = THREE.PCFSoftShadowMap; // mjuka skuggkanter
+// Filmlik färgåtergivning: ljusa partier mättas mjukt istället för att bli platt vita
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
 const SKY = 0x9cc3e0;
@@ -76,8 +79,9 @@ scene.fog = new THREE.Fog(SKY, 70, 230);
 
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 500);
 
-scene.add(new THREE.HemisphereLight(0xe4efff, 0x7a6448, 1.4));
-const sun = new THREE.DirectionalLight(0xfff1dc, 2.2);
+// Blått ljus från himlen, varmt brunt studsljus från marken och en varm eftermiddagssol
+scene.add(new THREE.HemisphereLight(0xbfd8ff, 0x806040, 1.25));
+const sun = new THREE.DirectionalLight(0xffe8c8, 2.7);
 sun.position.set(14, 24, 10);
 sun.castShadow = true;
 sun.shadow.mapSize.set(CONFIG.shadowMapSize, CONFIG.shadowMapSize);
@@ -88,6 +92,8 @@ sun.shadow.camera.bottom = -22;
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 70;
 sun.shadow.bias = -0.0005;
+sun.shadow.normalBias = 0.02;
+sun.shadow.radius = 3;
 scene.add(sun);
 
 // Omgivning som blank metall speglar: himlen ovanför och marken nedanför
@@ -183,6 +189,12 @@ function applyQuality() {
   renderer.setPixelRatio(lowQuality ? 1 : Math.min(window.devicePixelRatio, CONFIG.maxPixelRatio));
   renderer.setSize(window.innerWidth, window.innerHeight);
   sun.castShadow = CONFIG.shadows && !lowQuality;
+  const size = lowQuality ? CONFIG.shadowMapSizeLow : CONFIG.shadowMapSize;
+  if (sun.shadow.mapSize.x !== size) {
+    sun.shadow.mapSize.set(size, size);
+    sun.shadow.map?.dispose();
+    sun.shadow.map = null;
+  }
   $("quality-label").textContent = lowQuality ? "Låg" : "Hög";
   saveSetting("grafik", lowQuality ? "lag" : "hog");
 }
@@ -284,16 +296,29 @@ nameInput.addEventListener("keydown", (e) => {
 // Riddare: skapa, placera i lobbyn, bygga om inför runda
 // ---------------------------------------------------------------------------
 
+const _stepPos = new THREE.Vector3();
+
 function createKnight(player) {
   const knight = new Knight(colorHex(player.color), player === me ? null : player.name, player.look);
   knight.group.userData.playerId = player.id;
   scene.add(knight.group);
+  // Fotspår i sanden och små knaster-ljud när fötterna sätts ner
+  const metal = player.look && (player.look.a === 0 || player.look.a === 3);
+  knight.onFootstep = (side, [x, z], yaw) => {
+    if (phase !== "round" && phase !== "countdown") return;
+    effects.footprint(x, z, yaw, side);
+    _stepPos.set(x, 0, z);
+    sound.footstep(_stepPos, metal, player === me ? 0.6 : 1);
+  };
   return knight;
 }
 
 // Ersätt spelarens riddare med en ny hel (t.ex. ny runda eller ny färg)
 function rebuildKnight(player) {
-  if (player.knight && player.knight.group.parent) player.knight.group.removeFromParent();
+  if (player.knight) {
+    player.knight.removeTrail();
+    if (player.knight.group.parent) player.knight.group.removeFromParent();
+  }
   player.knight = createKnight(player);
   player.knight.setHp(player.hp);
 }
@@ -648,21 +673,33 @@ const net = new Net({
     const chest = knight.chestPosition(new THREE.Vector3());
     // Blodet sprutar där träffen landade (den siktade kroppsdelen), annars från bröstet
     const spot = (msg.seg && knight.segmentPosition(msg.seg, new THREE.Vector3())) || chest;
-    effects.blood(spot, msg.k === "h" ? 26 : 14);
-    sound.hit(spot, msg.k === "h");
-    if (!msg.dead) sound.hurt(spot, voiceOf(victim));
 
-    // Åt vilket håll flyger delarna? Bort från den som slog.
+    // Åt vilket håll flyger delarna och blodet? Bort från den som slog.
     const dir = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5);
     if (attacker) dir.copy(positionOf(victim)).sub(positionOf(attacker));
     dir.y = 0;
     dir.normalize();
 
+    const heavy = msg.k === "h";
+    effects.blood(spot, heavy ? 26 : 14, dir, heavy ? 1.3 : 1);
+    sound.hit(spot, heavy);
+    if (!msg.dead) sound.hurt(spot, voiceOf(victim));
+
+    // Riddaren rycker till bort från slaget, får blod på rustningen; svärdet blir blodigt
+    const yaw = knight.group.rotation.y;
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    knight.playHit([-(dir.x * c - dir.z * s), -(dir.x * s + dir.z * c)]);
+    const splatSeg = msg.seg && msg.seg !== "pelvis" ? msg.seg : "torso";
+    for (let i = 0; i < (heavy ? 3 : 2); i++) knight.addBloodSplat(i === 0 ? splatSeg : Math.random() < 0.5 ? "torso" : splatSeg);
+    if (attacker && attacker.knight) attacker.knight.bloodySword();
+
     if (msg.sev) {
       const speed = msg.k === "h" ? 5 : 3;
       const up = msg.sev === "neck" || msg.sev === "waist" ? 4.5 : 3.5;
-      debris.add(knight.sever(msg.sev, [dir.x * speed, up, dir.z * speed], scene, RAGDOLL_BOUNDS));
-      effects.blood(chest, 20);
+      const part = knight.sever(msg.sev, [dir.x * speed, up, dir.z * speed], scene, RAGDOLL_BOUNDS);
+      debris.add(part);
+      if (part) poolLater(part, 0.45);
+      effects.blood(chest, 20, dir, 1.2);
       sound.sever(chest);
       sound.crowd(msg.sev === "neck" || msg.sev === "waist" ? 1 : 0.6);
       arena.cheer(msg.sev === "neck" || msg.sev === "waist" ? 1.2 : 0.7);
@@ -678,13 +715,14 @@ const net = new Net({
 
     if (msg.dead) {
       victim.dead = true;
-      effects.blood(chest, 30);
+      effects.blood(chest, 30, dir, 1.4);
       sound.scream(chest, voiceOf(victim));
       arena.cheer(1);
       // Kroppen blir en ragdoll; en osynlig ny riddare står kvar tills nästa runda
       const force = msg.k === "h" ? 4 : 2.5;
       const corpse = knight.die([dir.x * force, 2, dir.z * force], scene, RAGDOLL_BOUNDS);
       debris.add(corpse);
+      poolLater(corpse, msg.sev === "neck" || msg.sev === "waist" ? 1.5 : 1.1);
       victim.corpse = corpse;
       victim.knight = createKnight(victim);
       victim.knight.group.position.copy(positionOf(victim));
@@ -780,6 +818,7 @@ function enterLobby() {
   stopCharging(false);
   debris.clear();
   effects.clear();
+  pendingPools.length = 0;
   if (me) me.dead = false;
   lineup();
   renderLobby();
@@ -1295,7 +1334,10 @@ function updateMe(dt) {
 
   // Damm när man springer och när man landar efter ett hopp
   if (!me.dead && phase === "round") {
-    if (me.onGround && !me.wasOnGround) effects.dust(me.pos, 6, 1.2);
+    if (me.onGround && !me.wasOnGround) {
+      effects.dust(me.pos, 6, 1.2);
+      me.knight.playLand();
+    }
     me.dustTimer += dt;
     if (me.onGround && groundSpeed > 5 && me.dustTimer > 0.2) {
       me.dustTimer = 0;
@@ -1306,7 +1348,10 @@ function updateMe(dt) {
 
   me.knight.group.position.copy(me.pos);
   me.knight.group.rotation.y = me.yaw;
-  if (!me.dead) me.knight.animate(dt, motionOf(me.vel, me.yaw, !me.onGround));
+  if (!me.dead) {
+    me.knight.animate(dt, motionOf(me.vel, me.yaw, !me.onGround));
+    me.knight.updateTrail(scene);
+  }
 }
 
 let lobbyEmoteTimer = 2;
@@ -1331,7 +1376,10 @@ function updateOthers(dt) {
     if (other.dead) continue; // kroppen är en ragdoll, den nya riddaren är osynlig
     // Damm när de springer och landar
     const y = group.position.y;
-    if (other.lastY > 0.05 && y <= 0.05) effects.dust(group.position, 6, 1.2);
+    if (other.lastY > 0.05 && y <= 0.05) {
+      effects.dust(group.position, 6, 1.2);
+      other.knight.playLand();
+    }
     other.lastY = y;
     other.dustTimer += dt;
     if (y < 0.05 && Math.hypot(other.vel.x, other.vel.z) > 5 && other.dustTimer > 0.2) {
@@ -1340,6 +1388,7 @@ function updateOthers(dt) {
     }
     group.rotation.y = angleLerp(group.rotation.y, other.targetYaw, t);
     other.knight.animate(dt, motionOf(other.vel, group.rotation.y, group.position.y > 0.05));
+    other.knight.updateTrail(scene);
   }
 
   // I lobbyn viftar riddarna med svärdet ibland, för stämningens skull
@@ -1453,10 +1502,29 @@ function updateNetwork(dt) {
 function updateBleeding(dt) {
   const knights = allPlayers().filter((p) => !p.dead).map((p) => p.knight);
   for (const knight of knights) {
-    knight.forEachBleedingStump(dt, (pos, age) => {
-      if (Math.random() < dt * 14 * (1 - age / 3)) effects.blood(pos, 2);
+    knight.forEachBleedingStump(dt, (pos, age, dir) => {
+      // Pulserande strålar i hjärtats takt, som blir svagare med tiden
+      const strength = Math.max(0, 1 - age / 3.5);
+      const pulse = Math.sin(age * Math.PI * 2 * 2.2) > 0.3;
+      if (pulse && Math.random() < dt * 30) effects.spurt(pos, dir, strength);
+      else if (Math.random() < dt * 6 * strength) effects.blood(pos, 1, dir, 0.4);
     });
   }
+  // Blodpölar växer fram under döda kroppar och avhuggna delar när de har landat
+  const now = seconds();
+  for (let i = pendingPools.length - 1; i >= 0; i--) {
+    const p = pendingPools[i];
+    if (now < p.at) continue;
+    pendingPools.splice(i, 1);
+    if (!p.ragdoll.bodies || !p.ragdoll.points) continue;
+    const c = p.ragdoll.center();
+    if (c[1] < 1.2 && (c[0] / 15) ** 2 + (c[2] / 12) ** 2 < 1) effects.pool(c[0], c[2], p.size * (0.8 + Math.random() * 0.4));
+  }
+}
+
+const pendingPools = [];
+function poolLater(ragdoll, size) {
+  if (pendingPools.length < 30) pendingPools.push({ ragdoll, size, at: seconds() + 1.2 });
 }
 
 // ---------------------------------------------------------------------------

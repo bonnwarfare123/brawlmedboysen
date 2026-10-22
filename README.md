@@ -1,8 +1,8 @@
-# Brawlmedboysen – v0.7
+# Brawlmedboysen – v0.8
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
-**v0.7 innehåller:** lobby där lobbyledaren startar matchen, rundor (först till 5), 5 rustningar, 6 hjälmar och 5 sköldformer att välja mellan, snabbt slag, tungt slag, stöt, spark, parering, hån-gester, skada per kroppsdel och avhuggna lemmar, ragdolls, mjuka rörelser, medeltida musik med volymreglage, och en levande arena med publik, by och natur. Servern avgör alla träffar.
+**v0.8 innehåller:** lobby där lobbyledaren startar matchen, rundor (först till 5), 5 detaljerade rustningar (plåt i lösa delar, ringbrynja med vapenrock, läder med spännen, praktrustning, bonde), 7 hjälmar och 5 sköldformer att välja mellan, snabbt slag, tungt slag, stöt, spark, parering, hån-gester, skada per kroppsdel och avhuggna lemmar, ragdolls, realistiska rörelser där fötterna sätts i marken (IK), blod som stänker, sprutar, torkar och bildar pölar, svärdsspår, fotspår, gräs som svajar, medeltida musik med volymreglage, och en levande arena med publik, by och natur. Servern avgör alla träffar.
 
 ## Styrning
 
@@ -22,9 +22,11 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 | `public/index.html` | Själva webbsidan |
 | `public/js/main.js` | Startskärm, styrning, kamera, spel-loop |
 | `public/js/arena.js` | Bygger arenan av enkla former |
-| `public/js/knight.js` | Bygger riddaren (15 kroppsdelar med leder), animationer och kapning |
+| `public/js/knight.js` | Bygger riddaren (15 kroppsdelar med leder), rustningar, hjälmar, animationer och kapning |
+| `public/js/ik.js` | Räknar ut hur benen ska böjas så att fötterna står på marken |
+| `public/js/textures.js` | Ritar mönster i koden: ringbrynja, läder, vapensköldar, blodfläckar m.m. |
 | `public/js/net.js` | Pratar med servern |
-| `public/js/effects.js` | Blodstänk och gnistor |
+| `public/js/effects.js` | Blod (droppar, strålar, fläckar, pölar), gnistor, damm och fotspår |
 | `public/js/ragdoll.js` | Egen fysik för döda kroppar och avhuggna delar |
 | `public/js/sound.js` | Alla ljud och musiken, skapade direkt i koden |
 | `public/audio/` | Lägg egna ljudfiler här (se LAS-MIG.txt i mappen) |
