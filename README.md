@@ -1,12 +1,12 @@
-# Brawlmedboysen – v0.10
+# Brawlmedboysen – v0.13
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
-**Spelsätt** (lobbyledaren väljer): **Alla mot alla** (först till 5 rundor), **Lag** (Röda mot Blå, välj lag själv eller slumpa, inga skador på lagkamrater) och **Turnering** (1 mot 1 med utslagsträd, bäst av 3 per duell, fripass om det inte går jämnt ut).
+**Spelsätt** (lobbyledaren väljer, även dag eller kväll och upp till 3 träningsmotståndare som servern styr): **Alla mot alla** (först till 5 rundor), **Lag** (Röda mot Blå, välj lag själv eller slumpa, inga skador på lagkamrater) och **Turnering** (1 mot 1 med utslagsträd, bäst av 3 per duell, fripass om det inte går jämnt ut).
 
-**Riddarna:** 5 rustningar, 7 hjälmar (med riktiga ögonspringor och ett ansikte under), 5 sköldar, 7 vapen (svärd, yxa och slagkedja med sköld, samt tvåhandssvärd, stridsyxa, hillebard och en jättelik zweihänder utan sköld – tvåhandsvapnen är långsammare men når längre och slår hårdare, och zweihändern snurrar runt dig om du missar ett tungt slag), valfri tygmantel som fladdrar, vapenrock i tyg, bucklor, repor, smuts och blod som byggs på under matchen, hjälmar som kan flyga av, ansiktsuttryck, stön och skrik.
+**Riddarna:** 6 utstyrslar (bland annat en gycklare med bjällror), 7 hjälmar med riktiga hjälmprydnader (vingar, plym, kam), 5 sköldar, 10 vapen: svärd, yxa, slagkedja, spjut och stridshammare med sköld, samt tvåhandssvärd, stridsyxa, hillebard, slägga och en jättelik zweihänder utan sköld. Tvåhandsvapnen är långsammare men når längre och slår hårdare. Hammare krossar i stället för att hugga av, slår av hjälmar och får fienden att vingla; släggan kan fälla den. Vapnen får hack i eggen under matchen och kan bytas mellan rundorna (mushjulet eller Z/X), valfri tygmantel som fladdrar, vapenrock i tyg, bucklor, repor, smuts och blod som byggs på under matchen, hjälmar som kan flyga av, ansiktsuttryck, stön och skrik.
 
-**Strid:** snabbt slag, tungt slag, stöt (ett riktigt utfallssteg med egen, längre väntetid), spark, parering, hån-gester, skada per kroppsdel och avhuggna lemmar, ragdolls, blod som stänker, sprutar, torkar och bildar pölar. Servern avgör alla träffar.
+**Strid:** varje vapen har egna rörelser (snabba slag växlar mellan hugg och bakhandshugg, tunga slag och stötar med hela kroppen), snabbt slag, tungt slag, stöt (ett riktigt utfallssteg med egen, längre väntetid), spark som kan fälla motståndaren, huka, rulla (går inte att träffa mitt i rullningen), tappade vapen som kan plockas upp, sittande utan ben, parering, hån-gester, skada per kroppsdel och avhuggna lemmar, ragdolls med leder som bara böjer sig åt rätt håll, blod som stänker, sprutar, torkar och bildar pölar. Servern avgör alla träffar.
 
 **Arenan:** tornerbarriär med randigt tyg och sköldar, eldkorgar med eld och rök, träningsdocka som snurrar när man slår på den, torn byggda av riktiga plankor (med stege, fönsterluckor och tinnar), krattad sand med småsten och halmstrån, levande publik (reser sig, jublar, viftar), kungapar som visar tummen upp eller ner, vakter och en härold med trumpet.
 
@@ -17,8 +17,11 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 - **Klicka** i spelet för att styra kameran med musen
 - **Vänster mus:** klicka = snabbt slag, håll in och släpp = tungt slag
 - **Q** eller **mittenknappen:** stöt (lång räckvidd men smal, går bara att göra ungefär var 1,5 sekund)
-- **F:** spark (knuffar bort, bryter laddning och parering)
-- **Höger mus:** parera (tryck precis innan motståndarens slag träffar)
+- **F:** spark (knuffar bort, bryter laddning och parering, kan fälla – alltid bakifrån eller mot någon som laddar)
+- **Ctrl** (eller **C**): huka (långsammare, huvudet svårt att träffa, dina slag går mot benen) · **Ctrl + Mellanslag:** rulla, även upp från marken. Spelet går i helskärm när du klickar för att spela; Ctrl fungerar bara där (i Chrome och Edge), annars används C. Helskärmen stängs av med `fullscreen: false` i `config.js`.
+- **E:** ta upp ett vapen som ligger på marken
+- **Mushjulet** eller **Z / X** mellan rundorna: byt vapen
+- **Höger mus:** parera (tryck precis innan motståndarens slag träffar; skyddar i 0,45 s, går att göra var 0,8 s)
 - **1, 2, 3:** buga, peka och skratta, dansa
 - **WASD** gå, **Shift** spring, **Mellanslag** hoppa, **Esc** släpp musen, **G** grafikläge, **M** ljud av/på, **N** musik av/på (volymreglage finns i lobbyn och när du trycker Esc)
 - **Siktet** mitt på skärmen: kroppsdelen du pekar på lyser upp. Träffa den tillräckligt många gånger så åker den av.
@@ -63,4 +66,3 @@ Därefter publiceras varje ny uppladdning till GitHub automatiskt.
 Allt körs på Cloudflares gratisplan. Räcker kvoten inte till en dag slutar
 servern svara tills gränsen nollställs kl. 01:00 (vintertid) eller 02:00 (sommartid) svensk tid.
 Det kan aldrig bli någon faktura.
- 

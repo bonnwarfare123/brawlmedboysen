@@ -365,17 +365,40 @@ export function splatterTexture(variant) {
 
 // Blodpöl: rund med mjuk kant
 export function poolTexture() {
-  return makeTexture("pool", 128, (ctx, n) => {
+  // Blodpöl: oregelbunden form med mjuk kant, en mörkare intorkad rand och några små stänk runt om
+  return makeTexture("pool2", 256, (ctx, n) => {
     const rand = seeded(77);
     ctx.clearRect(0, 0, n, n);
-    ctx.fillStyle = "#ffffff";
-    ctx.beginPath();
-    for (let i = 0; i <= 32; i++) {
-      const a = (i / 32) * Math.PI * 2;
-      const r = n * (0.38 + rand() * 0.1);
-      ctx.lineTo(n / 2 + Math.cos(a) * r, n / 2 + Math.sin(a) * r);
+    const blob = (cx, cy, base, wobble, points = 40) => {
+      ctx.beginPath();
+      const phase = rand() * 6;
+      for (let i = 0; i <= points; i++) {
+        const a = (i / points) * Math.PI * 2;
+        const r = base * (1 + Math.sin(a * 3 + phase) * wobble + Math.sin(a * 7 + phase * 2) * wobble * 0.4);
+        ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+      }
+      ctx.fill();
+    };
+    // Mörk rand (färgen multipliceras med blodets färg, så grå = mörkare)
+    ctx.filter = "blur(5px)";
+    ctx.fillStyle = "rgb(120,120,120)";
+    blob(n / 2, n / 2, n * 0.36, 0.13);
+    for (let i = 0; i < 4; i++) blob(n / 2 + (rand() - 0.5) * n * 0.4, n / 2 + (rand() - 0.5) * n * 0.4, n * (0.1 + rand() * 0.08), 0.2, 20);
+    // Blankare, ljusare mitt
+    ctx.filter = "blur(8px)";
+    ctx.fillStyle = "rgb(255,255,255)";
+    blob(n / 2, n / 2, n * 0.3, 0.12);
+    // Små stänk runt om
+    ctx.filter = "blur(1.5px)";
+    ctx.fillStyle = "rgb(110,110,110)";
+    for (let i = 0; i < 14; i++) {
+      const a = rand() * Math.PI * 2;
+      const r = n * (0.4 + rand() * 0.08);
+      ctx.beginPath();
+      ctx.arc(n / 2 + Math.cos(a) * r, n / 2 + Math.sin(a) * r, 1.5 + rand() * 3.5, 0, Math.PI * 2);
+      ctx.fill();
     }
-    ctx.fill();
+    ctx.filter = "none";
   });
 }
 

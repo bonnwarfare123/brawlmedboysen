@@ -15,7 +15,7 @@ const MAX_POOLS = 24;
 const MAX_PRINTS = 90;
 
 const WET = new THREE.Color(0x7c0909);   // färskt blod
-const DRY = new THREE.Color(0x3a0705);   // intorkat blod
+const DRY = new THREE.Color(0x45160b);   // intorkat blod (brunare, sjunker in i sanden)
 const PRINT = new THREE.Color(0x5e4630); // fotspår (lite mörkare sand)
 const DIRT = new THREE.Color(0x8a6a48);  // marken (fotspåren tonar mot den)
 
@@ -78,6 +78,10 @@ export class Effects {
       this.splats.push(d);
     }
     this.pools = groundDecals(poolTexture(), MAX_POOLS, 0);
+    // Pölarna har mjuk kant och är blanka (speglar himlen) tills de torkat
+    this.pools.mesh.material.alphaTest = 0.02;
+    this.pools.mesh.material.roughness = 0.12;
+    this.pools.mesh.material.metalness = 0.15;
     scene.add(this.pools.mesh);
     this.prints = groundDecals(footprintTexture(), MAX_PRINTS, 0);
     this.prints.mesh.material.roughness = 1;

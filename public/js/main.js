@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { CONFIG } from "./config.js";
 import {
   COLORS, ARENA_RX, ARENA_RZ, ROOM_CODE_RE, VERSION, COMBAT, MATCH, ARMORS, HELMETS, SHIELDS, WEAPONS, CAPES, MODE_NAMES, TEAMS,
-  attackSpec, cooldownsAfter, weaponSpec,
+  attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, TIME_NAMES, MAX_BOTS,
 } from "./shared.js";
 import { buildArena, makeSky } from "./arena.js";
 import { Knight, setEnvironment } from "./knight.js";
@@ -83,7 +83,8 @@ scene.fog = new THREE.Fog(SKY, 70, 230);
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 500);
 
 // Blått ljus från himlen, varmt brunt studsljus från marken och en varm eftermiddagssol
-scene.add(new THREE.HemisphereLight(0xbfd8ff, 0x806040, 1.25));
+const skyLight = new THREE.HemisphereLight(0xbfd8ff, 0x806040, 1.25);
+scene.add(skyLight);
 const sun = new THREE.DirectionalLight(0xffe8c8, 2.7);
 sun.position.set(14, 24, 10);
 sun.castShadow = true;
@@ -100,20 +101,49 @@ sun.shadow.radius = 3;
 scene.add(sun);
 
 // Omgivning som blank metall speglar: himlen ovanför och marken nedanför
-{
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  const envScene = new THREE.Scene();
-  envScene.add(makeSky());
-  const envGround = new THREE.Mesh(new THREE.CircleGeometry(300, 24), new THREE.MeshBasicMaterial({ color: 0x8a7a5a }));
-  envGround.rotation.x = -Math.PI / 2;
-  envGround.position.y = -2;
-  envScene.add(envGround);
-  setEnvironment(pmrem.fromScene(envScene, 0.04).texture);
-  pmrem.dispose();
+const envMaps = {};
+function environmentFor(evening) {
+  const key = evening ? "evening" : "day";
+  if (!envMaps[key]) {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envScene = new THREE.Scene();
+    envScene.add(makeSky(evening));
+    const envGround = new THREE.Mesh(new THREE.CircleGeometry(300, 24), new THREE.MeshBasicMaterial({ color: evening ? 0x4a3a2a : 0x8a7a5a }));
+    envGround.rotation.x = -Math.PI / 2;
+    envGround.position.y = -2;
+    envScene.add(envGround);
+    envMaps[key] = pmrem.fromScene(envScene, 0.04).texture;
+    pmrem.dispose();
+  }
+  return envMaps[key];
 }
+setEnvironment(environmentFor(false));
 
 const arena = buildArena();
 scene.add(arena.group);
+
+// Dag eller kväll (lobbyledaren väljer). På kvällen står solen lågt och är orange,
+// himlen är mörkare och eldkorgarna lyser upp arenan.
+let timeOfDay = "day";
+function applyTime(value) {
+  timeOfDay = TIMES.includes(value) ? value : "day";
+  const evening = timeOfDay === "evening";
+  const fogColor = evening ? 0x6a5a70 : SKY;
+  scene.background.set(fogColor);
+  scene.fog.color.set(fogColor);
+  scene.fog.near = evening ? 45 : 70;
+  scene.fog.far = evening ? 180 : 230;
+  skyLight.color.set(evening ? 0x8a8ac8 : 0xbfd8ff);
+  skyLight.groundColor.set(evening ? 0x5a3a28 : 0x806040);
+  skyLight.intensity = evening ? 0.7 : 1.25;
+  sun.color.set(evening ? 0xff9a55 : 0xffe8c8);
+  sun.intensity = evening ? 1.6 : 2.7;
+  if (evening) sun.position.set(26, 7, -14);
+  else sun.position.set(14, 24, 10);
+  renderer.toneMappingExposure = evening ? 1.15 : 1.05;
+  setEnvironment(environmentFor(evening));
+  arena.setTime(evening);
+}
 
 const effects = new Effects(scene);
 const debris = new Debris(30, 45); // döda kroppar och avhuggna delar
@@ -182,6 +212,8 @@ function setPhase(p) {
   phase = p;
   document.body.dataset.phase = p;
   updateVolumePanel();
+  if (p !== "countdown" && p !== "roundEnd" && p !== "bracket") pendingWeapon = null;
+  if (me) renderWeaponBar();
 }
 
 // Volymreglagen syns i lobbyn och när musen är släppt under spelet
@@ -201,13 +233,20 @@ function playerById(id) {
   return others.get(id) || null;
 }
 
-// Ljuden finns för tre sorters vapen: 0 = klinga, 1 = yxblad, 2 = kedja
-const SOUND_KIND = [0, 1, 2, 0, 1, 1, 0];
-function soundWeapon(player) {
-  return SOUND_KIND[player?.look?.w ?? 0] ?? 0;
+// Ljud för vapnen: 0 = klinga, 1 = yxblad (djupare sus), 2 = kedja, 3 = trubbigt (hammare, knytnäve)
+const SWING_SOUND = [0, 1, 2, 0, 1, 1, 0, 0, 1, 1];
+const HIT_SOUND = [0, 1, 2, 0, 1, 1, 0, 0, 3, 3];
+function swingSound(player) {
+  const w = weaponOf(player);
+  return w === FISTS ? 0 : SWING_SOUND[w] ?? 0;
 }
+function soundWeapon(player) {
+  const w = weaponOf(player);
+  return w === FISTS ? 3 : HIT_SOUND[w] ?? 0;
+}
+// Vapnet riddaren håller i just nu (kan vara ett upplockat vapen, eller FISTS = inget)
 function weaponOf(player) {
-  return player?.look?.w ?? 0;
+  return player?.cw ?? player?.look?.w ?? 0;
 }
 
 function positionOf(player) {
@@ -334,7 +373,9 @@ nameInput.addEventListener("keydown", (e) => {
 const _stepPos = new THREE.Vector3();
 
 function createKnight(player) {
-  const knight = new Knight(colorHex(displayColor(player)), player === me ? null : player.name, player.look, { seed: seedOf(player) });
+  const look = { ...player.look, w: weaponOf(player) };
+  const name = player === me ? null : player.name + (player.bot ? " 🤖" : "");
+  const knight = new Knight(colorHex(displayColor(player)), name, look, { seed: seedOf(player) });
   knight.group.userData.playerId = player.id;
   scene.add(knight.group);
   if (player.wear) knight.applyWear(player.wear);
@@ -352,6 +393,7 @@ function createKnight(player) {
     effects.footprint(x, z, yaw, side);
     _stepPos.set(x, 0, z);
     sound.footstep(_stepPos, metal, player === me ? 0.6 : 1);
+    if (player.look?.a === 5 && Math.random() < 0.5) sound.bells(_stepPos, player === me ? 0.5 : 0.8); // gycklarens bjällror
   };
   return knight;
 }
@@ -504,6 +546,7 @@ const net = new Net({
       name: you.name,
       color: you.color,
       look: you.look,
+      cw: you.cw ?? you.look.w,
       team: you.team ?? null,
       wear: freshWear(),
       helmetOff: false,
@@ -531,11 +574,19 @@ const net = new Net({
       staggerUntil: 0,
       attackUntil: 0,
       diedAt: 0,
+      crouch: false,     // hukar (håll C)
+      rollStart: -100,   // när rullningen började
+      rollDir: new THREE.Vector3(),
+      nextRoll: 0,
+      downUntil: 0,      // ligger på marken (omsparkad) till den här tiden
+      legless: false,    // båda benen avhuggna: sitter på marken
+      streak: 0,         // dråp i rad utan att dö (för utroparen)
     };
     me.knight = createKnight(me);
     msg.players.forEach(addOther);
     hostId = msg.host;
     round = msg.round;
+    applyTime(msg.time);
 
     sound.startMusic(msg.phase !== "lobby");
     history.replaceState(null, "", `?rum=${roomCode}`);
@@ -632,14 +683,60 @@ const net = new Net({
   look(msg) {
     const player = playerById(msg.id);
     if (!player) return;
+    const changedWeapon = (player.look?.w ?? 0) !== (msg.look.w ?? 0);
     player.look = msg.look;
     if (player === me) {
       myLook = { ...msg.look };
       saveSetting("utseende", JSON.stringify(myLook));
+      renderWeaponBar();
     }
-    rebuildKnight(player);
-    if (phase === "lobby") lineup();
+    if (phase === "lobby") {
+      player.cw = msg.look.w;
+      rebuildKnight(player);
+      lineup();
+      renderLobby();
+    } else if (phase === "countdown" && changedWeapon && !player.dead && !player.spectating) {
+      // Bytte vapen under nedräkningen: gäller redan i rundan som börjar
+      player.cw = msg.look.w;
+      const pos = positionOf(player).clone();
+      const yaw = player === me ? me.yaw : player.knight.group.rotation.y;
+      rebuildKnight(player);
+      player.knight.group.position.copy(pos);
+      player.knight.group.rotation.y = yaw;
+      effects.dust(pos, 4, 0.8);
+      sound.pickup(pos);
+    }
+    // Mellan rundorna i övrigt: det nya vapnet kommer nästa runda
+  },
+
+  // Lobbyledaren valde dag eller kväll
+  time(msg) {
+    applyTime(msg.v);
     renderLobby();
+  },
+
+  // Någon rullar
+  roll(msg) {
+    const other = others.get(msg.id);
+    if (!other || other.dead) return;
+    const yaw = other.knight.group.rotation.y;
+    other.knight.playRoll(localDir(msg.dir, yaw));
+    sound.roll(other.knight.group.position);
+  },
+
+  // Någon plockade upp ett vapen från marken (och lade kanske ner sitt gamla)
+  pick(msg) {
+    const player = playerById(msg.id);
+    removeItem(msg.item);
+    if (!player) return;
+    if (msg.drop) spawnItem(msg.drop, player.knight, positionOf(player), weaponOf(player));
+    player.cw = msg.w;
+    player.knight.setWeapon(msg.w);
+    sound.pickup(positionOf(player));
+    if (player === me) {
+      callout("Du tog upp: " + (WEAPONS[msg.w] ?? "vapen"), 1200);
+      me.nextQuick = me.nextHeavy = me.nextThrust = seconds() + 0.3;
+    }
   },
 
   emote(msg) {
@@ -661,16 +758,25 @@ const net = new Net({
     const victim = playerById(msg.id);
     if (!victim) return;
     const pos = positionOf(victim);
-    victim.knight.playStagger();
-    effects.dust(pos, 7, 1.6);
+    if (msg.down) {
+      victim.knight.playKnockdown();
+      sound.fall(pos);
+      effects.dust(pos, 14, 2);
+      arena.cheer(0.8);
+      if (msg.by === me?.id) callout(`${victim.name} ramlade omkull!`, 1100);
+    } else {
+      victim.knight.playStagger();
+      effects.dust(pos, 7, 1.6);
+      arena.cheer(0.3);
+    }
     sound.kickHit(pos);
-    arena.cheer(0.3);
     if (victim === me) {
       me.knock.set(msg.dir[0] * COMBAT.kick.push, 0, msg.dir[1] * COMBAT.kick.push);
       me.staggerUntil = seconds() + COMBAT.kick.stagger;
+      if (msg.down) knockMeDown();
       stopCharging(false);
-      shake = 0.15;
-      callout("Sparkad!");
+      shake = msg.down ? 0.3 : 0.15;
+      callout(msg.down ? "Du ramlade! (Ctrl + Mellanslag rullar undan)" : "Sparkad!", msg.down ? 1300 : 900);
     }
   },
 
@@ -687,9 +793,23 @@ const net = new Net({
     $("spectate").hidden = true;
     $("death").hidden = true;
     stopCharging(false);
+    clearItems();
     // Ny match: rustningarna är hela och rena igen
-    if (round === 1) for (const p of allPlayers()) p.wear = freshWear();
-    for (const p of allPlayers()) p.helmetOff = false;
+    if (round === 1) {
+      for (const p of allPlayers()) p.wear = freshWear();
+    }
+    for (const p of allPlayers()) {
+      p.helmetOff = false;
+      p.cw = p.look?.w ?? 0; // alla börjar rundan med sitt valda vapen
+    }
+    if (me) {
+      me.crouch = false;
+      me.legless = false;
+      me.downUntil = 0;
+      me.rollStart = -100;
+      me.nextRoll = 0;
+    }
+    renderWeaponBar();
 
     // De som inte slåss (turneringen) tittar på från läktaren
     for (const id of msg.spec || []) {
@@ -830,7 +950,9 @@ const net = new Net({
     teamWins = [0, 0];
     $("bracket").hidden = true;
     endCeremony();
+    clearItems();
     for (const p of allPlayers()) {
+      p.cw = p.look?.w ?? 0;
       p.hp = COMBAT.maxHp;
       p.dead = false;
       p.spectating = false;
@@ -852,6 +974,7 @@ const net = new Net({
     other.target.set(msg.p[0], msg.p[1], msg.p[2]);
     other.targetYaw = msg.r;
     other.anim = msg.a;
+    other.knight.setCrouch(msg.c === 1);
   },
 
   ch(msg) {
@@ -864,7 +987,7 @@ const net = new Net({
     if (!other) return;
     other.knight.playAttack(msg.k);
     const pos = other.knight.group.position;
-    sound.swing(pos, msg.k === "h" || weaponSpec(weaponOf(other)).twoHanded, msg.k, soundWeapon(other));
+    sound.swing(pos, msg.k === "h" || weaponSpec(weaponOf(other)).twoHanded, msg.k, swingSound(other));
     sound.grunt(pos, voiceOf(other), msg.k === "h");
     checkQuintain(other, msg.k);
   },
@@ -897,7 +1020,11 @@ const net = new Net({
       defender.knight.playParry();
       const spot = defender.knight.chestPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.2, 0));
       effects.sparks(spot);
-      sound.clang(spot);
+      // Tvåhandsvapen och knytnävar parerar med stål, de andra med skölden
+      const w = weaponOf(defender);
+      const shield = w !== FISTS && !weaponSpec(w).twoHanded && !defender.knight.seg.handL.userData.detached;
+      sound.clang(spot, shield ? "shield" : "blade");
+      if (shield) effects.dust(spot, 2, 0.4); // flisor från skölden
       arena.cheer(0.4);
     }
     if (attacker) attacker.knight.playStagger();
@@ -921,49 +1048,72 @@ const net = new Net({
 
     victim.hp = msg.hp;
     const knight = victim.knight;
-    knight.setHighlight(null);
-    if (highlightedKnight === knight) highlightedKnight = null;
-    knight.flash();
     const chest = knight.chestPosition(new THREE.Vector3());
-    // Blodet sprutar där träffen landade (den siktade kroppsdelen), annars från bröstet
-    const spot = (msg.seg && knight.segmentPosition(msg.seg, new THREE.Vector3())) || chest;
+    const bleeding = msg.k === "b"; // utan ben: blöder lite varje sekund (ingen träff)
 
     // Åt vilket håll flyger delarna och blodet? Bort från den som slog.
     const dir = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5);
-    if (attacker) dir.copy(positionOf(victim)).sub(positionOf(attacker));
+    if (attacker && !bleeding) dir.copy(positionOf(victim)).sub(positionOf(attacker));
     dir.y = 0;
     dir.normalize();
-
     const heavy = msg.k === "h";
-    effects.blood(spot, heavy ? 26 : 14, dir, heavy ? 1.3 : 1);
-    sound.hit(spot, heavy, soundWeapon(attacker));
-    if (!msg.dead && !msg.sev) sound.hurt(spot, voiceOf(victim), heavy ? 1 : 0.55);
 
-    // Hjälmen flyger av (tunga slag mot huvudet)
-    if (msg.hk) {
-      const helmet = knight.knockHelmet([dir.x * 3 + (Math.random() - 0.5), 3.5, dir.z * 3 + (Math.random() - 0.5)], scene, RAGDOLL_BOUNDS);
-      if (helmet) {
-        debris.add(helmet);
-        sound.helmetOff(spot);
-        arena.cheer(0.5);
+    if (bleeding) {
+      effects.blood(chest.clone().setY(0.3), 4, dir, 0.4);
+      if (victim === me) renderHp();
+      else knight.setHp(msg.hp);
+    } else {
+      knight.setHighlight(null);
+      if (highlightedKnight === knight) highlightedKnight = null;
+      knight.flash();
+      // Blodet sprutar där träffen landade (den siktade kroppsdelen), annars från bröstet
+      const spot = (msg.seg && knight.segmentPosition(msg.seg, new THREE.Vector3())) || chest;
+      const blunt = weaponSpec(weaponOf(attacker)).blunt;
+      effects.blood(spot, heavy ? 26 : blunt ? 10 : 14, dir, heavy ? 1.3 : 1);
+      sound.hit(spot, heavy, soundWeapon(attacker));
+      if (!msg.dead && !msg.sev) sound.hurt(spot, voiceOf(victim), heavy ? 1 : 0.55);
+
+      // Hjälmen flyger av (tunga slag mot huvudet, hammare)
+      if (msg.hk) {
+        const helmet = knight.knockHelmet([dir.x * 3 + (Math.random() - 0.5), 3.5, dir.z * 3 + (Math.random() - 0.5)], scene, RAGDOLL_BOUNDS);
+        if (helmet) {
+          debris.add(helmet);
+          sound.helmetOff(spot);
+          arena.cheer(0.5);
+        }
+        victim.helmetOff = true;
       }
-      victim.helmetOff = true;
+
+      // Bucklor, repor, smuts och blod sparas så att de syns resten av matchen. Hammare bucklar mer.
+      if (!victim.wear) victim.wear = freshWear();
+      const dentSeg = msg.seg && msg.seg !== "pelvis" ? msg.seg : "torso";
+      victim.wear.dents += knight.addWear(dentSeg, heavy || blunt);
+      if (blunt) victim.wear.dents += knight.addWear(dentSeg, true);
+      victim.wear.scratches += heavy ? 2 : 1;
+      victim.wear.blood += heavy ? 2 : 1;
+      victim.wear.dirt = Math.min(1, victim.wear.dirt + 0.05);
+
+      // Riddaren rycker till bort från slaget, får blod på rustningen; vapnet blir blodigt och får hack i eggen
+      const yaw = knight.group.rotation.y;
+      const c = Math.cos(yaw), s = Math.sin(yaw);
+      knight.playHit([-(dir.x * c - dir.z * s), -(dir.x * s + dir.z * c)]);
+      for (let i = 0; i < (heavy ? 3 : 2); i++) knight.addBloodSplat(i === 0 ? dentSeg : Math.random() < 0.5 ? "torso" : dentSeg);
+      if (attacker && attacker.knight) {
+        attacker.knight.bloodySword();
+        if (Math.random() < (heavy ? 0.5 : 0.25) && attacker.knight.addNick()) {
+          if (!attacker.wear) attacker.wear = freshWear();
+          attacker.wear.nicks = (attacker.wear.nicks || 0) + 1;
+        }
+      }
     }
 
-    // Bucklor, repor, smuts och blod sparas så att de syns resten av matchen
-    if (!victim.wear) victim.wear = freshWear();
-    victim.wear.dents += knight.addWear(msg.seg && msg.seg !== "pelvis" ? msg.seg : "torso", heavy);
-    victim.wear.scratches += heavy ? 2 : 1;
-    victim.wear.blood += heavy ? 2 : 1;
-    victim.wear.dirt = Math.min(1, victim.wear.dirt + 0.05);
-
-    // Riddaren rycker till bort från slaget, får blod på rustningen; svärdet blir blodigt
-    const yaw = knight.group.rotation.y;
-    const c = Math.cos(yaw), s = Math.sin(yaw);
-    knight.playHit([-(dir.x * c - dir.z * s), -(dir.x * s + dir.z * c)]);
-    const splatSeg = msg.seg && msg.seg !== "pelvis" ? msg.seg : "torso";
-    for (let i = 0; i < (heavy ? 3 : 2); i++) knight.addBloodSplat(i === 0 ? splatSeg : Math.random() < 0.5 ? "torso" : splatSeg);
-    if (attacker && attacker.knight) attacker.knight.bloodySword();
+    // Vapnet tappas (vapenarmen huggen av, eller död) och hamnar på marken
+    if (msg.drop) {
+      spawnItem(msg.drop, knight, chest, weaponOf(victim));
+      knight.dropWeapon();
+      victim.cw = FISTS;
+      if (victim === me && !msg.dead) callout("Du tappade vapnet! Tryck E vid ett vapen för att ta upp det", 1800);
+    }
 
     if (msg.sev) {
       const speed = msg.k === "h" ? 5 : 3;
@@ -978,23 +1128,49 @@ const net = new Net({
       arena.cheer(msg.sev === "neck" || msg.sev === "waist" ? 1.2 : 0.7);
     }
 
-    if (victim === me) {
-      shake = msg.k === "h" ? 0.35 : 0.2;
-      flashVignette();
-      renderHp();
-    } else {
-      knight.setHp(msg.hp);
+    // Trubbiga vapen: vinglar till. Släggan: ramlar omkull.
+    if (msg.st && !msg.dead) {
+      knight.playStagger();
+      if (victim === me) me.staggerUntil = Math.max(me.staggerUntil, seconds() + (weaponSpec(weaponOf(attacker)).hitStagger ?? 0.3));
+    }
+    if (msg.kd && !msg.dead) {
+      knight.playKnockdown();
+      sound.fall(positionOf(victim));
+      effects.dust(positionOf(victim), 12, 1.8);
+      if (victim === me) knockMeDown();
+    }
+    // Båda benen borta: sitter på marken resten av rundan
+    if (msg.ll && !msg.dead) {
+      knight.setLegless();
+      victim.legless = true;
+      if (victim === me) {
+        me.legless = true;
+        me.crouch = false;
+        me.vel.set(0, 0, 0);
+        stopCharging(false);
+        callout("Du har inga ben kvar! Du kan bara vrida dig, slå och parera", 2200);
+      }
+    }
+
+    if (!bleeding) {
+      if (victim === me) {
+        shake = msg.k === "h" ? 0.35 : 0.2;
+        flashVignette();
+        renderHp();
+      } else {
+        knight.setHp(msg.hp);
+      }
     }
 
     if (msg.dead) {
       victim.dead = true;
-      effects.blood(chest, 30, dir, 1.4);
+      effects.blood(chest, bleeding ? 10 : 30, dir, 1.4);
       sound.scream(chest, voiceOf(victim));
       arena.cheer(1);
       arena.royalReact(Math.random() < 0.7); // kungen visar tummen upp (eller ner)
       // Kroppen blir en ragdoll; en osynlig ny riddare står kvar tills nästa runda
-      const force = msg.k === "h" ? 4 : 2.5;
-      const corpse = knight.die([dir.x * force, 2, dir.z * force], scene, RAGDOLL_BOUNDS);
+      const force = msg.k === "h" ? 4 : bleeding ? 0.5 : 2.5;
+      const corpse = knight.die([dir.x * force, bleeding ? 0.5 : 2, dir.z * force], scene, RAGDOLL_BOUNDS);
       debris.add(corpse);
       poolLater(corpse, msg.sev === "neck" || msg.sev === "waist" ? 1.5 : 1.1);
       victim.corpse = corpse;
@@ -1009,7 +1185,7 @@ const net = new Net({
         $("killer").textContent = attacker ? attacker.name : "okänd";
         $("death").hidden = false;
       }
-      if (attacker === me) callout("Du högg ner " + victim.name + "!");
+      if (attacker === me && !bleeding) callout("Du högg ner " + victim.name + "!");
     }
     renderPlayerList();
   },
@@ -1035,6 +1211,8 @@ function addOther(player) {
     name: player.name,
     color: player.color,
     look: player.look,
+    cw: player.cw ?? player.look?.w ?? 0,
+    bot: !!player.bot,
     kills: player.kills || 0,
     wins: player.wins || 0,
     knight: null,
@@ -1057,6 +1235,7 @@ function addOther(player) {
   other.knight.group.rotation.y = player.r;
   other.knight.setHp(player.hp);
   if (player.dead) other.knight.group.visible = false;
+  if (player.c) other.knight.setCrouch(true);
   // Kroppsdelar som redan är avhuggna ramlar till marken
   for (const joint of player.severed || []) {
     debris.add(other.knight.sever(joint, [0, 0, 0], scene, RAGDOLL_BOUNDS));
@@ -1088,6 +1267,217 @@ function applyWins(wins) {
     if (p) p.wins = w;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Vapen på marken: tappade vapen ligger kvar och kan plockas upp med E
+// ---------------------------------------------------------------------------
+
+const items = new Map(); // id → { id, w, p, group, from, t }
+let armory = null;       // en osynlig riddare som bygger vapenmodeller när ingen annan kan
+
+// Lägg ut ett vapen. builder = riddaren vars material används, from = varifrån det flyger
+function spawnItem(item, builder, from, kind = item.w) {
+  if (!item || items.has(item.id)) return;
+  let model = null;
+  try {
+    model = (builder && !builder.disposed ? builder : getArmory()).buildItemModel(kind);
+  } catch {
+    model = getArmory().buildItemModel(kind);
+  }
+  if (!model) return;
+  const spec = weaponSpec(kind);
+  // Ligg platt: klingor med bredsidan nedåt, yxor och hammare med bladet åt sidan
+  const sideways = ["axe", "daneaxe", "halberd", "warhammer", "maul"].includes(spec.key);
+  model.rotation.set(Math.PI / 2, sideways ? Math.PI / 2 : 0, 0);
+  const lift = spec.key === "maul" ? 0.075 : spec.key === "warhammer" ? 0.04 : 0.025;
+  const group = new THREE.Group();
+  group.add(model);
+  group.rotation.y = item.r ?? 0;
+  scene.add(group);
+  const entry = {
+    id: item.id, w: item.w, p: item.p, group, lift,
+    from: from ? from.clone() : new THREE.Vector3(item.p[0], 1, item.p[2]),
+    t: 0,
+  };
+  group.position.copy(entry.from);
+  items.set(item.id, entry);
+}
+
+function getArmory() {
+  if (!armory) armory = new Knight(0x8a8a8a, null, { a: 0, h: 2, s: 0, w: 0, c: 0 }, { seed: 3 });
+  return armory;
+}
+
+function removeItem(id) {
+  const item = items.get(id);
+  if (!item) return;
+  item.group.removeFromParent();
+  items.delete(id);
+}
+
+function clearItems() {
+  for (const id of [...items.keys()]) removeItem(id);
+}
+
+// Vapnen flyger i en båge från handen till marken och snurrar; sen ligger de still
+function updateItems(dt) {
+  const FLY = 0.5;
+  for (const item of items.values()) {
+    if (item.t >= FLY) continue;
+    item.t = Math.min(FLY, item.t + dt);
+    const f = item.t / FLY;
+    const g = item.group;
+    g.position.set(
+      item.from.x + (item.p[0] - item.from.x) * f,
+      item.from.y * (1 - f) + item.lift * f + Math.sin(f * Math.PI) * 0.6,
+      item.from.z + (item.p[2] - item.from.z) * f,
+    );
+    g.children[0].rotation.z = (1 - f) * 5;
+    if (f >= 1) {
+      g.children[0].rotation.z = 0;
+      effects.dust(g.position, 3, 0.6);
+      sound.pickup?.(g.position);
+    }
+  }
+  // Står man nära ett vapen visas en ledtråd
+  let near = null;
+  if (me && phase === "round" && !me.dead && !me.knight.seg.handR.userData.detached) {
+    let best = 2.0;
+    for (const item of items.values()) {
+      const d = Math.hypot(item.p[0] - me.pos.x, item.p[2] - me.pos.z);
+      if (d < best) {
+        best = d;
+        near = item;
+      }
+    }
+  }
+  nearItem = near;
+  const hint = $("pickup-hint");
+  if (near) {
+    hint.textContent = `E – ${weaponOf(me) === FISTS ? "ta upp" : "byt till"} ${WEAPONS[near.w] ?? "vapen"}`;
+    hint.hidden = false;
+  } else {
+    hint.hidden = true;
+  }
+}
+let nearItem = null;
+
+function tryPickup() {
+  if (!nearItem || !canAct()) return;
+  net.send({ t: "pick", item: nearItem.id });
+}
+
+// ---------------------------------------------------------------------------
+// Rulla, huka och ramla
+// ---------------------------------------------------------------------------
+
+// En riktning i världen [x, z] uttryckt i riddarens egna koordinater (+x = vänster, +z = framåt)
+function localDir(dir, yaw) {
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  return [dir[0] * c - dir[1] * s, dir[0] * s + dir[1] * c];
+}
+
+function rolling() {
+  return me && seconds() - me.rollStart < COMBAT.roll.time;
+}
+
+function isDown() {
+  return me && seconds() < me.downUntil;
+}
+
+function knockMeDown() {
+  me.downUntil = seconds() + COMBAT.down.time;
+  me.staggerUntil = Math.max(me.staggerUntil, me.downUntil);
+  me.vel.set(0, 0, 0);
+  me.crouch = false;
+}
+
+// Ctrl (eller C) + Mellanslag: rulla åt det håll man går (framåt om man står still). Går också att rulla upp från marken.
+function tryRoll() {
+  if (!me || me.dead || phase !== "round" || me.legless) return;
+  const t = seconds();
+  if (t < me.nextRoll || rolling() || !me.onGround) return;
+  if (t < me.staggerUntil && !isDown()) return;
+  const dir = new THREE.Vector3();
+  forward.set(Math.sin(camYaw), 0, Math.cos(camYaw));
+  right.set(-Math.cos(camYaw), 0, Math.sin(camYaw));
+  if (keys.has("KeyW") || keys.has("ArrowUp")) dir.add(forward);
+  if (keys.has("KeyS") || keys.has("ArrowDown")) dir.sub(forward);
+  if (keys.has("KeyD") || keys.has("ArrowRight")) dir.add(right);
+  if (keys.has("KeyA") || keys.has("ArrowLeft")) dir.sub(right);
+  if (dir.lengthSq() < 0.01) dir.copy(forward);
+  dir.normalize();
+  me.rollStart = t;
+  me.nextRoll = t + COMBAT.roll.cooldown;
+  me.rollDir.copy(dir);
+  me.downUntil = 0;
+  me.staggerUntil = Math.min(me.staggerUntil, t);
+  stopCharging(true);
+  me.yaw = camYaw;
+  me.knight.playRoll(localDir([dir.x, dir.z], me.yaw));
+  sound.roll(me.pos);
+  sendStateNow();
+  net.send({ t: "roll", dir: [Math.round(dir.x * 100) / 100, Math.round(dir.z * 100) / 100] });
+}
+
+// ---------------------------------------------------------------------------
+// Byta vapen mellan rundorna (mushjulet eller ◀ ▶)
+// ---------------------------------------------------------------------------
+
+function canSwapWeapon() {
+  return me && (phase === "countdown" || phase === "roundEnd" || phase === "bracket");
+}
+
+let pendingWeapon = null;
+let weaponSendTimer = null;
+function changeWeapon(dir) {
+  if (!canSwapWeapon()) return;
+  const current = pendingWeapon ?? me.look.w ?? 0;
+  pendingWeapon = (current + dir + WEAPONS.length) % WEAPONS.length;
+  renderWeaponBar();
+  sound.unlock();
+  clearTimeout(weaponSendTimer);
+  // Vänta lite så att man kan scrolla förbi flera vapen utan att skicka varje
+  weaponSendTimer = setTimeout(() => {
+    if (pendingWeapon === null || !canSwapWeapon()) return;
+    const look = { ...me.look, w: pendingWeapon };
+    pendingWeapon = null;
+    net.send({ t: "look", look });
+  }, 250);
+}
+
+function renderWeaponBar() {
+  const bar = $("weapon-bar");
+  if (!bar) return;
+  const show = canSwapWeapon() && !me.spectating;
+  bar.hidden = !show;
+  if (!show) return;
+  const w = pendingWeapon ?? me.look.w ?? 0;
+  $("weapon-name").textContent = WEAPONS[w] ?? "";
+  $("weapon-desc").textContent = WEAPON_INFO[w] ?? "";
+  $("weapon-when").textContent = phase === "countdown" ? "Gäller direkt i rundan som börjar" : "Gäller från nästa runda";
+}
+
+// Kort beskrivning av varje vapen (lobbyn och vapenraden)
+const WEAPON_INFO = [
+  "Allround med sköld. Bra stöt.",
+  "Med sköld. Lite hårdare, hugger av lemmar lättare.",
+  "Med sköld. Går ibland runt pareringar.",
+  "Tvåhandsvapen. Längre och hårdare, långsammare.",
+  "Tvåhandsvapen. Väldigt hårt, hugger av allt.",
+  "Tvåhandsvapen. Längst räckvidd, svag på nära håll.",
+  "Tvåhandsvapen. Enormt! Missar du ett tungt slag snurrar du runt.",
+  "Med sköld. Bästa stöten och lång räckvidd, svaga hugg.",
+  "Med sköld. Slår av hjälmar och får fienden att vingla.",
+  "Tvåhandsvapen. Långsam. Tunga slag fäller fienden. Krossar i stället för att hugga.",
+];
+
+document.addEventListener("wheel", (e) => {
+  if (!canSwapWeapon()) return;
+  changeWeapon(e.deltaY > 0 ? 1 : -1);
+}, { passive: true });
+document.querySelectorAll("[data-wswap]").forEach((b) => b.addEventListener("click", () => changeWeapon(Number(b.dataset.wswap))));
 
 // ---------------------------------------------------------------------------
 // Lobbyn
@@ -1131,7 +1521,17 @@ function renderLobby() {
     b.disabled = !isHost;
   });
   $("mode-info").textContent = MODE_INFO[mode]();
-  $("lobby-rules").textContent = "Vapen, rustning och mantel är bara utseende – alla är lika starka.";
+  $("lobby-rules").textContent = "Rustning, hjälm och mantel är bara utseende. Vapnen är olika – tvåhandsvapen har ingen sköld.";
+  // Dag eller kväll, och träningsmotståndare (bara lobbyledaren väljer)
+  document.querySelectorAll(".time-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.time === timeOfDay);
+    b.disabled = !isHost;
+  });
+  const botCount = allPlayers().filter((p) => p.bot).length;
+  $("bot-row").hidden = !isHost && botCount === 0;
+  $("bot-add").disabled = !isHost || botCount >= MAX_BOTS || allPlayers().length >= 6;
+  $("bot-remove").disabled = !isHost || botCount === 0;
+  $("bot-count").textContent = botCount === 0 ? "Inga" : String(botCount);
   $("team-row").hidden = mode !== "team";
   $("color-row").hidden = mode === "team";
   $("shuffle-button").hidden = !isHost;
@@ -1145,7 +1545,7 @@ function renderLobby() {
     dot.className = "dot";
     dot.style.background = cssColor(displayColor(p));
     const label = document.createElement("span");
-    label.textContent = (p.id === hostId ? "👑 " : "") + p.name + (p === me ? " (du)" : "");
+    label.textContent = (p.id === hostId ? "👑 " : "") + p.name + (p === me ? " (du)" : "") + (p.bot ? " 🤖" : "");
     li.append(dot, label);
     list.appendChild(li);
   };
@@ -1174,6 +1574,7 @@ function renderLobby() {
   $("look-s").textContent = twoHanded ? "— (tvåhandsvapen)" : SHIELDS[me.look.s] ?? "";
   document.querySelectorAll('[data-look="s"]').forEach((b) => (b.disabled = !!twoHanded));
   $("look-w").textContent = WEAPONS[me.look.w ?? 0] ?? "";
+  $("weapon-info").textContent = WEAPON_INFO[me.look.w ?? 0] ?? "";
   $("look-c").textContent = CAPES[me.look.c ?? 0] ?? "";
 
   const count = allPlayers().length;
@@ -1216,6 +1617,19 @@ document.querySelectorAll(".team-btn").forEach((button) => {
 });
 $("shuffle-button").addEventListener("click", () => {
   if (me && phase === "lobby") net.send({ t: "shuffle" });
+});
+
+document.querySelectorAll(".time-btn").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (!me || phase !== "lobby" || me.id !== hostId) return;
+    net.send({ t: "time", v: button.dataset.time });
+  });
+});
+$("bot-add").addEventListener("click", () => {
+  if (me && phase === "lobby") net.send({ t: "bot", add: 1 });
+});
+$("bot-remove").addEventListener("click", () => {
+  if (me && phase === "lobby") net.send({ t: "bot", add: 0 });
 });
 
 $("start-button").addEventListener("click", () => {
@@ -1313,7 +1727,7 @@ function renderPlayerList() {
       dot.className = "dot";
       dot.style.background = cssColor(displayColor(p));
       const label = document.createElement("span");
-      label.textContent = (p.id === hostId ? "👑 " : "") + p.name + (p === me ? " (du)" : "");
+      label.textContent = (p.id === hostId ? "👑 " : "") + p.name + (p === me ? " (du)" : "") + (p.bot ? " 🤖" : "");
       if (p.dead) label.className = "dead-name";
       if (p.spectating) label.className = "";
       const score = document.createElement("span");
@@ -1418,11 +1832,16 @@ $("lobby-copy-link").addEventListener("click", (e) => copyInviteLink(e.currentTa
 const keys = new Set();
 window.addEventListener("keydown", (e) => {
   if (document.activeElement === nameInput) return;
+  if (keyboardLocked && (e.ctrlKey || e.code.startsWith("Control"))) e.preventDefault(); // inga genvägar (Ctrl+W m.fl.) mitt i striden
   keys.add(e.code);
   if (!me) return;
   if (e.code === "Space") {
     e.preventDefault();
-    if (!e.repeat) tryJump();
+    // Ctrl (eller C) + Mellanslag = rulla, annars hoppa
+    if (!e.repeat) {
+      if (crouchHeld() || isDown()) tryRoll();
+      else tryJump();
+    }
   }
   if (e.code === "KeyG" && !e.repeat) {
     lowQuality = !lowQuality;
@@ -1431,6 +1850,9 @@ window.addEventListener("keydown", (e) => {
   if (e.repeat) return;
   if (e.code === "KeyQ" && locked()) tryAttack("t");
   if (e.code === "KeyF" && locked()) tryKick();
+  if (e.code === "KeyE") tryPickup();
+  if (e.code === "KeyZ") changeWeapon(-1);
+  if (e.code === "KeyX") changeWeapon(1);
   if (e.code === "Digit1" || e.code === "Digit2" || e.code === "Digit3") tryEmote(Number(e.code.slice(5)));
   if (e.code === "KeyM" && !e.repeat) {
     sound.unlock();
@@ -1453,8 +1875,57 @@ const locked = () => document.pointerLockElement === canvas;
 const playing = () => phase === "countdown" || phase === "round" || phase === "roundEnd" || phase === "bracket";
 
 canvas.addEventListener("click", () => {
-  if (me && playing() && !locked()) canvas.requestPointerLock();
+  if (me && playing() && !locked()) {
+    canvas.requestPointerLock();
+    enterFullscreen();
+  }
 });
+
+// ---------------------------------------------------------------------------
+// Helskärm och Ctrl: i vanligt läge stänger Ctrl+W fliken (det kan en webbsida inte stoppa).
+// I helskärm låser vi tangenterna (Chrome och Edge), då hamnar Ctrl+W i spelet i stället.
+// Ctrl hukar bara när låset är på; C fungerar alltid.
+// ---------------------------------------------------------------------------
+
+let keyboardLocked = false;
+const LOCK_KEYS = ["ControlLeft", "ControlRight", "KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE", "KeyF", "KeyC", "Space", "KeyR", "KeyT", "KeyN", "Tab"];
+
+async function enterFullscreen() {
+  if (!CONFIG.fullscreen || !document.documentElement.requestFullscreen) return;
+  try {
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: "hide" });
+    if (navigator.keyboard?.lock) {
+      await navigator.keyboard.lock(LOCK_KEYS);
+      keyboardLocked = true;
+    }
+  } catch {
+    keyboardLocked = false; // webbläsaren sa nej: då gäller C
+  }
+}
+
+document.addEventListener("fullscreenchange", () => {
+  if (!document.fullscreenElement) {
+    keyboardLocked = false;
+    try {
+      navigator.keyboard?.unlock?.();
+    } catch {
+      // inget att låsa upp
+    }
+  }
+});
+
+let ctrlHintShown = false;
+function crouchHeld() {
+  if (keys.has("KeyC")) return true;
+  const ctrl = keys.has("ControlLeft") || keys.has("ControlRight");
+  if (!ctrl) return false;
+  if (keyboardLocked) return true;
+  if (!ctrlHintShown && phase === "round") {
+    ctrlHintShown = true;
+    callout("Ctrl hukar bara i helskärm (Chrome/Edge). Använd C!", 2200);
+  }
+  return false;
+}
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
@@ -1477,7 +1948,7 @@ let mouseDownAt = 0;
 let charging = false;
 
 function canAct() {
-  return me && phase === "round" && !me.dead && seconds() >= me.staggerUntil;
+  return me && phase === "round" && !me.dead && seconds() >= me.staggerUntil && !isDown() && !rolling();
 }
 
 document.addEventListener("mousedown", (e) => {
@@ -1545,7 +2016,7 @@ function tryAttack(kind) {
   me.nextThrust = Math.max(me.nextThrust, t + cds.thrust);
   me.attackUntil = t + spec.windup + 0.15;
   me.knight.playAttack(kind); // visa slaget direkt, servern avgör om det träffar
-  sound.swing(me.pos, kind === "h" || weaponSpec(weaponOf(me)).twoHanded, kind, soundWeapon(me));
+  sound.swing(me.pos, kind === "h" || weaponSpec(weaponOf(me)).twoHanded, kind, swingSound(me));
   sound.grunt(me.pos, voiceOf(me), kind === "h");
   checkQuintain(me, kind);
   if (kind === "t") me.knock.addScaledVector(forward.set(Math.sin(me.yaw), 0, Math.cos(me.yaw)), 4.5); // utfallssteg framåt
@@ -1570,7 +2041,7 @@ function checkQuintain(player, kind) {
 }
 
 function tryKick() {
-  if (!canAct() || seconds() < me.nextKick) return;
+  if (!canAct() || me.legless || seconds() < me.nextKick) return;
   me.nextKick = seconds() + COMBAT.kick.cooldown;
   me.attackUntil = seconds() + 0.4;
   stopCharging(true);
@@ -1604,7 +2075,7 @@ function tryParry() {
 }
 
 function tryJump() {
-  if (!me || me.dead || !me.onGround || phase !== "round") return;
+  if (!me || me.dead || !me.onGround || phase !== "round" || me.legless || isDown() || rolling()) return;
   me.vy = CONFIG.jumpSpeed;
   me.onGround = false;
 }
@@ -1684,7 +2155,15 @@ function updateMe(dt) {
   forward.set(Math.sin(camYaw), 0, Math.cos(camYaw));
   right.set(-Math.cos(camYaw), 0, Math.sin(camYaw));
 
-  const canMove = phase === "round" && !me.dead;
+  const t = seconds();
+  const inRound = phase === "round" && !me.dead;
+  const roll = inRound && rolling();
+  const down = inRound && isDown();
+  // Utan ben, omkull eller mitt i en rullning styr man inte själv vart man går
+  const canMove = inRound && !me.legless && !down && !roll;
+  // Huka: håll C (inte i luften, inte utan ben)
+  me.crouch = canMove && me.onGround && crouchHeld();
+  me.knight.setCrouch(me.crouch);
   move.set(0, 0, 0);
   if (canMove) {
     if (keys.has("KeyW") || keys.has("ArrowUp")) move.add(forward);
@@ -1693,13 +2172,13 @@ function updateMe(dt) {
     if (keys.has("KeyA") || keys.has("ArrowLeft")) move.sub(right);
   }
 
-  const t = seconds();
   const moving = move.lengthSq() > 0;
-  const running = moving && !charging && (keys.has("ShiftLeft") || keys.has("ShiftRight"));
+  const running = moving && !charging && !me.crouch && (keys.has("ShiftLeft") || keys.has("ShiftRight"));
   wantedVel.set(0, 0, 0);
   if (moving) {
     let speed = running ? CONFIG.runSpeed : CONFIG.walkSpeed;
     speed *= COMBAT.legLossSpeed[Math.min(2, me.knight.legLoss)]; // avhuggna ben gör en långsam
+    if (me.crouch) speed *= COMBAT.crouch.speed;
     if (t < me.staggerUntil) speed *= CONFIG.staggerMoveFactor;
     else if (charging) speed *= CONFIG.chargeMoveFactor;
     else if (t < me.attackUntil) speed *= CONFIG.attackMoveFactor;
@@ -1707,13 +2186,23 @@ function updateMe(dt) {
   }
   // Acceleration och inbromsning (sämre grepp i luften)
   const accel = me.onGround ? CONFIG.acceleration : CONFIG.airControl;
-  me.vel.lerp(wantedVel, 1 - Math.exp(-dt * accel));
+  if (roll) {
+    // Rullningen: snabbt i början, saktar in mot slutet
+    const f = (t - me.rollStart) / COMBAT.roll.time;
+    const speed = (COMBAT.roll.distance / COMBAT.roll.time) * 1.6 * (1 - f);
+    me.vel.copy(me.rollDir).multiplyScalar(speed);
+  } else if (me.legless || down) {
+    me.vel.multiplyScalar(Math.exp(-dt * 10));
+  } else {
+    me.vel.lerp(wantedVel, 1 - Math.exp(-dt * accel));
+  }
   me.pos.addScaledVector(me.vel, dt);
   // Knuff (spark eller utfall) som avtar snabbt
   me.pos.addScaledVector(me.knock, dt);
   me.knock.multiplyScalar(Math.exp(-dt * 5));
   const groundSpeed = Math.hypot(me.vel.x, me.vel.z);
   me.anim = canMove ? (groundSpeed > 4.5 ? 2 : groundSpeed > 0.3 ? 1 : 0) : 0;
+  if (me.legless) me.pos.y = 0;
 
   // Hopp och tyngdkraft
   if (!me.onGround) {
@@ -1726,10 +2215,11 @@ function updateMe(dt) {
     }
   }
 
-  // Under strid tittar riddaren åt samma håll som kameran (så man slår dit man tittar)
-  if (phase === "countdown" || canMove) me.yaw = camYaw;
+  // Under strid tittar riddaren åt samma håll som kameran (så man slår dit man tittar).
+  // Utan ben kan man fortfarande vrida sig; omkull eller i en rullning inte.
+  if (phase === "countdown" || canMove || (inRound && me.legless)) me.yaw = camYaw;
 
-  if (canMove) {
+  if (inRound && !me.legless) {
     // Knuffa bort från andra levande riddare
     for (const other of others.values()) {
       if (other.dead) continue;
@@ -1789,11 +2279,12 @@ function updateMe(dt) {
   me.knight.group.position.copy(me.pos);
   me.knight.group.rotation.y = me.yaw;
   if (!me.dead) {
-    me.knight.animate(dt, motionOf(me.vel, me.yaw, !me.onGround));
+    me.knight.animate(dt, motionOf(roll || down ? _still : me.vel, me.yaw, !me.onGround));
     me.knight.updateTrail(scene);
   }
 }
 
+const _still = new THREE.Vector3();
 let lobbyEmoteTimer = 2;
 const prevPos = new THREE.Vector3();
 const measuredVel = new THREE.Vector3();
@@ -1913,7 +2404,7 @@ function updateCamera(dt) {
     camTarget.set(c[0], c[1] + 0.6, c[2]);
   } else {
     camTarget.copy(me.pos).addScaledVector(right, CONFIG.cameraShoulder);
-    camTarget.y = me.pos.y * 0.6 + CONFIG.cameraHeight;
+    camTarget.y = me.pos.y * 0.6 + CONFIG.cameraHeight - me.knight.crouchAmt * 0.3 - (me.legless ? 0.6 : 0) - (isDown() ? 0.5 : 0);
   }
 
   const d = CONFIG.cameraDistance + (me.dead ? 2.5 : 0);
@@ -1941,15 +2432,16 @@ function updateCamera(dt) {
 
 let sendTimer = 0;
 let heartbeatTimer = 0;
-let lastSent = { x: NaN, y: NaN, z: NaN, r: NaN, a: -1 };
+let lastSent = { x: NaN, y: NaN, z: NaN, r: NaN, a: -1, c: 0 };
 
 function sendStateNow() {
   const x = Math.round(me.pos.x * 100) / 100;
   const y = Math.round(me.pos.y * 100) / 100;
   const z = Math.round(me.pos.z * 100) / 100;
   const r = Math.round(me.yaw * 100) / 100;
-  net.send({ t: "s", p: [x, y, z], r, a: me.anim });
-  lastSent = { x, y, z, r, a: me.anim };
+  const c = me.crouch ? 1 : 0;
+  net.send({ t: "s", p: [x, y, z], r, a: me.anim, c });
+  lastSent = { x, y, z, r, a: me.anim, c };
   heartbeatTimer = 0;
   sendTimer = 0;
 }
@@ -1965,7 +2457,7 @@ function updateNetwork(dt) {
   const y = Math.round(me.pos.y * 100) / 100;
   const z = Math.round(me.pos.z * 100) / 100;
   const r = Math.round(me.yaw * 100) / 100;
-  const changed = x !== lastSent.x || y !== lastSent.y || z !== lastSent.z || r !== lastSent.r || me.anim !== lastSent.a;
+  const changed = x !== lastSent.x || y !== lastSent.y || z !== lastSent.z || r !== lastSent.r || me.anim !== lastSent.a || (me.crouch ? 1 : 0) !== lastSent.c;
 
   if (changed || heartbeatTimer >= CONFIG.heartbeatSeconds) sendStateNow();
 }
@@ -2027,6 +2519,7 @@ function frame() {
   }
   updateOthers(dt);
   updateCeremony(dt);
+  updateItems(dt);
   updateBleeding(dt);
   debris.update(dt);
   effects.update(dt);

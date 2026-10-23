@@ -67,7 +67,17 @@
     <div class="look-row"><span>Hjälm</span><button class="small" data-look="h" data-dir="-1">◀</button><b id="look-h"></b><button class="small" data-look="h" data-dir="1">▶</button></div>
     <div class="look-row"><span>Sköld</span><button class="small" data-look="s" data-dir="-1">◀</button><b id="look-s"></b><button class="small" data-look="s" data-dir="1">▶</button></div>
     <div class="look-row"><span>Vapen</span><button class="small" data-look="w" data-dir="-1">◀</button><b id="look-w"></b><button class="small" data-look="w" data-dir="1">▶</button></div>
+    <p id="weapon-info" class="rules weapon-info"></p>
     <div class="look-row"><span>Mantel</span><button class="small" data-look="c" data-dir="-1">◀</button><b id="look-c"></b><button class="small" data-look="c" data-dir="1">▶</button></div>
+    <label>Tid på dygnet</label>
+    <div class="mode-row">
+      <button class="small time-btn" data-time="day">☀️ Dag</button>
+      <button class="small time-btn" data-time="evening">🌇 Kväll</button>
+    </div>
+    <div id="bot-row" class="look-row bot-row">
+      <span>Träningsmotståndare</span>
+      <button id="bot-remove" class="small">−</button><b id="bot-count">Inga</b><button id="bot-add" class="small">+</button>
+    </div>
     <p class="rules">Tips: tryck 1, 2 eller 3 för att buga, håna eller dansa</p>
     <button id="start-button" class="primary" hidden>Starta matchen</button>
     <p id="lobby-wait" class="subtitle"></p>
@@ -108,11 +118,18 @@
     <div id="click-hint" class="center-hint">Klicka i spelet för att styra kameran</div>
     <div id="crosshair"></div>
     <div id="round-banner"></div>
+    <div id="pickup-hint" hidden></div>
+    <!-- Byta vapen mellan rundorna -->
+    <div id="weapon-bar" class="panel" hidden>
+      <div class="weapon-row"><button class="small" data-wswap="-1">◀</button><b id="weapon-name"></b><button class="small" data-wswap="1">▶</button></div>
+      <div id="weapon-desc"></div>
+      <div class="weapon-hint">Byt vapen med mushjulet (eller Z / X) · <span id="weapon-when"></span></div>
+    </div>
     <div id="spectate" class="status-banner" hidden>Matchen pågår – du är med från nästa runda</div>
 
     <div class="panel bottom-left help">
-      <b>Vänster mus</b> slag (håll = tungt) · <b>Höger mus</b> parera · <b>Q</b> stöt · <b>F</b> spark · <b>1–3</b> gester<br>
-      <b>WASD</b> gå · <b>Shift</b> spring · <b>Mellanslag</b> hoppa · <b>Esc</b> släpp musen · <b>G</b> grafik · <b>M</b> ljud · <b>N</b> musik
+      <b>Vänster mus</b> slag (håll = tungt) · <b>Höger mus</b> parera · <b>Q</b> stöt · <b>F</b> spark · <b>E</b> ta upp vapen · <b>1–3</b> gester<br>
+      <b>WASD</b> gå · <b>Shift</b> spring · <b>Mellanslag</b> hoppa · <b>Ctrl</b> (eller <b>C</b>) huka · <b>Ctrl + Mellanslag</b> rulla · <b>Esc</b> släpp musen · <b>G</b> grafik · <b>M</b> ljud · <b>N</b> musik
     </div>
 
     <!-- Liv och väntetider -->

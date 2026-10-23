@@ -19,7 +19,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, MATCH, ARENA_RX, ARENA_RZ,
   JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS, AIM_JOINT, ARMORS, HELMETS, SHIELDS,
-  WEAPONS, CAPES, MODES, attackSpec, cooldownsAfter, weaponSpec,
+  WEAPONS, CAPES, MODES, attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, MAX_BOTS, BOT_NAMES,
 } from "../public/js/shared.js";
 
 export default {
@@ -145,6 +145,14 @@ function newPlayerState(info) {
     limbDamage: {},  // samlad skada per kroppsdel den här rundan
     helmetOff: false,
     team: info.team === 0 || info.team === 1 ? info.team : null,
+    cw: cleanLook(info.look).w, // vapnet man håller i just nu (FISTS = inget)
+    downUntil: 0,    // ligger på marken (omsparkad) till den här tiden
+    rollStart: -100, // när senaste rullningen började
+    nextRoll: 0,
+    crouch: false,
+    legless: false,  // båda benen avhuggna: sitter på marken
+    lastAttacker: null,
+    bot: !!info.bot,
   };
 }
 
@@ -163,6 +171,28 @@ function resetForRound(player) {
   player.chargeStart = null;
   player.a = 0;
   player.helmetOff = false;
+  player.cw = player.look.w;
+  player.downUntil = 0;
+  player.rollStart = -100;
+  player.nextRoll = 0;
+  player.crouch = false;
+  player.legless = false;
+  player.lastAttacker = null;
+}
+
+const LEFT_LEG = ["ankleL", "kneeL", "hipL"];
+const RIGHT_LEG = ["ankleR", "kneeR", "hipR"];
+const WEAPON_ARM = ["wristR", "elbowR", "shoulderR"];
+
+// Har spelaren förlorat något av båda benen?
+function isLegless(player) {
+  return LEFT_LEG.some((j) => player.severed.includes(j)) && RIGHT_LEG.some((j) => player.severed.includes(j));
+}
+
+// Går det inte att träffa spelaren just nu (mitt i en rullning)?
+function invulnerable(player, t) {
+  const r = t - player.rollStart;
+  return r >= COMBAT.roll.iStart && r <= COMBAT.roll.iEnd;
 }
 
 // Finns leden kvar? (varken den eller någon led innanför är avhuggen)
@@ -176,7 +206,9 @@ function jointAvailable(player, joint) {
 // Avgör om och i så fall vilken led som huggs av vid en träff.
 // aimSegment = kroppsdelen den som slog siktade på (eller null).
 // damage = slagets skada, sever = vapnets förmåga att hugga av (yxor och stora svärd lättare)
-function chooseSever(player, kind, dead, aimSegment = null, random = Math.random, damage = specOf(kind).damage, sever = 1) {
+// legsOnly = den som slog var hukad (slår mot benen)
+function chooseSever(player, kind, dead, aimSegment = null, random = Math.random, damage = specOf(kind).damage, sever = 1, legsOnly = false) {
+  if (sever <= 0) return null; // trubbiga vapen (hammare, knytnävar) krossar men hugger inte av
 
   // Siktade på en viss kroppsdel som finns kvar
   const aimed = aimSegment && AIM_JOINT[aimSegment];
@@ -192,8 +224,8 @@ function chooseSever(player, kind, dead, aimSegment = null, random = Math.random
   // Annars (bålen, bredvid eller redan avhuggen) liten slumpchans som förut
   const key = (kind === "h" ? "heavy" : "quick") + (dead ? "Kill" : ""); // stöt räknas som snabbt
   if (random() >= Math.min(1, COMBAT.randomSever[key] * sever)) return null;
-  const candidates = LIMB_JOINTS.filter((j) => jointAvailable(player, j));
-  if (dead) {
+  const candidates = LIMB_JOINTS.filter((j) => jointAvailable(player, j) && (!legsOnly || LEG_JOINTS_ALL.includes(j)));
+  if (dead && !legsOnly) {
     for (const j of KILL_ONLY_JOINTS) {
       if (jointAvailable(player, j)) candidates.push(j, j);
     }
@@ -201,6 +233,8 @@ function chooseSever(player, kind, dead, aimSegment = null, random = Math.random
   if (candidates.length === 0) return null;
   return candidates[Math.floor(random() * candidates.length)];
 }
+
+const LEG_JOINTS_ALL = ["ankleL", "kneeL", "hipL", "ankleR", "kneeR", "hipR"];
 
 function specOf(kind) {
   return kind === "h" ? COMBAT.heavy : kind === "t" ? COMBAT.thrust : COMBAT.quick;
@@ -211,7 +245,7 @@ function publicPlayer(pl) {
   return {
     id: pl.id, name: pl.name, color: pl.color, look: pl.look, p: pl.p, r: pl.r, a: pl.a,
     hp: pl.hp, dead: pl.dead, kills: pl.kills, wins: pl.wins, severed: pl.severed,
-    helmetOff: pl.helmetOff, team: pl.team,
+    helmetOff: pl.helmetOff, team: pl.team, cw: pl.cw, bot: pl.bot ? 1 : 0, c: pl.crouch ? 1 : 0,
   };
 }
 
@@ -227,6 +261,8 @@ export class GameRoom extends DurableObject {
     this.teamWins = [0, 0];
     this.bracket = null; // turneringsträdet
     this.duel = null;    // pågående duell: { ri, mi }
+    this.time = "day";   // dag eller kväll
+    this.items = new Map(); // tappade vapen på marken: id → { id, w, p }
 
     // Om rummet "sov" (hibernation) och vaknar igen: återskapa spelarlistan
     // från informationen som sparats på varje anslutning.
@@ -241,11 +277,17 @@ export class GameRoom extends DurableObject {
     // (annars glömde servern vem som var ledare och startknappen slutade fungera efter en match).
     if (this.ctx.storage && this.ctx.blockConcurrencyWhile) {
       this.ctx.blockConcurrencyWhile(async () => {
-        const saved = await this.ctx.storage.get(["host", "mode"]);
+        const saved = await this.ctx.storage.get(["host", "mode", "time", "bots"]);
         const host = saved.get("host");
         const mode = saved.get("mode");
         if (host && this.players.has(host)) this.hostId = host;
         if (MODES.includes(mode)) this.mode = mode;
+        if (TIMES.includes(saved.get("time"))) this.time = saved.get("time");
+        // Träningsmotståndarna har ingen anslutning: de sparas för sig
+        const bots = saved.get("bots");
+        if (Array.isArray(bots) && this.humans().length > 0) {
+          for (const info of bots) if (!this.players.has(info.id)) this.players.set(info.id, newPlayerState({ ...info, bot: true }));
+        }
       });
     }
   }
@@ -374,6 +416,18 @@ export class GameRoom extends DurableObject {
       case "par":
         this.handleParry(ws, player);
         break;
+      case "roll":
+        this.handleRoll(ws, player, msg.dir);
+        break;
+      case "pick":
+        this.handlePickup(ws, player, msg.item);
+        break;
+      case "time":
+        this.handleTime(player, msg.v);
+        break;
+      case "bot":
+        this.handleBot(player, msg.add === 1);
+        break;
     }
   }
 
@@ -382,6 +436,11 @@ export class GameRoom extends DurableObject {
   handleJoin(ws, info, msg) {
     if (info) return; // redan med
 
+    // Fullt? Då får en träningsmotståndare gå (bara i lobbyn)
+    if (this.players.size >= MAX_PLAYERS && this.phase === "lobby") {
+      const bot = this.bots()[0];
+      if (bot) this.removeBot(bot.id);
+    }
     if (this.players.size >= MAX_PLAYERS) {
       this.send(ws, { t: "full" });
       ws.close(4001, "Rummet är fullt");
@@ -402,7 +461,7 @@ export class GameRoom extends DurableObject {
     // Kommer man in mitt i en match får man titta på tills nästa runda
     player.dead = this.phase !== "lobby";
     this.players.set(player.id, player);
-    if (!this.hostId || !this.players.has(this.hostId)) this.setHost(player.id);
+    if (!this.hostId || !this.players.has(this.hostId) || this.players.get(this.hostId).bot) this.setHost(player.id);
 
     this.send(ws, {
       t: "welcome",
@@ -415,6 +474,8 @@ export class GameRoom extends DurableObject {
       mode: this.mode,
       teamWins: this.teamWins,
       bracket: this.bracket,
+      time: this.time,
+      items: [...this.items.values()],
     });
     this.broadcast({ t: "join", player: publicPlayer(player) }, ws);
   }
@@ -428,12 +489,73 @@ export class GameRoom extends DurableObject {
     this.broadcast({ t: "color", id: player.id, color });
   }
 
-  // Byt rustning, hjälm eller sköld (bara i lobbyn)
+  // Byt utseende i lobbyn. Mellan rundorna (nedräkning, paus, turneringsträdet) går det att byta vapen.
   handleLook(ws, player, look) {
-    if (this.phase !== "lobby") return;
-    player.look = cleanLook(look);
+    if (this.phase === "lobby") {
+      player.look = cleanLook(look);
+    } else if (["countdown", "roundEnd", "bracket"].includes(this.phase)) {
+      const w = cleanLook(look).w;
+      if (w === player.look.w) return;
+      player.look = { ...player.look, w };
+      if (this.phase === "countdown" && !player.dead) player.cw = w; // gäller direkt i rundan som börjar
+    } else {
+      return;
+    }
     this.saveInfo(player);
     this.broadcast({ t: "look", id: player.id, look: player.look });
+  }
+
+  // Dag eller kväll (lobbyledaren väljer)
+  handleTime(player, value) {
+    if (player.id !== this.hostId || this.phase !== "lobby" || !TIMES.includes(value)) return;
+    this.time = value;
+    this.remember("time", value);
+    this.broadcast({ t: "time", v: value });
+  }
+
+  // ----- Träningsmotståndare (styrs av servern) -----
+
+  humans() {
+    return [...this.players.values()].filter((p) => !p.bot);
+  }
+
+  bots() {
+    return [...this.players.values()].filter((p) => p.bot);
+  }
+
+  saveBots() {
+    this.remember("bots", this.bots().map((b) => ({ id: b.id, name: b.name, color: b.color, look: b.look, team: b.team })));
+  }
+
+  handleBot(player, add) {
+    if (player.id !== this.hostId || this.phase !== "lobby") return;
+    if (add) {
+      if (this.bots().length >= MAX_BOTS || this.players.size >= MAX_PLAYERS) return;
+      const taken = new Set([...this.players.values()].map((p) => p.color));
+      const usedNames = new Set(this.bots().map((b) => b.name));
+      const name = BOT_NAMES.find((n) => !usedNames.has(n)) || "Sir Bot";
+      const r = (n) => Math.floor(Math.random() * n);
+      const info = {
+        id: "bot" + randomId().slice(0, 3), name, bot: true,
+        color: Math.max(0, COLORS.findIndex((_, i) => !taken.has(i))),
+        look: { a: r(ARMORS.length), h: r(HELMETS.length), s: r(SHIELDS.length), w: r(WEAPONS.length), c: r(CAPES.length) },
+        team: null,
+      };
+      const bot = newPlayerState(info);
+      if (this.mode === "team") bot.team = this.smallerTeam();
+      this.players.set(bot.id, bot);
+      this.broadcast({ t: "join", player: publicPlayer(bot) });
+    } else {
+      const bot = this.bots().at(-1);
+      if (bot) this.removeBot(bot.id);
+    }
+    this.saveBots();
+  }
+
+  removeBot(id) {
+    this.players.delete(id);
+    this.broadcast({ t: "leave", id });
+    this.saveBots();
   }
 
   // ----- Spelsätt och lag -----
@@ -563,6 +685,7 @@ export class GameRoom extends DurableObject {
       list.forEach((p, i) => Object.assign(p, spawnPoint(i, list.length)));
     }
     list.forEach((p) => resetForRound(p));
+    this.items.clear();
     spectators.forEach((p) => {
       resetForRound(p);
       p.dead = true; // tittar på
@@ -576,8 +699,9 @@ export class GameRoom extends DurableObject {
       duel: this.duelInfo(),
     });
     this.later(MATCH.countdown, token, () => {
-      this.setPhase("round");
+      const roundToken = this.setPhase("round");
       this.broadcast({ t: "round", round: this.round });
+      if (this.bots().length) this.botTick(roundToken);
     });
   }
 
@@ -770,10 +894,17 @@ export class GameRoom extends DurableObject {
     const x = Math.max(-ARENA_RX, Math.min(ARENA_RX, finite(msg.p[0])));
     const y = Math.max(0, Math.min(5, finite(msg.p[1])));
     const z = Math.max(-ARENA_RZ, Math.min(ARENA_RZ, finite(msg.p[2])));
-    player.p = [round2(x), round2(y), round2(z)];
+    // Utan ben sitter man kvar där man föll
+    if (!player.legless) player.p = [round2(x), round2(y), round2(z)];
     player.r = round2(finite(msg.r));
     player.a = msg.a === 1 || msg.a === 2 ? msg.a : 0;
-    this.broadcast({ t: "s", id: player.id, p: player.p, r: player.r, a: player.a }, ws);
+    player.crouch = msg.c === 1 && !player.legless;
+    this.broadcast({ t: "s", id: player.id, p: player.p, r: player.r, a: player.a, c: player.crouch ? 1 : 0 }, ws);
+  }
+
+  // Ligger man på marken eller rullar kan man inte göra något annat
+  busy(player, t) {
+    return t < player.staggerUntil || t < player.downUntil || t - player.rollStart < COMBAT.roll.time;
   }
 
   handleCharge(ws, player, msg) {
@@ -785,9 +916,9 @@ export class GameRoom extends DurableObject {
 
   handleAttack(ws, player, kind, aim) {
     const t = now();
-    if (!this.canFight(player) || t < player.staggerUntil) return;
+    if (!this.canFight(player) || this.busy(player, t)) return;
 
-    const w = player.look?.w ?? 0;
+    const w = player.cw;
     const spec = attackSpec(kind, w);
 
     if (kind === "h") {
@@ -813,6 +944,7 @@ export class GameRoom extends DurableObject {
     this.broadcast({ t: "atk", id: player.id, k: kind }, ws);
     const token = this.phaseToken;
     this.later(spec.windup, token, () => this.resolveAttack(player.id, kind, aimInfo));
+    this.botsReact(player, spec, token);
   }
 
   resolveAttack(attackerId, kind, aimInfo) {
@@ -822,12 +954,12 @@ export class GameRoom extends DurableObject {
     const t = now();
     if (t < attacker.staggerUntil) return; // blev själv parerad under tiden
 
-    const w = attacker.look?.w ?? 0;
+    const w = attacker.cw;
     const ws = weaponSpec(w);
     const spec = attackSpec(kind, w);
 
-    // Vilka står inom räckhåll och framför den som slår?
-    const targets = this.inCone(attacker, spec.reach, spec.arc);
+    // Vilka står inom räckhåll och framför den som slår? (den som rullar just nu går inte att träffa)
+    const targets = this.inCone(attacker, spec.reach, spec.arc).filter((p) => !invulnerable(p, t));
 
     // Zweihändern: ett tungt slag som missar får riddaren att snurra runt och vingla
     if (targets.length === 0 && kind === "h" && ws.whiffStagger) {
@@ -841,8 +973,8 @@ export class GameRoom extends DurableObject {
     // Med tvåhandsvapen parerar man med vapnet: kortare fönster. Slagkedjan går ibland runt skölden.
     for (const target of targets) {
       const sinceParry = t - target.lastParry;
-      const window = COMBAT.parry.window * (weaponSpec(target.look?.w ?? 0).twoHanded ? 0.7 : 1);
-      if (sinceParry < 0 || sinceParry > window) continue;
+      const window = COMBAT.parry.window * (weaponSpec(target.cw).twoHanded ? 0.7 : 1) + COMBAT.parry.lag;
+      if (sinceParry < 0 || sinceParry > window || t < target.downUntil) continue;
       if (ws.parryBypass && Math.random() < ws.parryBypass) continue;
       const tx = Math.sin(target.r);
       const tz = Math.cos(target.r);
@@ -859,17 +991,52 @@ export class GameRoom extends DurableObject {
     for (const target of targets) {
       // Hillebarden är klumpig på nära håll: halv skada om man står för nära
       const dist = Math.hypot(target.p[0] - attacker.p[0], target.p[2] - attacker.p[2]);
-      const damage = Math.round(spec.damage * (ws.minRange && dist < ws.minRange ? 0.5 : 1));
+      // Ligger man på marken tar man extra skada. Hukar man är huvudet svårt att träffa (räknas som bålen).
+      const down = t < target.downUntil;
+      let damage = Math.round(spec.damage * (ws.minRange && dist < ws.minRange ? 0.5 : 1) * (down ? COMBAT.down.damage : 1));
+      let aimSeg = aimInfo && aimInfo.id === target.id ? aimInfo.seg : null;
+      if (aimSeg === "head" && target.crouch) {
+        aimSeg = "torso";
+        damage = Math.round(damage * 0.85);
+      }
       target.hp = Math.max(0, target.hp - damage);
+      target.lastAttacker = attacker.id;
       const dead = target.hp === 0;
-      const aimSeg = aimInfo && aimInfo.id === target.id ? aimInfo.seg : null;
-      const sev = chooseSever(target, kind, dead, aimSeg, Math.random, damage, ws.sever);
+      const sev = chooseSever(target, kind, dead, aimSeg, Math.random, damage, ws.sever, attacker.crouch && !aimSeg);
       if (sev) target.severed.push(sev);
       // Tunga slag kan slå av hjälmen (bara utseende). Siktar man på huvudet åker den alltid.
+      // Hammare slår av hjälmar mycket lättare, även med snabba slag.
       let hk = 0;
-      if (kind === "h" && !target.helmetOff && sev !== "neck" && (aimSeg === "head" || Math.random() < MATCH.helmetKnockChance)) {
+      const knockChance = ws.helmetKnock ?? (kind === "h" ? MATCH.helmetKnockChance : 0);
+      if ((kind === "h" || ws.helmetKnock) && !target.helmetOff && sev !== "neck" && ((kind === "h" && aimSeg === "head") || Math.random() < knockChance)) {
         target.helmetOff = true;
         hk = 1;
+      }
+      // Tappar vapnet: vapenarmen huggen av, eller död
+      let drop = null;
+      if ((dead || (sev && WEAPON_ARM.includes(sev))) && target.cw !== FISTS) {
+        drop = this.dropWeapon(target);
+      }
+      // Trubbiga vapen får motståndaren att vingla; släggans tunga slag fäller den
+      let st = 0;
+      let kd = 0;
+      if (!dead && ws.hitStagger) {
+        target.staggerUntil = Math.max(target.staggerUntil, t + ws.hitStagger);
+        target.chargeStart = null;
+        st = 1;
+      }
+      if (!dead && ws.knockdown && kind === "h" && !target.legless) {
+        this.knockDown(target, t);
+        kd = 1;
+      }
+      // Båda benen borta: sitter på marken och blöder
+      let ll = 0;
+      if (!dead && sev && !target.legless && isLegless(target)) {
+        target.legless = true;
+        target.crouch = false;
+        target.chargeStart = null;
+        ll = 1;
+        this.bleed(target, this.phaseToken);
       }
       if (dead) {
         target.dead = true;
@@ -887,6 +1054,8 @@ export class GameRoom extends DurableObject {
         sev,
         seg: aimSeg, // kroppsdelen som träffades (om man siktade)
         hk,          // 1 = hjälmen flög av
+        drop,        // vapnet som tappades: { id, w, p } (eller null)
+        st, kd, ll,  // vinglar / fälld / sitter utan ben
       });
     }
     this.checkRoundEnd();
@@ -915,33 +1084,255 @@ export class GameRoom extends DurableObject {
     return result;
   }
 
-  // Spark: knuffar bort de som står framför, ingen skada
+  // Spark: knuffar bort de som står framför, ingen skada. Kan fälla den sparkade.
   handleKick(ws, player) {
     const t = now();
-    if (!this.canFight(player) || t < player.staggerUntil || t < player.nextKick - TOLERANCE) return;
+    if (!this.canFight(player) || this.busy(player, t) || player.legless || t < player.nextKick - TOLERANCE) return;
     player.nextKick = t + COMBAT.kick.cooldown;
     player.chargeStart = null;
     this.broadcast({ t: "kick", id: player.id }, ws);
     this.later(COMBAT.kick.windup, this.phaseToken, () => {
-      if (!this.canFight(player) || now() < player.staggerUntil) return;
+      const t2 = now();
+      if (!this.canFight(player) || t2 < player.staggerUntil) return;
       for (const target of this.inCone(player, COMBAT.kick.reach, COMBAT.kick.arc)) {
+        if (invulnerable(target, t2)) continue;
         const dx = target.p[0] - player.p[0];
         const dz = target.p[2] - player.p[2];
         const len = Math.hypot(dx, dz) || 1;
-        target.staggerUntil = now() + COMBAT.kick.stagger;
+        // Bakifrån: den sparkade tittar bort från den som sparkar
+        const behind = Math.sin(target.r) * dx + Math.cos(target.r) * dz > 0.3 * len;
+        const charging = target.chargeStart !== null;
+        const down = !target.legless && (charging || behind || Math.random() < COMBAT.kick.knockdown);
+        target.staggerUntil = Math.max(target.staggerUntil, t2 + COMBAT.kick.stagger);
         target.chargeStart = null;
         target.lastParry = -100; // sparken går inte att parera och bryter en parering
-        this.broadcast({ t: "kicked", id: target.id, by: player.id, dir: [round2(dx / len), round2(dz / len)] });
+        if (down) this.knockDown(target, t2);
+        this.broadcast({ t: "kicked", id: target.id, by: player.id, dir: [round2(dx / len), round2(dz / len)], down: down ? 1 : 0 });
       }
+    });
+  }
+
+  // Omkull: ligger på marken en stund
+  knockDown(target, t) {
+    target.downUntil = t + COMBAT.down.time;
+    target.staggerUntil = Math.max(target.staggerUntil, target.downUntil);
+    target.chargeStart = null;
+    target.lastParry = -100;
+  }
+
+  // Rullning: går inte att träffa en kort stund mitt i
+  handleRoll(ws, player, dir) {
+    const t = now();
+    if (!this.canFight(player) || player.legless || t < player.nextRoll - TOLERANCE) return;
+    if (t < player.staggerUntil && t >= player.downUntil) return; // vinglar man kan man inte rulla (men man kan rulla upp från marken)
+    if (!Array.isArray(dir) || dir.length !== 2) return;
+    const len = Math.hypot(finite(dir[0]), finite(dir[1])) || 1;
+    player.rollStart = t;
+    player.nextRoll = t + COMBAT.roll.cooldown;
+    player.downUntil = 0;
+    player.staggerUntil = Math.min(player.staggerUntil, t);
+    player.chargeStart = null;
+    player.lastParry = -100;
+    this.broadcast({ t: "roll", id: player.id, dir: [round2(finite(dir[0]) / len), round2(finite(dir[1]) / len)] }, ws);
+  }
+
+  // ----- Tappade vapen -----
+
+  dropWeapon(player) {
+    const id = "i" + randomId().slice(0, 4);
+    const a = Math.random() * Math.PI * 2;
+    const p = [
+      round2(Math.max(-ARENA_RX + 0.5, Math.min(ARENA_RX - 0.5, player.p[0] + Math.sin(a) * 0.9))),
+      0,
+      round2(Math.max(-ARENA_RZ + 0.5, Math.min(ARENA_RZ - 0.5, player.p[2] + Math.cos(a) * 0.9))),
+    ];
+    const item = { id, w: player.cw, p, r: round2(Math.random() * Math.PI * 2) };
+    this.items.set(id, item);
+    player.cw = FISTS;
+    return item;
+  }
+
+  // Plocka upp ett vapen från marken (E). Har man redan ett vapen läggs det ner i stället.
+  handlePickup(ws, player, itemId) {
+    const t = now();
+    const item = this.items.get(itemId);
+    if (!item || !this.canFight(player) || this.busy(player, t)) return;
+    if (!jointAvailable(player, "wristR")) return; // ingen hand att hålla med
+    if (Math.hypot(item.p[0] - player.p[0], item.p[2] - player.p[2]) > 2.2) return;
+    this.items.delete(itemId);
+    let drop = null;
+    if (player.cw !== FISTS) {
+      drop = { id: "i" + randomId().slice(0, 4), w: player.cw, p: [...item.p], r: item.r };
+      this.items.set(drop.id, drop);
+    }
+    player.cw = item.w;
+    player.chargeStart = null;
+    this.broadcast({ t: "pick", id: player.id, item: itemId, w: item.w, drop });
+  }
+
+  // Utan ben blöder man: lite liv försvinner varje sekund
+  bleed(player, token) {
+    this.later(1, token, () => {
+      if (!this.players.has(player.id) || player.dead || !player.legless || this.phase !== "round") return;
+      player.hp = Math.max(0, player.hp - COMBAT.leglessBleed);
+      const dead = player.hp === 0;
+      const killer = this.players.get(player.lastAttacker);
+      if (dead) {
+        player.dead = true;
+        if (killer) killer.kills += 1;
+        if (player.cw !== FISTS) this.dropWeapon(player);
+      }
+      this.broadcast({ t: "hit", id: player.id, by: player.lastAttacker, k: "b", hp: player.hp, dead, kills: killer ? killer.kills : 0, sev: null, seg: null, hk: 0, drop: null });
+      if (dead) this.checkRoundEnd();
+      else this.bleed(player, token);
     });
   }
 
   handleParry(ws, player) {
     const t = now();
-    if (!this.canFight(player) || t < player.nextParry - TOLERANCE) return;
+    if (!this.canFight(player) || t < player.downUntil || t < player.nextParry - TOLERANCE) return;
     player.lastParry = t;
     player.nextParry = t + COMBAT.parry.cooldown;
     this.broadcast({ t: "par", id: player.id }, ws);
+  }
+
+  // ===================== Träningsmotståndarnas hjärna =====================
+  // Körs tio gånger i sekunden under en runda. Varje bot går mot närmaste fiende, håller lagom
+  // avstånd, cirklar lite åt sidan och slår, stöter eller sparkar när den står rätt.
+
+  botTick(token) {
+    const DT = 0.1;
+    this.later(DT, token, () => {
+      const t = now();
+      for (const bot of this.bots()) {
+        if (bot.dead) continue;
+        this.botThink(bot, t, DT);
+      }
+      if (this.bots().some((b) => !b.dead)) this.botTick(token);
+    });
+  }
+
+  botThink(bot, t, dt) {
+    bot.ai ??= { strafe: 1, strafeUntil: 0, nextAct: t + 0.6 + Math.random(), heavyAt: 0 };
+    const ai = bot.ai;
+    // Närmaste fiende
+    let target = null;
+    let best = Infinity;
+    for (const p of this.players.values()) {
+      if (p === bot || p.dead || (this.mode === "team" && p.team === bot.team)) continue;
+      const d = Math.hypot(p.p[0] - bot.p[0], p.p[2] - bot.p[2]);
+      if (d < best) {
+        best = d;
+        target = p;
+      }
+    }
+    if (!target) return;
+
+    const dx = target.p[0] - bot.p[0];
+    const dz = target.p[2] - bot.p[2];
+    const dist = Math.hypot(dx, dz) || 0.001;
+    // Vänd sig mot fienden (lite trögt, så att man kan gå runt den)
+    const want = Math.atan2(dx, dz);
+    let diff = want - bot.r;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    bot.r = round2(bot.r + Math.max(-5 * dt, Math.min(5 * dt, diff)));
+
+    const busy = this.busy(bot, t);
+    let moving = 0;
+    if (!busy && !bot.legless && bot.chargeStart === null) {
+      const reach = attackSpec("q", bot.cw).reach;
+      const ideal = Math.max(1.2, reach - 0.35);
+      const fx = dx / dist;
+      const fz = dz / dist;
+      let vx = 0;
+      let vz = 0;
+      if (dist > ideal + 0.25) {
+        const speed = dist > 6 ? 5.5 : 3.4;
+        vx += fx * speed;
+        vz += fz * speed;
+      } else if (dist < ideal - 0.5) {
+        vx -= fx * 1.6;
+        vz -= fz * 1.6;
+      }
+      // Cirkla åt sidan ibland
+      if (t > ai.strafeUntil) {
+        ai.strafe = Math.random() < 0.5 ? -1 : 1;
+        ai.strafeUntil = t + 1.2 + Math.random() * 2;
+      }
+      if (dist < ideal + 1.5) {
+        vx += -fz * ai.strafe * 1.3;
+        vz += fx * ai.strafe * 1.3;
+      }
+      // Håll avstånd till alla andra riddare
+      for (const p of this.players.values()) {
+        if (p === bot || p.dead) continue;
+        const ox = bot.p[0] - p.p[0];
+        const oz = bot.p[2] - p.p[2];
+        const od = Math.hypot(ox, oz);
+        if (od > 0.01 && od < 1.0) {
+          vx += (ox / od) * 3;
+          vz += (oz / od) * 3;
+        }
+      }
+      let x = bot.p[0] + vx * dt;
+      let z = bot.p[2] + vz * dt;
+      const rx = ARENA_RX - 0.6;
+      const rz = ARENA_RZ - 0.6;
+      const v = (x / rx) ** 2 + (z / rz) ** 2;
+      if (v > 1) {
+        x /= Math.sqrt(v);
+        z /= Math.sqrt(v);
+      }
+      moving = Math.hypot(vx, vz) > 0.3 ? (Math.hypot(vx, vz) > 4.5 ? 2 : 1) : 0;
+      bot.p = [round2(x), 0, round2(z)];
+    }
+    bot.a = moving;
+    this.broadcast({ t: "s", id: bot.id, p: bot.p, r: bot.r, a: bot.a, c: 0 });
+
+    // Ett laddat tungt slag släpps när det är klart
+    if (ai.heavyAt && t >= ai.heavyAt) {
+      ai.heavyAt = 0;
+      if (bot.chargeStart !== null) this.handleAttack(null, bot, "h", this.botAim(target));
+      return;
+    }
+    if (busy || t < ai.nextAct || bot.chargeStart !== null) return;
+    const facing = Math.abs(diff) < 0.45;
+    const reach = attackSpec("q", bot.cw).reach;
+    if (!facing || dist > reach + 0.3) return;
+
+    ai.nextAct = t + 0.45 + Math.random() * 0.7;
+    const roll = Math.random();
+    if (roll < 0.12 && t >= bot.nextKick && !bot.legless) {
+      this.handleKick(null, bot);
+    } else if (roll < 0.35 && t >= bot.nextHeavy) {
+      bot.chargeStart = t;
+      ai.heavyAt = t + attackSpec("h", bot.cw).charge + 0.05;
+      this.broadcast({ t: "ch", id: bot.id, on: 1 });
+    } else if (roll < 0.5 && t >= bot.nextThrust) {
+      this.handleAttack(null, bot, "t", this.botAim(target));
+    } else if (t >= bot.nextQuick) {
+      this.handleAttack(null, bot, "q", this.botAim(target));
+    }
+  }
+
+  // Ibland siktar boten på en arm, ett ben eller huvudet
+  botAim(target) {
+    if (Math.random() < 0.55) return null;
+    const segs = ["head", "upperArmR", "forearmR", "upperArmL", "thighL", "thighR", "shinL", "shinR"];
+    return { id: target.id, seg: segs[Math.floor(Math.random() * segs.length)] };
+  }
+
+  // Någon slår: botar som står i vägen försöker ibland parera i rätt ögonblick
+  botsReact(attacker, spec, token) {
+    for (const bot of this.bots()) {
+      if (bot === attacker || bot.dead || Math.random() > 0.35) continue;
+      if (!this.inCone(attacker, spec.reach, spec.arc).includes(bot)) continue;
+      const delay = Math.max(0, spec.windup - 0.18 - Math.random() * 0.1);
+      this.later(delay, token, () => {
+        if (!bot.dead && this.players.has(bot.id) && bot.chargeStart === null) this.handleParry(null, bot);
+      });
+    }
   }
 
   // ===================== Anslutning bryts =====================
@@ -967,11 +1358,16 @@ export class GameRoom extends DurableObject {
 
     // Ny lobbyledare om ledaren gick
     if (this.hostId === info.id) {
-      const next = this.players.keys().next();
-      this.setHost(next.done ? null : next.value);
+      const next = this.humans()[0];
+      this.setHost(next ? next.id : null);
       if (this.hostId) this.broadcast({ t: "host", id: this.hostId });
     }
 
+    // Bara träningsmotståndare kvar: de går också
+    if (this.humans().length === 0) {
+      for (const bot of this.bots()) this.players.delete(bot.id);
+      this.saveBots();
+    }
     if (this.players.size === 0) {
       this.setPhase("lobby");
       this.round = 0;

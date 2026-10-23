@@ -344,7 +344,8 @@ export function buildArena() {
   }
 
   // ---------- Himmel, moln och en borg i fjärran ----------
-  group.add(makeSky());
+  const sky = makeSky();
+  group.add(sky);
   const cloudRand = seededRandom(99);
   for (let i = 0; i < 12; i++) {
     const t = cloudRand() * Math.PI * 2;
@@ -636,6 +637,15 @@ export function buildArena() {
     royalReact: (up) => royals.react(up),
     heraldBlow: () => royals.blow(),
     setQuality: (low) => fires.forEach((f) => (f.light.visible = !low)),
+    // Dag eller kväll: himlen, molnen och eldkorgarna
+    setTime(evening) {
+      setSkyColors(sky, evening);
+      if (cloudMaterial) cloudMaterial.color.set(evening ? 0xf0b090 : 0xffffff);
+      for (const f of fires) {
+        f.boost = evening ? 2.6 : 1;
+        f.light.distance = evening ? 15 : 8;
+      }
+    },
   };
 }
 
@@ -821,7 +831,19 @@ function makeHorse(color) {
 }
 
 // Himmel: stor kupol med färgövergång (djupblå uppåt, ljus vid horisonten)
-export function makeSky() {
+// Himlens färger: dag = blå, kväll = solnedgång (orange vid horisonten, djupblå högst upp)
+export const SKY_COLORS = {
+  day: { top: 0x4f86c6, horizon: 0xc4dcef },
+  evening: { top: 0x27305e, horizon: 0xf2925a },
+};
+
+export function setSkyColors(sky, evening) {
+  const c = evening ? SKY_COLORS.evening : SKY_COLORS.day;
+  sky.material.uniforms.top.value.set(c.top);
+  sky.material.uniforms.horizon.value.set(c.horizon);
+}
+
+export function makeSky(evening = false) {
   const geo = new THREE.SphereGeometry(300, 24, 12);
   const material = new THREE.ShaderMaterial({
     side: THREE.BackSide,
@@ -848,6 +870,7 @@ export function makeSky() {
       }`,
   });
   const sky = new THREE.Mesh(geo, material);
+  setSkyColors(sky, evening);
   sky.userData.noMerge = true;
   sky.renderOrder = -1;
   return sky;
@@ -1199,6 +1222,7 @@ function makeBrazier(index) {
   return {
     group: g,
     light,
+    boost: 1, // starkare på kvällen
     update(dt, time) {
       const flicker = Math.sin(time * 13 + seed) * 0.5 + Math.sin(time * 23.7 + seed * 2) * 0.3 + (Math.random() - 0.5) * 0.4;
       flames.forEach((f, i) => {
@@ -1208,7 +1232,7 @@ function makeBrazier(index) {
         f.position.y = 1.45 + i * 0.03 + (s - 1) * 0.25;
       });
       glow.material.opacity = 0.45 + flicker * 0.12;
-      light.intensity = 4 + flicker * 1.3;
+      light.intensity = (4 + flicker * 1.3) * this.boost;
       for (const s of smoke) {
         const k = (time * 0.35 + s.userData.phase) % 1;
         s.position.set(Math.sin(time * 0.7 + s.userData.phase * 9) * 0.15 + k * 0.4, 1.8 + k * 2.4, k * 0.2);
@@ -1482,19 +1506,78 @@ function makeTower(color, emblemRed) {
   ladder.rotation.x = -0.06;
   tower.add(ladder);
 
-  // Tak på stolparna
-  const roof = mesh(new THREE.ConeGeometry(2.15, 1.9, 4), color);
-  roof.rotation.y = Math.PI / 4;
-  roof.position.y = H + 1.25 + 0.95;
-  tower.add(roof);
+  // Tak av spån i rader på stolparna, med takfot, bjälkändar, åsar och en spira
+  const roofTop = makeShingleRoof(color, H + 1.25, 1.6, 2.0, rand);
+  tower.add(roofTop);
   const flag = makeFlag(color);
-  flag.position.y = H + 1.25 + 1.75;
+  flag.position.y = H + 1.25 + 2.0 + 0.12;
   tower.add(flag);
   const banner = makeBanner(color, emblemRed);
   banner.position.set(0, 2.6, half + 0.1);
   banner.scale.setScalar(1.4);
   tower.add(banner);
   return tower;
+}
+
+// Pyramidtak av överlappande spån. y0 = takfotens höjd, B = halva bredden vid takfoten, h = höjd.
+function makeShingleRoof(color, y0, B, h, rand) {
+  const roof = new THREE.Group();
+  const c = new THREE.Color(color);
+  const shades = [color, c.clone().multiplyScalar(0.82).getHex(), c.clone().lerp(new THREE.Color(0x6a5040), 0.25).getHex()];
+  // Undertak (syns mellan spånen och underifrån)
+  const under = mesh(new THREE.ConeGeometry(B * Math.SQRT2 * 0.97, h * 0.97, 4, 1, true), PALETTE.woodDark);
+  under.rotation.y = Math.PI / 4;
+  under.position.y = y0 + h * 0.485;
+  under.material = new THREE.MeshStandardMaterial({ color: PALETTE.woodDark, roughness: 0.9, flatShading: true, side: THREE.DoubleSide });
+  roof.add(under);
+  const slope = Math.atan2(h, B);
+  const slant = Math.hypot(h, B);
+  const ROWS = 9;
+  for (let side = 0; side < 4; side++) {
+    const face = new THREE.Group();
+    face.rotation.y = (side * Math.PI) / 2;
+    for (let r = 0; r < ROWS; r++) {
+      const t = (r + 0.5) / ROWS;           // andel upp längs sluttningen
+      const half = B * (1 - t);             // halva bredden på den här höjden
+      const count = Math.max(1, Math.round((half * 2) / 0.3));
+      const w = (half * 2) / count;
+      for (let i = 0; i < count; i++) {
+        const offset = r % 2 ? 0.5 : 0;
+        let x = -half + (i + 0.5 + offset * 0.5) * w;
+        if (Math.abs(x) > half - w * 0.3) x = Math.sign(x) * (half - w * 0.5);
+        const shingle = box(w * 0.94, 0.035, (slant / ROWS) * 1.35, shades[Math.floor(rand() * shades.length)]);
+        shingle.position.set(x, y0 + h * t + 0.03, B * (1 - t) + 0.03);
+        shingle.rotation.set(slope + 0.07 + (rand() - 0.5) * 0.04, 0, (rand() - 0.5) * 0.05);
+        face.add(shingle);
+      }
+    }
+    // Takfot: en bräda längs kanten och bjälkändar som sticker ut under
+    const fascia = box(B * 2 + 0.1, 0.12, 0.05, PALETTE.woodDark);
+    fascia.position.set(0, y0 - 0.04, B + 0.06);
+    face.add(fascia);
+    for (let i = 0; i < 4; i++) {
+      const rafter = box(0.1, 0.1, 0.32, PALETTE.wood);
+      rafter.position.set(-B * 0.75 + i * B * 0.5, y0 - 0.12, B - 0.05);
+      face.add(rafter);
+    }
+    roof.add(face);
+    // Ås längs varje hörn
+    const ridge = box(0.09, 0.07, Math.hypot(slant, B) * 1.0, PALETTE.woodDark);
+    const corner = new THREE.Group();
+    corner.rotation.y = (side * Math.PI) / 2 + Math.PI / 4;
+    ridge.position.set(0, y0 + h / 2 + 0.05, (B * Math.SQRT2) / 2);
+    ridge.rotation.x = Math.atan2(h, B * Math.SQRT2);
+    corner.add(ridge);
+    roof.add(corner);
+  }
+  // Spira med knopp högst upp
+  const spire = mesh(new THREE.ConeGeometry(0.06, 0.5, 6), PALETTE.gold);
+  spire.position.y = y0 + h + 0.2;
+  roof.add(spire);
+  const knob = mesh(new THREE.SphereGeometry(0.1, 10, 8), PALETTE.gold);
+  knob.position.y = y0 + h + 0.02;
+  roof.add(knob);
+  return roof;
 }
 
 // En platt fläck på marken som tonar ut (ellips). Alfa går från a0 (radie r0) till a1 (radie r1).

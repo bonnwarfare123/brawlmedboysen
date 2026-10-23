@@ -11,7 +11,7 @@
 //
 // Filen använder ingen 3D-motor, bara vanlig matematik, så den går att testa fristående.
 
-const GRAVITY = -15;
+const GRAVITY = -12; // tyngdkraften för kroppar och lösa delar
 const STEP = 1 / 60;
 const ITERATIONS = 10;
 const MAX_STEPS_PER_FRAME = 4;
@@ -103,24 +103,72 @@ export function solveTransform(local, world) {
 
 // ---------- Ragdoll ----------
 
+// Extra punkter för vissa kroppsdelar (i delens egna koordinater). De gör att lederna
+// kan få riktning: ett knä kan böjas bakåt men inte framåt, en armbåge bara åt ett håll.
+const EXTRA_POINTS = {
+  thighL: [0, -0.21, 0.09], thighR: [0, -0.21, 0.09],          // framsidan av låret
+  upperArmL: [0, -0.145, -0.07], upperArmR: [0, -0.145, -0.07], // baksidan av överarmen
+};
+
+// Rörelsegränser: avståndet mellan två punkter (kroppsdel, punktnummer) måste ligga inom [min, max].
+// min/max är meter, eller (om rel är satt) gånger avståndet i början.
+function jointLimits(side) {
+  return [
+    { a: ["shin" + side, 1], b: ["thigh" + side, 0], min: 0.36 },            // knät böjs högst ~130°
+    { a: ["shin" + side, 1], b: ["thigh" + side, 3], min: 0.6 },             // knät böjs inte framåt
+    { a: ["thigh" + side, 1], b: ["torso", 1], min: 0.45 },                   // höften viks inte ihop helt
+    { a: ["forearm" + side, 1], b: ["upperArm" + side, 0], min: 0.16 },      // armbågen
+    { a: ["forearm" + side, 1], b: ["upperArm" + side, 3], min: 0.4 },       // armbågen böjs inte bakåt
+    { a: ["foot" + side, 1], b: ["shin" + side, 0], rel: [0.85, 1.1] },      // fotleden
+    { a: ["hand" + side, 1], b: ["forearm" + side, 0], rel: [0.8, 1.05] },   // handleden
+  ];
+}
+const BODY_LIMITS = [
+  ...jointLimits("L"), ...jointLimits("R"),
+  { a: ["head", 1], b: ["torso", 0], rel: [0.86, 1.03] },  // nacken
+  { a: ["torso", 1], b: ["pelvis", 1], rel: [0.82, 1.06] }, // ryggen
+  { a: ["torso", 1], b: ["pelvis", 2], rel: [0.82, 1.06] },
+];
+
+const TENSION_TIME = 0.45; // så länge musklerna fortfarande håller emot (sekunder)
+
 export class Ragdoll {
-  // bodies: [{ object, local: [[x,y,z]...], world: [[x,y,z]...], radius, velocity: [vx,vy,vz], spin: [vx,vy,vz] }]
+  // bodies: [{ object, local: [[x,y,z]...], world: [[x,y,z]...], radius, velocity: [vx,vy,vz], spin: [vx,vy,vz], name }]
   //   object  = 3D-objektet som ska flyttas (behöver position.set och quaternion.set)
   //   local   = kroppsdelens punkter i dess egna koordinater (minst 3)
   //   world   = samma punkter i världen just nu
   //   spin    = extra fart för punkterna längst bort, så delen snurrar
+  //   name    = kroppsdelens namn (ger leder med rörelsegränser)
   // bounds: { rx, rz } – ovalen som staketet bildar
   constructor(bodies, bounds = null) {
     this.points = [];
     this.constraints = [];
+    this.limits = [];
+    this.tension = [];
+    this.pairs = [];
     this.bodies = [];
     this.bounds = bounds;
     this.age = 0;
     this.acc = 0;
 
     for (const body of bodies) {
+      // Lägg till en extra punkt för knän och armbågar (räknas ut från delens läge just nu)
+      let local = body.local;
+      let world = body.world;
+      const extra = EXTRA_POINTS[body.name];
+      if (extra && local.length === 3) {
+        const t = solveTransform(local, world);
+        const R = t.matrix;
+        const e = [
+          R[0][0] * extra[0] + R[0][1] * extra[1] + R[0][2] * extra[2] + t.position[0],
+          R[1][0] * extra[0] + R[1][1] * extra[1] + R[1][2] * extra[2] + t.position[1],
+          R[2][0] * extra[0] + R[2][1] * extra[1] + R[2][2] * extra[2] + t.position[2],
+        ];
+        local = [...local, extra];
+        world = [...world, e];
+      }
       const indices = [];
-      body.world.forEach((w, k) => {
+      world.forEach((w, k) => {
         const v = body.velocity || [0, 0, 0];
         const s = k > 0 && body.spin ? body.spin : [0, 0, 0];
         const vx = (v[0] + s[0]) * STEP;
@@ -131,15 +179,16 @@ export class Ragdoll {
           x: w[0], y: w[1], z: w[2],
           px: w[0] - vx, py: w[1] - vy, pz: w[2] - vz,
           r: body.radius ?? 0.05,
+          body: this.bodies.length,
         });
       });
       // Stel kroppsdel: alla punkter håller sina inbördes avstånd
       for (let a = 0; a < indices.length; a++) {
         for (let b = a + 1; b < indices.length; b++) {
-          this.constraints.push({ a: indices[a], b: indices[b], len: dist(body.local[a], body.local[b]) });
+          this.constraints.push({ a: indices[a], b: indices[b], len: dist(local[a], local[b]) });
         }
       }
-      this.bodies.push({ object: body.object, local: body.local, indices });
+      this.bodies.push({ object: body.object, local, indices, name: body.name, linked: new Set() });
     }
 
     // Leder: varje kroppsdels första punkt (leden) nålas fast vid närmaste punkt på en annan del
@@ -158,10 +207,73 @@ export class Ragdoll {
           }
         }
       });
-      if (best >= 0) this.constraints.push({ a: body.indices[0], b: best, len: 0 });
+      if (best >= 0) {
+        this.constraints.push({ a: body.indices[0], b: best, len: 0 });
+        const other = this.points[best].body;
+        body.linked.add(other);
+        this.bodies[other].linked.add(bi);
+      }
     });
 
+    // Rörelsegränser för lederna (bara mellan delar som sitter ihop)
+    const byName = new Map(this.bodies.map((b, i) => [b.name, i]));
+    const point = ([name, k]) => {
+      const bi = byName.get(name);
+      if (bi === undefined) return -1;
+      return this.bodies[bi].indices[k] ?? -1;
+    };
+    for (const limit of BODY_LIMITS) {
+      const a = point(limit.a);
+      const b = point(limit.b);
+      if (a < 0 || b < 0) continue;
+      const ba = this.points[a].body;
+      const bb = this.points[b].body;
+      if (!this.bodies[ba].linked.has(bb)) continue; // leden är avhuggen
+      const d = this.distance(a, b);
+      let min = limit.min ?? 0;
+      let max = limit.max ?? Infinity;
+      if (limit.rel) {
+        min = d * limit.rel[0];
+        max = d * limit.rel[1];
+      }
+      // Står leden redan utanför gränsen (mitt i ett slag)? Börja där och låt den glida in.
+      min = Math.min(min, d);
+      max = Math.max(max, d);
+      this.limits.push({ a, b, min, max });
+    }
+
+    // Muskelspänning: i början håller delarna som sitter ihop sin vinkel, sedan blir kroppen slapp
+    this.bodies.forEach((body, bi) => {
+      for (const oi of body.linked) {
+        if (oi < bi) continue;
+        for (const ia of body.indices) {
+          for (const ib of this.bodies[oi].indices) {
+            if (this.distance(ia, ib) < 0.02) continue;
+            this.tension.push({ a: ia, b: ib, len: this.distance(ia, ib) });
+          }
+        }
+      }
+    });
+
+    // Kroppsdelar som inte sitter ihop får inte gå igenom varandra (armarna genom bålen, benen genom varandra)
+    for (let i = 0; i < this.points.length; i++) {
+      for (let j = i + 1; j < this.points.length; j++) {
+        const pi = this.points[i];
+        const pj = this.points[j];
+        if (pi.body === pj.body || this.bodies[pi.body].linked.has(pj.body)) continue;
+        const want = (pi.r + pj.r) * 0.9;
+        const d = this.distance(i, j);
+        this.pairs.push({ a: i, b: j, min: Math.min(want, d) });
+      }
+    }
+
     this.sync();
+  }
+
+  distance(a, b) {
+    const p = this.points[a];
+    const q = this.points[b];
+    return Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
   }
 
   get asleep() {
@@ -181,11 +293,28 @@ export class Ragdoll {
     let steps = 0;
     while (this.acc >= STEP && steps < MAX_STEPS_PER_FRAME) {
       this.step();
+      this.simAge = (this.simAge || 0) + STEP;
       this.acc -= STEP;
       steps++;
     }
     if (steps === MAX_STEPS_PER_FRAME) this.acc = 0;
     this.sync();
+  }
+
+  // Flytta två punkter mot (eller från) varandra. stiffness 1 = hela vägen.
+  pull(a, b, len, stiffness) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const dz = b.z - a.z;
+    const d = Math.hypot(dx, dy, dz);
+    if (d < 1e-9) return;
+    const k = ((d - len) / d) * 0.5 * stiffness;
+    a.x += dx * k;
+    a.y += dy * k;
+    a.z += dz * k;
+    b.x -= dx * k;
+    b.y -= dy * k;
+    b.z -= dz * k;
   }
 
   step() {
@@ -202,31 +331,37 @@ export class Ragdoll {
       p.z += vz;
     }
 
+    const age = this.simAge || 0;
+    const tension = age < TENSION_TIME ? 0.25 * (1 - age / TENSION_TIME) : 0;
+    const P = this.points;
     for (let it = 0; it < ITERATIONS; it++) {
-      for (const c of this.constraints) {
-        const a = this.points[c.a];
-        const b = this.points[c.b];
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const dz = b.z - a.z;
-        const d = Math.hypot(dx, dy, dz);
-        if (d < 1e-9) continue;
-        const k = ((d - c.len) / d) * 0.5;
-        a.x += dx * k;
-        a.y += dy * k;
-        a.z += dz * k;
-        b.x -= dx * k;
-        b.y -= dy * k;
-        b.z -= dz * k;
+      for (const c of this.constraints) this.pull(P[c.a], P[c.b], c.len, 1);
+      if (tension > 0) for (const c of this.tension) this.pull(P[c.a], P[c.b], c.len, tension);
+      // Lederna: bara om de är utanför sina gränser
+      for (const l of this.limits) {
+        const d = this.distance(l.a, l.b);
+        if (d < l.min) this.pull(P[l.a], P[l.b], l.min, 0.6);
+        else if (d > l.max) this.pull(P[l.a], P[l.b], l.max, 0.6);
+      }
+      // Kroppsdelarna knuffar undan varandra (varannan runda räcker)
+      if (it % 2 === 0) {
+        for (const c of this.pairs) {
+          const a = P[c.a];
+          const b = P[c.b];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dz = b.z - a.z;
+          if (dx * dx + dy * dy + dz * dz < c.min * c.min) this.pull(a, b, c.min, 0.8);
+        }
       }
       this.collide();
     }
 
-    // Friktion mot marken
+    // Friktion mot marken (rustning mot sand glider inte långt)
     for (const p of this.points) {
-      if (p.y <= p.r + 0.002) {
-        p.px = p.x - (p.x - p.px) * 0.7;
-        p.pz = p.z - (p.z - p.pz) * 0.7;
+      if (p.y <= p.r + 0.004) {
+        p.px = p.x - (p.x - p.px) * 0.55;
+        p.pz = p.z - (p.z - p.pz) * 0.55;
       }
     }
   }
@@ -248,8 +383,8 @@ export class Ragdoll {
   // Flytta och vrid 3D-objekten så att de följer punkterna
   sync() {
     for (const body of this.bodies) {
-      const world = body.indices.map((i) => [this.points[i].x, this.points[i].y, this.points[i].z]);
-      const t = solveTransform(body.local, world);
+      const world = body.indices.slice(0, 3).map((i) => [this.points[i].x, this.points[i].y, this.points[i].z]);
+      const t = solveTransform(body.local.slice(0, 3), world);
       body.object.position.set(t.position[0], t.position[1], t.position[2]);
       body.object.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
     }

@@ -483,3 +483,24 @@ body[data-phase="matchEnd"] .help { display: none; }
 #scoreboard.corner .card { transform: scale(0.78); transform-origin: top right; background: rgba(255, 248, 232, 0.88); animation: slide-in 0.6s ease-out; }
 @keyframes slide-in { from { opacity: 0; transform: translateX(40px) scale(0.78); } to { opacity: 1; transform: scale(0.78); } }
 .look-row button:disabled { opacity: 0.35; cursor: default; }
+
+/* ---------- v0.11 ---------- */
+.weapon-info { margin: 2px 0 8px; font-style: italic; min-height: 1.2em; }
+.bot-row b { min-width: 48px; }
+
+/* "E – ta upp ..." när man står vid ett vapen */
+#pickup-hint {
+  position: fixed; top: 58%; left: 50%; transform: translateX(-50%);
+  background: rgba(30, 22, 12, 0.75); color: #fff3d6; padding: 6px 12px; border-radius: 6px;
+  font-weight: bold; pointer-events: none;
+}
+
+/* Vapenraden mellan rundorna */
+#weapon-bar {
+  position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%);
+  text-align: center; min-width: 300px; max-width: calc(100% - 32px);
+}
+#weapon-bar .weapon-row { display: flex; align-items: center; justify-content: center; gap: 10px; }
+#weapon-bar b { font-size: 20px; min-width: 150px; }
+#weapon-desc { font-size: 13px; margin-top: 4px; }
+#weapon-bar .weapon-hint { font-size: 12px; opacity: 0.75; margin-top: 4px; }

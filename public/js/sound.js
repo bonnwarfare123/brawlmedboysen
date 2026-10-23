@@ -544,7 +544,7 @@ export class Sound {
     });
   }
 
-  // Dödsskrik med gurgel på slutet
+  // Döende: ett tvärt smärtskrik (tre varianter), några kvävda stötar och en sista rosslande utandning
   scream(pos, voice = 0.5) {
     if (!this.ready()) return;
     if (this.files.skrik.length) {
@@ -553,16 +553,54 @@ export class Sound {
       return;
     }
     const V = Sound.V;
+    const variant = Math.floor(Math.random() * 3);
+    let cry;
+    if (variant === 0) {
+      // "AAARGH-hh": rösten spricker och sjunker mot slutet
+      cry = 0.45 + Math.random() * 0.2;
+      this.vocal(pos, voice, {
+        duration: cry, contour: [1.35, 1.95, 2.05, 1.85, 1.3, 0.85],
+        vowels: [V.ae, V.a, V.a, V.o, V.uh], breath: 0.35, grit: 0.7, fry: 0.25, volume: 0.85, onset: 0.9,
+      });
+    } else if (variant === 1) {
+      // Kvävt "NGHH-UHH!" (träffad i bröstet, luften går ur)
+      cry = 0.28 + Math.random() * 0.08;
+      this.vocal(pos, voice, {
+        duration: cry, contour: [1.05, 1.5, 1.4, 0.9],
+        vowels: [V.uh, V.a, V.uh], breath: 0.45, grit: 0.55, fry: 0.55, volume: 0.75, onset: 1,
+      });
+    } else {
+      // Långt klagande skrik
+      cry = 0.7 + Math.random() * 0.2;
+      this.vocal(pos, voice, {
+        duration: cry, contour: [1.55, 2.2, 2.3, 2.1, 1.7, 1.15],
+        vowels: [V.a, V.a, V.o, V.o, V.u], breath: 0.3, grit: 0.5, fry: 0.15, volume: 0.85, onset: 0.5,
+      });
+    }
+    // Några kvävda, allt svagare stötar ("uh ... uh")
+    let at = cry + 0.12 + Math.random() * 0.1;
+    const gasps = 1 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < gasps; i++) {
+      this.vocal(pos, voice, {
+        duration: 0.11 + Math.random() * 0.08, delay: at, contour: [0.85, 0.95, 0.72],
+        vowels: [V.uh, V.u], breath: 0.6, grit: 0.25, fry: 0.9, volume: 0.38 * (1 - i * 0.25), onset: 0.6,
+      });
+      at += 0.24 + Math.random() * 0.18;
+    }
+    // Sista utandningen: luft som pyser ut och ett lågt rossel
+    this.exhale(pos, at, 0.9, 0.3);
     this.vocal(pos, voice, {
-      duration: 0.65 + Math.random() * 0.25,
-      contour: [1.6, 2.1, 1.9, 1.5, 1.1],
-      vowels: [V.a, V.a, V.o, V.uh], breath: 0.3, grit: 0.6, fry: 0.2, volume: 0.8, onset: 0.7,
+      duration: 0.75, delay: at + 0.06, contour: [0.62, 0.52, 0.44],
+      vowels: [V.uh, V.u, V.u], breath: 0.9, grit: 0.2, fry: 1, volume: 0.2, gurgle: 0.35,
     });
-    // ...och sedan ett gurglande, sjunkande stön
-    this.vocal(pos, voice, {
-      duration: 0.8, delay: 0.7, contour: [0.9, 0.75, 0.6, 0.5],
-      vowels: [V.uh, V.o, V.u], breath: 0.5, grit: 0.3, fry: 0.8, volume: 0.45, gurgle: 1,
-    });
+  }
+
+  // En utandning (luft genom munnen) som sjunker och tystnar
+  exhale(pos, delay, duration, volume) {
+    const v = this.volumeAt(pos) * volume;
+    if (v < 0.01) return;
+    const t = this.ctx.currentTime + delay;
+    this.noiseBurst({ volume: v, attack: 0.06, decay: duration, type: "bandpass", freq: 900, freqEnd: 280, q: 0.8, start: t });
   }
 
   // "HA HA HA!" när man pekar och skrattar
@@ -633,11 +671,66 @@ export class Sound {
       }
       this.tone({ volume: 0.5 * v, freq: 90, freqEnd: 40, decay: 0.22 });
       for (let i = 0; i < 4; i++) this.tone({ volume: 0.04 * v, type: "triangle", freq: 2600 + Math.random() * 1500, decay: 0.04, start: t + 0.05 + i * 0.04 });
+    } else if (weapon === 3) {
+      // Hammare och slägga: dovt krasande duns, plåt som bucklas
+      this.tone({ volume: (heavy ? 1.1 : 0.8) * v, freq: 75, freqEnd: 32, decay: 0.35 });
+      this.noiseBurst({ volume: 0.55 * v, decay: 0.06, type: "bandpass", freq: 420, q: 2 });
+      for (let i = 0; i < 3; i++) this.noiseBurst({ volume: 0.25 * v, decay: 0.02, type: "highpass", freq: 2500, q: 1, start: t + 0.02 + i * 0.025 });
+      [1, 1.9].forEach((r, i) => this.tone({ volume: (0.08 / (i + 1)) * v, type: "triangle", freq: 380 * r, decay: 0.2 }));
     } else {
       // Svärd mot rustning: kort metallklang med några övertoner
       const f = 1500 + Math.random() * 600;
       [1, 1.47, 2.1].forEach((r, i) => this.tone({ volume: (0.12 / (i + 1)) * v, type: "triangle", freq: f * r, decay: 0.12 + i * 0.04 }));
     }
+  }
+
+  // Gycklarens bjällror: några små klingande klockor
+  bells(pos, loud = 1) {
+    if (!this.ready()) return;
+    const v = this.volumeAt(pos) * loud;
+    const t = this.ctx.currentTime;
+    for (let i = 0; i < 3; i++) {
+      const f = 2600 + Math.random() * 1400;
+      this.tone({ volume: 0.05 * v, type: "sine", freq: f, decay: 0.25, start: t + i * 0.03 + Math.random() * 0.02 });
+      this.tone({ volume: 0.02 * v, type: "sine", freq: f * 2.76, decay: 0.12, start: t + i * 0.03 });
+    }
+  }
+
+  // Rullning: sus och en duns när man landar
+  roll(pos) {
+    if (!this.ready()) return;
+    const v = this.volumeAt(pos);
+    const t = this.ctx.currentTime;
+    this.noiseBurst({ volume: 0.25 * v, attack: 0.08, decay: 0.3, type: "bandpass", freq: 500, freqEnd: 1200, q: 1 });
+    this.tone({ volume: 0.4 * v, freq: 110, freqEnd: 45, decay: 0.15, start: t + 0.3 });
+    this.noiseBurst({ volume: 0.3 * v, decay: 0.08, type: "lowpass", freq: 900, start: t + 0.3 });
+  }
+
+  // Någon ramlar omkull: tung duns och skrammel
+  fall(pos) {
+    if (!this.ready()) return;
+    const v = this.volumeAt(pos);
+    const t = this.ctx.currentTime;
+    this.tone({ volume: 0.9 * v, freq: 90, freqEnd: 35, decay: 0.3, start: t + 0.2 });
+    this.noiseBurst({ volume: 0.5 * v, decay: 0.15, type: "lowpass", freq: 700, start: t + 0.2 });
+    for (let i = 0; i < 4; i++) this.tone({ volume: 0.04 * v, type: "triangle", freq: 1800 + Math.random() * 1500, decay: 0.06, start: t + 0.22 + i * 0.05 });
+  }
+
+  // Plockar upp ett vapen: klirr
+  pickup(pos) {
+    if (!this.ready()) return;
+    const v = this.volumeAt(pos);
+    const t = this.ctx.currentTime;
+    [1, 1.5].forEach((r, i) => this.tone({ volume: 0.12 * v, type: "triangle", freq: 1300 * r, decay: 0.15, start: t + i * 0.06 }));
+    this.noiseBurst({ volume: 0.15 * v, decay: 0.05, type: "highpass", freq: 2500 });
+  }
+
+  // Utroparens fanfar (kort)
+  fanfare() {
+    if (!this.ready()) return;
+    const t = this.ctx.currentTime;
+    this.horn(67, t, 0.12, 0.25);
+    this.horn(72, t + 0.13, 0.3, 0.28);
   }
 
   // En hjälm som flyger av: klonk
@@ -649,14 +742,39 @@ export class Sound {
     this.noiseBurst({ volume: 0.3 * v, decay: 0.05, type: "highpass", freq: 3000, q: 0.5 });
   }
 
-  clang(pos) {
+  // Parering. kind = "blade": stål mot stål (tvåhandsvapen och knytnävar), "shield": mot en träsköld med metallkant.
+  clang(pos, kind = "blade") {
     if (!this.ready()) return;
     const v = this.volumeAt(pos);
-    const base = 470 + Math.random() * 90;
-    [1, 2.32, 3.76, 5.4, 7.1].forEach((ratio, i) => {
-      this.tone({ volume: (0.35 / (i + 1)) * v, freq: base * ratio * (1 + (Math.random() - 0.5) * 0.01), decay: 1.1 - i * 0.15 });
+    const t = this.ctx.currentTime;
+    // Själva smällen: ett mycket kort, skarpt knäpp över alla frekvenser
+    this.noiseBurst({ volume: 0.75 * v, attack: 0.001, decay: 0.012, type: "highpass", freq: 3000, q: 0.5 });
+    this.noiseBurst({ volume: 0.45 * v, attack: 0.001, decay: 0.035, type: "bandpass", freq: 2200, q: 1.5 });
+    if (kind === "shield") {
+      // Trä som tar emot: dov duns med knack, och lite klirr från metallkanten
+      this.tone({ volume: 0.7 * v, freq: 150, freqEnd: 85, decay: 0.14 });
+      this.noiseBurst({ volume: 0.65 * v, attack: 0.002, decay: 0.11, type: "lowpass", freq: 700 });
+      this.noiseBurst({ volume: 0.35 * v, attack: 0.001, decay: 0.05, type: "bandpass", freq: 950, q: 4 });
+      [1, 2.76, 5.4].forEach((r, i) => this.tone({ volume: (0.06 / (i + 1)) * v, type: "sine", freq: 1650 * r, decay: 0.25 - i * 0.06 }));
+      return;
+    }
+    // Stål mot stål: en klinga ringer som en stav (ojämna övertoner som dör ut snabbare ju högre de är).
+    // Varje överton finns två gånger med lite olika frekvens, så de "svävar" som riktig metall.
+    const base = 1050 + Math.random() * 350;
+    const modes = [1, 2.756, 5.404, 8.933];
+    modes.forEach((r, i) => {
+      for (const beat of [-1, 1]) {
+        this.tone({
+          volume: (0.13 / (i * 0.8 + 1)) * v, type: "sine",
+          freq: base * r + beat * (2 + Math.random() * 3),
+          attack: 0.001, decay: (0.9 - i * 0.18) * (0.8 + Math.random() * 0.4),
+        });
+      }
     });
-    this.noiseBurst({ volume: 0.4 * v, decay: 0.04, type: "highpass", freq: 3500, q: 0.5 });
+    // Klingorna glider mot varandra: ett kort skrap som sjunker
+    this.noiseBurst({ volume: 0.22 * v, attack: 0.01, decay: 0.16, type: "bandpass", freq: 4200, freqEnd: 1600, q: 3, start: t + 0.008 });
+    // Lite tyngd i smällen
+    this.tone({ volume: 0.3 * v, freq: 210, freqEnd: 120, decay: 0.06 });
   }
 
   sever(pos) {
