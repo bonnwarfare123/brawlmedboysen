@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.13";
+export const VERSION = "0.14";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -21,6 +21,11 @@ export const COMBAT = {
   crouch: { speed: 0.5 },
   // Utan ben sitter man på marken och blöder så här mycket liv per sekund
   leglessBleed: 3,
+  // Kasta vapnet (G): flyger rakt fram, skadan = snabbt slag x vapnets skada x damage
+  throw: { speed: 17, range: 13, radius: 0.55, damage: 1.3, stagger: 0.5, windup: 0.22 },
+  // Ta tag i någon (R): reach/arc = hur nära och rakt framför, hold = längsta greppet,
+  // escape = antal knapptryck för att slita sig loss, shove = knuffen, punch = slag medan man håller fast
+  grab: { reach: 1.5, arc: 50, cooldown: 2.5, hold: 2.8, escape: 7, shove: 13, punch: 10, punchCooldown: 0.55, moveFactor: 0.45 },
   emoteCooldown: 1.5,
   // window = hur länge en parering skyddar, lag = extra tid för fördröjningen på nätet
   parry: { window: 0.45, lag: 0.08, cooldown: 0.8, stagger: 0.9 },
@@ -63,7 +68,7 @@ export const WEAPON_SPECS = [
   { key: "daneaxe", damage: 1.55, speed: 1.4, recover: 1.45, reach: 0.4, arc: 1, sever: 1.8, thrust: 0.8, twoHanded: true },
   { key: "halberd", damage: 1.2, speed: 1.3, recover: 1.35, reach: 1.0, arc: 0.8, sever: 1.3, thrust: 1.5, thrustReach: 1.2, minRange: 1.0, twoHanded: true },
   { key: "zweihander", damage: 1.9, speed: 1.6, recover: 1.8, reach: 1.1, arc: 0.7, sever: 2.2, thrust: 1.3, twoHanded: true, whiffStagger: 0.9 },
-  { key: "spear", damage: 0.85, speed: 0.95, recover: 0.95, reach: 0.7, arc: 0.7, sever: 0.6, thrust: 1.45, thrustReach: 1.3, thrustCd: 0.5 },
+  { key: "spear", damage: 0.85, speed: 0.95, recover: 0.95, reach: 0.7, arc: 0.7, sever: 0.6, thrust: 1.45, thrustReach: 1.3, thrustCd: 0.84 },
   { key: "warhammer", damage: 0.95, speed: 1.05, recover: 1.05, reach: 0, arc: 0.9, sever: 0, thrust: 0.6, helmetKnock: 0.6, hitStagger: 0.35, blunt: true },
   { key: "maul", damage: 1.6, speed: 1.55, recover: 1.7, reach: 0.5, arc: 0.9, sever: 0, thrust: 0.6, twoHanded: true, helmetKnock: 0.4, hitStagger: 0.5, knockdown: true, blunt: true },
 ];
@@ -105,6 +110,19 @@ export const CAPES = ["Nej", "Ja"];
 export const TIMES = ["day", "evening"];
 export const TIME_NAMES = { day: "Dag", evening: "Kväll" };
 
+// Väder (lobbyledaren väljer)
+export const WEATHERS = ["sun", "rain", "fog"];
+
+// Utmärkelser efter matchen: vem hade mest av vad?
+export const AWARDS = [
+  { key: "sev", title: "Slaktaren", text: "flest avhuggna lemmar" },
+  { key: "dmg", title: "Krossaren", text: "mest skada" },
+  { key: "parry", title: "Muren", text: "flest pareringar" },
+  { key: "fell", title: "Klumpigast", text: "föll omkull flest gånger" },
+  { key: "throwHit", title: "Kastaren", text: "flest träffande kast" },
+  { key: "grabs", title: "Brottaren", text: "flest grepp" },
+];
+
 // Träningsmotståndare som servern styr
 export const MAX_BOTS = 3;
 export const BOT_NAMES = ["Sir Plåtburk", "Sir Halmdocka", "Sir Rostig", "Sir Vinglig", "Sir Bengt"];
@@ -123,7 +141,7 @@ export const MATCH = {
   minPlayers: 2,       // minst så många för att kunna starta
   countdown: 3,        // sekunder innan rundan börjar
   roundEndDelay: 4,    // sekunder mellan rundor
-  matchEndDelay: 13,   // sekunder för prisceremonin innan alla går tillbaka till lobbyn
+  matchEndDelay: 16,   // sekunder för reprisen och prisceremonin innan alla går tillbaka till lobbyn
   duelRoundsToWin: 2,  // turnering: bäst av 3 rundor per duell
   bracketDelay: 6,     // sekunder turneringsträdet visas mellan duellerna
   helmetKnockChance: 0.15, // chans att hjälmen flyger av vid tunga slag som inte siktar på huvudet

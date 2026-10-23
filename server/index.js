@@ -19,7 +19,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, MATCH, ARENA_RX, ARENA_RZ,
   JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS, AIM_JOINT, ARMORS, HELMETS, SHIELDS,
-  WEAPONS, CAPES, MODES, attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, MAX_BOTS, BOT_NAMES,
+  WEAPONS, CAPES, MODES, attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, MAX_BOTS, BOT_NAMES, WEATHERS, AWARDS,
 } from "../public/js/shared.js";
 
 export default {
@@ -153,7 +153,18 @@ function newPlayerState(info) {
     legless: false,  // båda benen avhuggna: sitter på marken
     lastAttacker: null,
     bot: !!info.bot,
+    ready: !!info.bot, // redo-knappen i lobbyn (träningsmotståndare är alltid redo)
+    holding: null,   // id på den man håller fast
+    heldBy: null,    // id på den som håller fast en
+    nextGrab: 0,
+    struggle: 0,
+    stats: freshStats(),
   };
+}
+
+// Det som räknas under en match (för utmärkelserna efteråt)
+function freshStats() {
+  return { sev: 0, dmg: 0, parry: 0, fell: 0, throwHit: 0, grabs: 0 };
 }
 
 function resetForRound(player) {
@@ -178,6 +189,10 @@ function resetForRound(player) {
   player.crouch = false;
   player.legless = false;
   player.lastAttacker = null;
+  player.holding = null;
+  player.heldBy = null;
+  player.nextGrab = 0;
+  player.struggle = 0;
 }
 
 const LEFT_LEG = ["ankleL", "kneeL", "hipL"];
@@ -245,7 +260,7 @@ function publicPlayer(pl) {
   return {
     id: pl.id, name: pl.name, color: pl.color, look: pl.look, p: pl.p, r: pl.r, a: pl.a,
     hp: pl.hp, dead: pl.dead, kills: pl.kills, wins: pl.wins, severed: pl.severed,
-    helmetOff: pl.helmetOff, team: pl.team, cw: pl.cw, bot: pl.bot ? 1 : 0, c: pl.crouch ? 1 : 0,
+    helmetOff: pl.helmetOff, team: pl.team, cw: pl.cw, bot: pl.bot ? 1 : 0, c: pl.crouch ? 1 : 0, ready: pl.ready ? 1 : 0,
   };
 }
 
@@ -262,6 +277,7 @@ export class GameRoom extends DurableObject {
     this.bracket = null; // turneringsträdet
     this.duel = null;    // pågående duell: { ri, mi }
     this.time = "day";   // dag eller kväll
+    this.weather = "sun"; // sol, regn eller dimma
     this.items = new Map(); // tappade vapen på marken: id → { id, w, p }
 
     // Om rummet "sov" (hibernation) och vaknar igen: återskapa spelarlistan
@@ -277,7 +293,8 @@ export class GameRoom extends DurableObject {
     // (annars glömde servern vem som var ledare och startknappen slutade fungera efter en match).
     if (this.ctx.storage && this.ctx.blockConcurrencyWhile) {
       this.ctx.blockConcurrencyWhile(async () => {
-        const saved = await this.ctx.storage.get(["host", "mode", "time", "bots"]);
+        const saved = await this.ctx.storage.get(["host", "mode", "time", "bots", "weather"]);
+        if (WEATHERS.includes(saved.get("weather"))) this.weather = saved.get("weather");
         const host = saved.get("host");
         const mode = saved.get("mode");
         if (host && this.players.has(host)) this.hostId = host;
@@ -428,6 +445,21 @@ export class GameRoom extends DurableObject {
       case "bot":
         this.handleBot(player, msg.add === 1);
         break;
+      case "weather":
+        this.handleWeather(player, msg.v);
+        break;
+      case "ready":
+        this.handleReady(player, msg.on === 1);
+        break;
+      case "throw":
+        this.handleThrow(ws, player);
+        break;
+      case "grab":
+        this.handleGrab(ws, player);
+        break;
+      case "struggle":
+        this.handleStruggle(player);
+        break;
     }
   }
 
@@ -475,6 +507,7 @@ export class GameRoom extends DurableObject {
       teamWins: this.teamWins,
       bracket: this.bracket,
       time: this.time,
+      weather: this.weather,
       items: [...this.items.values()],
     });
     this.broadcast({ t: "join", player: publicPlayer(player) }, ws);
@@ -511,6 +544,21 @@ export class GameRoom extends DurableObject {
     this.time = value;
     this.remember("time", value);
     this.broadcast({ t: "time", v: value });
+  }
+
+  // Sol, regn eller dimma (lobbyledaren väljer)
+  handleWeather(player, value) {
+    if (player.id !== this.hostId || this.phase !== "lobby" || !WEATHERS.includes(value)) return;
+    this.weather = value;
+    this.remember("weather", value);
+    this.broadcast({ t: "weather", v: value });
+  }
+
+  // Redo-knappen i lobbyn: alla ser vilka som är redo
+  handleReady(player, on) {
+    if (this.phase !== "lobby" || player.bot) return;
+    player.ready = on;
+    this.broadcast({ t: "ready", id: player.id, on: on ? 1 : 0 });
   }
 
   // ----- Träningsmotståndare (styrs av servern) -----
@@ -637,6 +685,7 @@ export class GameRoom extends DurableObject {
     for (const p of this.players.values()) {
       p.wins = 0;
       p.kills = 0;
+      p.stats = freshStats();
     }
     this.round = 0;
     this.teamWins = [0, 0];
@@ -846,8 +895,23 @@ export class GameRoom extends DurableObject {
       t: "matchEnd", winner, team, mode: this.mode,
       wins: this.winsTable(), kills: this.killsTable(), teamWins: this.teamWins,
       podium: this.podium(winner, team),
+      awards: this.awards(),
     });
     this.later(MATCH.matchEndDelay, token, () => this.toLobby());
+  }
+
+  // Utmärkelser: den som hade mest av varje sak (minst 1) får en skylt
+  awards() {
+    const list = [];
+    for (const award of AWARDS) {
+      let best = null;
+      for (const p of this.players.values()) {
+        const v = p.stats?.[award.key] || 0;
+        if (v > 0 && (!best || v > best.v)) best = { key: award.key, id: p.id, v: Math.round(v) };
+      }
+      if (best) list.push(best);
+    }
+    return list;
   }
 
   // Prispallen: [etta, tvåa, trea] (spelar-id, bara de som fortfarande är kvar)
@@ -875,7 +939,10 @@ export class GameRoom extends DurableObject {
     this.setPhase("lobby");
     this.round = 0;
     this.duel = null;
-    for (const p of this.players.values()) resetForRound(p);
+    for (const p of this.players.values()) {
+      resetForRound(p);
+      p.ready = !!p.bot; // alla får trycka redo igen
+    }
     this.broadcast({ t: "lobby" });
   }
 
@@ -894,17 +961,36 @@ export class GameRoom extends DurableObject {
     const x = Math.max(-ARENA_RX, Math.min(ARENA_RX, finite(msg.p[0])));
     const y = Math.max(0, Math.min(5, finite(msg.p[1])));
     const z = Math.max(-ARENA_RZ, Math.min(ARENA_RZ, finite(msg.p[2])));
-    // Utan ben sitter man kvar där man föll
-    if (!player.legless) player.p = [round2(x), round2(y), round2(z)];
+    // Utan ben sitter man kvar där man föll. Den som hålls fast står där den som håller den står.
+    if (player.heldBy) {
+      const holder = this.players.get(player.heldBy);
+      if (holder) player.p = this.frontOf(holder);
+    } else if (!player.legless) {
+      player.p = [round2(x), round2(y), round2(z)];
+    }
     player.r = round2(finite(msg.r));
     player.a = msg.a === 1 || msg.a === 2 ? msg.a : 0;
     player.crouch = msg.c === 1 && !player.legless;
     this.broadcast({ t: "s", id: player.id, p: player.p, r: player.r, a: player.a, c: player.crouch ? 1 : 0 }, ws);
+    // Den man håller fast följer med
+    if (player.holding) {
+      const held = this.players.get(player.holding);
+      if (held) {
+        held.p = this.frontOf(player);
+        held.r = round2(player.r + Math.PI);
+        this.broadcast({ t: "s", id: held.id, p: held.p, r: held.r, a: 0, c: 0 });
+      }
+    }
+  }
+
+  // Punkten precis framför en spelare (där den man håller fast står)
+  frontOf(player, dist = 0.8) {
+    return [round2(player.p[0] + Math.sin(player.r) * dist), 0, round2(player.p[2] + Math.cos(player.r) * dist)];
   }
 
   // Ligger man på marken eller rullar kan man inte göra något annat
   busy(player, t) {
-    return t < player.staggerUntil || t < player.downUntil || t - player.rollStart < COMBAT.roll.time;
+    return t < player.staggerUntil || t < player.downUntil || t - player.rollStart < COMBAT.roll.time || !!player.heldBy;
   }
 
   handleCharge(ws, player, msg) {
@@ -917,6 +1003,7 @@ export class GameRoom extends DurableObject {
   handleAttack(ws, player, kind, aim) {
     const t = now();
     if (!this.canFight(player) || this.busy(player, t)) return;
+    if (player.holding) return this.grabPunch(player, t);
 
     const w = player.cw;
     const spec = attackSpec(kind, w);
@@ -985,6 +1072,7 @@ export class GameRoom extends DurableObject {
       attacker.chargeStart = null;
       target.nextParry = t;
       this.broadcast({ t: "parried", id: target.id, by: attacker.id });
+      target.stats.parry += 1;
       return;
     }
 
@@ -999,11 +1087,16 @@ export class GameRoom extends DurableObject {
         aimSeg = "torso";
         damage = Math.round(damage * 0.85);
       }
+      attacker.stats.dmg += Math.min(target.hp, damage);
       target.hp = Math.max(0, target.hp - damage);
+      if (target.holding) this.releaseGrab(target, "hit"); // den som håller fast släpper när den blir träffad
       target.lastAttacker = attacker.id;
       const dead = target.hp === 0;
       const sev = chooseSever(target, kind, dead, aimSeg, Math.random, damage, ws.sever, attacker.crouch && !aimSeg);
-      if (sev) target.severed.push(sev);
+      if (sev) {
+        target.severed.push(sev);
+        attacker.stats.sev += 1;
+      }
       // Tunga slag kan slå av hjälmen (bara utseende). Siktar man på huvudet åker den alltid.
       // Hammare slår av hjälmar mycket lättare, även med snabba slag.
       let hk = 0;
@@ -1087,7 +1180,9 @@ export class GameRoom extends DurableObject {
   // Spark: knuffar bort de som står framför, ingen skada. Kan fälla den sparkade.
   handleKick(ws, player) {
     const t = now();
-    if (!this.canFight(player) || this.busy(player, t) || player.legless || t < player.nextKick - TOLERANCE) return;
+    if (!this.canFight(player) || this.busy(player, t) || player.legless) return;
+    if (player.holding) return this.releaseGrab(player, "down");
+    if (t < player.nextKick - TOLERANCE) return;
     player.nextKick = t + COMBAT.kick.cooldown;
     player.chargeStart = null;
     this.broadcast({ t: "kick", id: player.id }, ws);
@@ -1114,6 +1209,8 @@ export class GameRoom extends DurableObject {
 
   // Omkull: ligger på marken en stund
   knockDown(target, t) {
+    target.stats.fell += 1;
+    if (target.holding) this.releaseGrab(target, "hit");
     target.downUntil = t + COMBAT.down.time;
     target.staggerUntil = Math.max(target.staggerUntil, target.downUntil);
     target.chargeStart = null;
@@ -1123,7 +1220,7 @@ export class GameRoom extends DurableObject {
   // Rullning: går inte att träffa en kort stund mitt i
   handleRoll(ws, player, dir) {
     const t = now();
-    if (!this.canFight(player) || player.legless || t < player.nextRoll - TOLERANCE) return;
+    if (!this.canFight(player) || player.legless || player.heldBy || player.holding || t < player.nextRoll - TOLERANCE) return;
     if (t < player.staggerUntil && t >= player.downUntil) return; // vinglar man kan man inte rulla (men man kan rulla upp från marken)
     if (!Array.isArray(dir) || dir.length !== 2) return;
     const len = Math.hypot(finite(dir[0]), finite(dir[1])) || 1;
@@ -1136,9 +1233,206 @@ export class GameRoom extends DurableObject {
     this.broadcast({ t: "roll", id: player.id, dir: [round2(finite(dir[0]) / len), round2(finite(dir[1]) / len)] }, ws);
   }
 
+  // ----- Kasta vapnet (G) -----
+  // Vapnet flyger rakt fram. Servern räknar ut direkt vem det träffar (den första i vägen) och var det landar,
+  // skickar det till alla (så alla kan visa flygturen) och gör skadan när vapnet kommer fram.
+  handleThrow(ws, player) {
+    const t = now();
+    if (!this.canFight(player) || this.busy(player, t) || player.holding || player.cw === FISTS) return;
+    if (!jointAvailable(player, "wristR")) return;
+    const T = COMBAT.throw;
+    const w = player.cw;
+    const fx = Math.sin(player.r);
+    const fz = Math.cos(player.r);
+    const start = [player.p[0] + fx * 0.5, 1.45, player.p[2] + fz * 0.5];
+    // Hur långt innan staketet?
+    let range = T.range;
+    for (let d = 0; d <= T.range; d += 0.25) {
+      const x = start[0] + fx * d;
+      const z = start[2] + fz * d;
+      if ((x / (ARENA_RX - 0.3)) ** 2 + (z / (ARENA_RZ - 0.3)) ** 2 > 1) {
+        range = d;
+        break;
+      }
+    }
+    // Första riddaren i vägen
+    let hit = null;
+    let hitDist = range;
+    for (const target of this.players.values()) {
+      if (target === player || target.dead) continue;
+      if (this.mode === "team" && target.team === player.team) continue;
+      const dx = target.p[0] - player.p[0];
+      const dz = target.p[2] - player.p[2];
+      const along = dx * fx + dz * fz;
+      const side = Math.abs(dx * fz - dz * fx);
+      if (along < 0.3 || along > hitDist || side > T.radius) continue;
+      hit = target;
+      hitDist = along;
+    }
+    const land = hit
+      ? [round2(hit.p[0] - fx * 0.4), 0, round2(hit.p[2] - fz * 0.4)]
+      : [round2(start[0] + fx * range), 0, round2(start[2] + fz * range)];
+    const time = round2(T.windup + Math.max(0.15, (hit ? hitDist : range) / T.speed));
+    const item = { id: "i" + randomId().slice(0, 4), w, p: land, r: round2(player.r + (Math.random() - 0.5)) };
+    player.cw = FISTS;
+    player.chargeStart = null;
+    player.nextQuick = Math.max(player.nextQuick, t + T.windup + 0.2);
+    this.broadcast({ t: "throw", id: player.id, w, from: start.map(round2), to: land, time, hit: hit ? hit.id : null, item });
+    const token = this.phaseToken;
+    this.later(time, token, () => {
+      this.items.set(item.id, item);
+      if (!hit || !this.players.has(hit.id) || hit.dead || invulnerable(hit, now())) return;
+      const ws2 = weaponSpec(w);
+      const damage = Math.round(COMBAT.quick.damage * ws2.damage * T.damage);
+      const attacker = this.players.get(player.id);
+      hit.hp = Math.max(0, hit.hp - damage);
+      hit.lastAttacker = player.id;
+      if (attacker) {
+        attacker.stats.dmg += damage;
+        attacker.stats.throwHit += 1;
+      }
+      const dead = hit.hp === 0;
+      const sev = chooseSever(hit, "q", dead, null, Math.random, damage, ws2.sever);
+      if (sev) {
+        hit.severed.push(sev);
+        if (attacker) attacker.stats.sev += 1;
+      }
+      let drop = null;
+      if ((dead || (sev && WEAPON_ARM.includes(sev))) && hit.cw !== FISTS) drop = this.dropWeapon(hit);
+      if (hit.holding) this.releaseGrab(hit, "hit");
+      let ll = 0;
+      if (!dead && sev && !hit.legless && isLegless(hit)) {
+        hit.legless = true;
+        hit.crouch = false;
+        ll = 1;
+        this.bleed(hit, token);
+      }
+      if (!dead) {
+        hit.staggerUntil = Math.max(hit.staggerUntil, now() + T.stagger);
+        hit.chargeStart = null;
+      } else {
+        hit.dead = true;
+        hit.chargeStart = null;
+        if (attacker) attacker.kills += 1;
+      }
+      this.broadcast({
+        t: "hit", id: hit.id, by: player.id, k: "x", hp: hit.hp, dead, kills: attacker ? attacker.kills : 0,
+        sev, seg: null, hk: 0, drop, st: dead ? 0 : 1, kd: 0, ll,
+      });
+      this.checkRoundEnd();
+    });
+  }
+
+  // ----- Brottning: ta tag i någon (R) -----
+
+  handleGrab(ws, player) {
+    const t = now();
+    if (!this.canFight(player)) return;
+    if (player.holding) return this.releaseGrab(player, "shove"); // R igen: knuffa iväg
+    if (player.heldBy) return this.handleStruggle(player);
+    if (this.busy(player, t) || player.legless || t < player.nextGrab - TOLERANCE) return;
+    player.nextGrab = t + COMBAT.grab.cooldown;
+    // Närmaste riddare precis framför
+    const G = COMBAT.grab;
+    let target = null;
+    let best = Infinity;
+    for (const p of this.inCone(player, G.reach, G.arc)) {
+      const d = Math.hypot(p.p[0] - player.p[0], p.p[2] - player.p[2]);
+      if (d < best) {
+        best = d;
+        target = p;
+      }
+    }
+    this.broadcast({ t: "grabTry", id: player.id }, ws);
+    if (!target || target.holding || target.heldBy || invulnerable(target, t)) return;
+    // Den som parerar kan inte bli tagen: den som försökte vinglar till
+    if (t - target.lastParry < COMBAT.parry.window + COMBAT.parry.lag) {
+      player.staggerUntil = t + 0.6;
+      this.broadcast({ t: "parried", id: target.id, by: player.id });
+      target.stats.parry += 1;
+      return;
+    }
+    player.holding = target.id;
+    player.chargeStart = null;
+    player.stats.grabs += 1;
+    target.heldBy = player.id;
+    target.chargeStart = null;
+    target.struggle = 0;
+    target.lastParry = -100;
+    target.p = this.frontOf(player);
+    target.r = round2(player.r + Math.PI);
+    const grabId = (player.grabId = (player.grabId || 0) + 1);
+    this.broadcast({ t: "grab", id: player.id, target: target.id, p: target.p, r: target.r });
+    this.later(G.hold, this.phaseToken, () => {
+      if (player.holding === target.id && player.grabId === grabId) this.releaseGrab(player, "timeout");
+    });
+  }
+
+  // Den fasthållna trycker för att slita sig loss
+  handleStruggle(player) {
+    if (!player.heldBy) return;
+    player.struggle += 1;
+    const holder = this.players.get(player.heldBy);
+    if (!holder) {
+      player.heldBy = null;
+      return;
+    }
+    if (player.struggle >= COMBAT.grab.escape) {
+      this.releaseGrab(holder, "escape");
+      holder.staggerUntil = now() + 0.6;
+    } else {
+      this.broadcast({ t: "struggle", id: player.id, n: player.struggle });
+    }
+  }
+
+  // Slag med knytnäven medan man håller fast
+  grabPunch(player, t) {
+    if (t < player.nextQuick - TOLERANCE) return;
+    const target = this.players.get(player.holding);
+    if (!target || target.dead) return this.releaseGrab(player, "timeout");
+    player.nextQuick = t + COMBAT.grab.punchCooldown;
+    const damage = COMBAT.grab.punch;
+    player.stats.dmg += Math.min(target.hp, damage);
+    target.hp = Math.max(0, target.hp - damage);
+    target.lastAttacker = player.id;
+    const dead = target.hp === 0;
+    this.broadcast({ t: "atk", id: player.id, k: "p" });
+    if (dead) {
+      target.dead = true;
+      player.kills += 1;
+      this.releaseGrab(player, "dead");
+      if (target.cw !== FISTS) this.dropWeapon(target);
+    }
+    this.broadcast({
+      t: "hit", id: target.id, by: player.id, k: "p", hp: target.hp, dead, kills: player.kills,
+      sev: null, seg: "head", hk: 0, drop: null, st: 0, kd: 0, ll: 0,
+    });
+    if (dead) this.checkRoundEnd();
+  }
+
+  // Släpp greppet. how: "shove" (knuffas iväg), "down" (kastas omkull), "escape" (slet sig loss), "hit", "timeout", "dead"
+  releaseGrab(holder, how) {
+    const target = this.players.get(holder.holding);
+    holder.holding = null;
+    if (!target) return;
+    target.heldBy = null;
+    target.struggle = 0;
+    const t = now();
+    const dir = [round2(Math.sin(holder.r)), round2(Math.cos(holder.r))];
+    if (how === "shove") target.staggerUntil = Math.max(target.staggerUntil, t + 0.9);
+    if (how === "down") this.knockDown(target, t);
+    this.broadcast({ t: "grabEnd", id: holder.id, target: target.id, how, dir });
+  }
+
   // ----- Tappade vapen -----
 
   dropWeapon(player) {
+    // Den som dör eller tappar vapnet släpper också sitt grepp
+    if (player.holding) this.releaseGrab(player, "hit");
+    if (player.heldBy) {
+      const holder = this.players.get(player.heldBy);
+      if (holder) this.releaseGrab(holder, "dead");
+    }
     const id = "i" + randomId().slice(0, 4);
     const a = Math.random() * Math.PI * 2;
     const p = [
@@ -1190,7 +1484,7 @@ export class GameRoom extends DurableObject {
 
   handleParry(ws, player) {
     const t = now();
-    if (!this.canFight(player) || t < player.downUntil || t < player.nextParry - TOLERANCE) return;
+    if (!this.canFight(player) || t < player.downUntil || player.heldBy || player.holding || t < player.nextParry - TOLERANCE) return;
     player.lastParry = t;
     player.nextParry = t + COMBAT.parry.cooldown;
     this.broadcast({ t: "par", id: player.id }, ws);
@@ -1227,6 +1521,41 @@ export class GameRoom extends DurableObject {
       }
     }
     if (!target) return;
+
+    // Brottning: fasthållen boten sliter, och en bot som håller fast någon slår, knuffar eller kastar omkull
+    if (bot.heldBy) {
+      if (Math.random() < 0.35) this.handleStruggle(bot);
+      return;
+    }
+    if (bot.holding) {
+      ai.holdT = (ai.holdT || 0) + dt;
+      if (ai.holdT > 0.5 && Math.random() < 0.25) {
+        const r = Math.random();
+        if (r < 0.5) this.grabPunch(bot, t);
+        else if (r < 0.75) this.releaseGrab(bot, "shove");
+        else this.releaseGrab(bot, "down");
+      }
+      return;
+    }
+    ai.holdT = 0;
+
+    // Utan vapen: gå och hämta det närmaste vapnet på marken
+    if (bot.cw === FISTS && this.items.size && jointAvailable(bot, "wristR")) {
+      let item = null;
+      let bestItem = 8;
+      for (const it of this.items.values()) {
+        const d = Math.hypot(it.p[0] - bot.p[0], it.p[2] - bot.p[2]);
+        if (d < bestItem) {
+          bestItem = d;
+          item = it;
+        }
+      }
+      if (item && bestItem < 1.8 && !this.busy(bot, t)) {
+        this.handlePickup(null, bot, item.id);
+        return;
+      }
+      if (item && bestItem < best) target = { p: item.p, item: true, id: null };
+    }
 
     const dx = target.p[0] - bot.p[0];
     const dz = target.p[2] - bot.p[2];
@@ -1298,11 +1627,22 @@ export class GameRoom extends DurableObject {
     }
     if (busy || t < ai.nextAct || bot.chargeStart !== null) return;
     const facing = Math.abs(diff) < 0.45;
+    // Ibland kastar boten vapnet mot någon som står en bit bort
+    if (!target.item && facing && Math.abs(diff) < 0.12 && dist > 4 && dist < 10 && bot.cw !== FISTS && Math.random() < 0.04) {
+      ai.nextAct = t + 1;
+      this.handleThrow(null, bot);
+      return;
+    }
     const reach = attackSpec("q", bot.cw).reach;
     if (!facing || dist > reach + 0.3) return;
 
     ai.nextAct = t + 0.45 + Math.random() * 0.7;
+    if (target.item) return;
     const roll = Math.random();
+    if (roll < 0.06 && t >= bot.nextGrab && !bot.legless) {
+      this.handleGrab(null, bot);
+      return;
+    }
     if (roll < 0.12 && t >= bot.nextKick && !bot.legless) {
       this.handleKick(null, bot);
     } else if (roll < 0.35 && t >= bot.nextHeavy) {
@@ -1353,6 +1693,10 @@ export class GameRoom extends DurableObject {
   removePlayer(ws) {
     const info = ws.deserializeAttachment();
     if (!info || !this.players.has(info.id)) return;
+    // Brottades man? Då släpper greppet
+    const leaving = this.players.get(info.id);
+    if (leaving.holding) this.releaseGrab(leaving, "timeout");
+    if (leaving.heldBy && this.players.get(leaving.heldBy)) this.releaseGrab(this.players.get(leaving.heldBy), "timeout");
     this.players.delete(info.id);
     this.broadcast({ t: "leave", id: info.id }, ws);
 

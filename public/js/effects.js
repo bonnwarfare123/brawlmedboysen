@@ -17,6 +17,7 @@ const MAX_PRINTS = 90;
 const WET = new THREE.Color(0x7c0909);   // färskt blod
 const DRY = new THREE.Color(0x45160b);   // intorkat blod (brunare, sjunker in i sanden)
 const PRINT = new THREE.Color(0x5e4630); // fotspår (lite mörkare sand)
+const MUD_PRINT = new THREE.Color(0x2e2014); // fotspår i lera (regn): mörka och djupa
 const DIRT = new THREE.Color(0x8a6a48);  // marken (fotspåren tonar mot den)
 
 const _m = new THREE.Matrix4();
@@ -203,10 +204,11 @@ export class Effects {
     const lx = side === "L" ? 0.02 : -0.02;
     _q.setFromAxisAngle(_up, yaw + Math.PI);
     _p.set(x + lx * Math.cos(yaw), 0.013, z - lx * Math.sin(yaw));
-    _s.set(0.12, 1, 0.28);
+    if (this.wet) _s.set(0.15, 1, 0.33); // i leran blir spåren större
+    else _s.set(0.12, 1, 0.28);
     _m.compose(_p, _q, _s);
     this.prints.mesh.setMatrixAt(i, _m);
-    this.prints.mesh.setColorAt(i, PRINT);
+    this.prints.mesh.setColorAt(i, this.wet ? MUD_PRINT : PRINT);
     this.prints.items[i] = { born: this.time };
     this.prints.mesh.instanceMatrix.needsUpdate = true;
     this.prints.mesh.instanceColor.needsUpdate = true;

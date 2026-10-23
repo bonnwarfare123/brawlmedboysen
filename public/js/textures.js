@@ -705,3 +705,92 @@ export function podiumTexture(color, number, aspect = 1) {
   texture.anisotropy = 4;
   return texture;
 }
+
+// Smitt järn: mörkt och matt med hammarslag i ytan, rostfläckar och repor (släggan och stridshammaren)
+export function forgedTexture() {
+  return makeTexture("forged", 256, (ctx, n) => {
+    const rand = seeded(311);
+    ctx.fillStyle = "#4a4744";
+    ctx.fillRect(0, 0, n, n);
+    // Ojämn ton
+    for (let i = 0; i < 400; i++) {
+      ctx.fillStyle = rand() < 0.5 ? "rgba(30,28,26,0.18)" : "rgba(110,104,96,0.14)";
+      ctx.fillRect(rand() * n, rand() * n, 2 + rand() * 10, 2 + rand() * 10);
+    }
+    // Hammarslag: små gropar med ljus kant och mörk mitt
+    for (let i = 0; i < 70; i++) {
+      const x = rand() * n;
+      const y = rand() * n;
+      const r = 5 + rand() * 9;
+      const g = ctx.createRadialGradient(x, y, r * 0.2, x, y, r);
+      g.addColorStop(0, "rgba(20,18,16,0.45)");
+      g.addColorStop(0.75, "rgba(40,38,35,0.15)");
+      g.addColorStop(0.9, "rgba(150,144,136,0.35)");
+      g.addColorStop(1, "rgba(150,144,136,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Rost
+    for (let i = 0; i < 26; i++) {
+      const x = rand() * n;
+      const y = rand() * n;
+      const r = 4 + rand() * 18;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, "rgba(120,58,22,0.55)");
+      g.addColorStop(1, "rgba(120,58,22,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    // Repor
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 40; i++) {
+      ctx.strokeStyle = `rgba(170,165,155,${0.15 + rand() * 0.25})`;
+      const x = rand() * n;
+      const y = rand() * n;
+      const a = rand() * Math.PI;
+      const l = 6 + rand() * 20;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
+      ctx.stroke();
+    }
+  });
+}
+
+// Trä med ådring längs skaftet, några kvistar och slitna ljusare partier
+export function woodGrainTexture() {
+  return makeTexture("woodGrain", 256, (ctx, n) => {
+    const rand = seeded(97);
+    ctx.fillStyle = "#6e4c2e";
+    ctx.fillRect(0, 0, n, n);
+    // Ådring: vågiga linjer längs texturens höjd (= längs skaftet)
+    for (let i = 0; i < 46; i++) {
+      ctx.strokeStyle = rand() < 0.6 ? `rgba(45,28,14,${0.2 + rand() * 0.3})` : `rgba(150,110,70,${0.15 + rand() * 0.2})`;
+      ctx.lineWidth = 0.6 + rand() * 1.8;
+      const x0 = rand() * n;
+      const amp = 2 + rand() * 4;
+      const ph = rand() * 6;
+      ctx.beginPath();
+      for (let y = 0; y <= n; y += 8) ctx.lineTo(x0 + Math.sin(y * 0.03 + ph) * amp, y);
+      ctx.stroke();
+    }
+    // Kvistar: mörka ovaler med ringar runt
+    for (let i = 0; i < 4; i++) {
+      const x = rand() * n;
+      const y = rand() * n;
+      for (let r = 9; r > 0; r -= 3) {
+        ctx.fillStyle = r < 4 ? "rgba(30,18,8,0.85)" : `rgba(60,36,18,${0.25 + (9 - r) * 0.05})`;
+        ctx.beginPath();
+        ctx.ellipse(x, y, r * 0.6, r * 1.4, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // Slitet av händer: ljusare fläckar
+    for (let i = 0; i < 10; i++) {
+      ctx.fillStyle = "rgba(170,130,85,0.12)";
+      ctx.fillRect(0, rand() * n, n, 6 + rand() * 20);
+    }
+  });
+}

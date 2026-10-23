@@ -504,3 +504,16 @@ body[data-phase="matchEnd"] .help { display: none; }
 #weapon-bar b { font-size: 20px; min-width: 150px; }
 #weapon-desc { font-size: 13px; margin-top: 4px; }
 #weapon-bar .weapon-hint { font-size: 12px; opacity: 0.75; margin-top: 4px; }
+
+/* ---------- v0.14 ---------- */
+.ready-btn { width: 100%; margin-top: 12px; padding: 10px; font-size: 16px; font-weight: bold; border-radius: 8px; border: 2px solid #6b4a2b; background: #f3e6c8; color: #3a2a18; cursor: pointer; }
+.ready-btn.active { background: #4caf50; border-color: #2e7d32; color: #fff; }
+.ready-mark { margin-left: auto; font-size: 12px; opacity: 0.85; }
+#start-button.all-ready { box-shadow: 0 0 12px rgba(76, 175, 80, 0.9); }
+#awards { list-style: none; padding: 0; margin: 10px 0 0; font-size: 13px; text-align: left; }
+#awards li { padding: 3px 0; border-bottom: 1px dashed rgba(107, 74, 43, 0.3); }
+#awards b { color: #8a5a10; margin-right: 4px; }
+#replay-label { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); font: bold 22px Georgia, serif; color: #fff; letter-spacing: 3px; text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7); pointer-events: none; }
+#replay-label .rec { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #e53935; margin-right: 6px; animation: rec-blink 1s infinite; }
+@keyframes rec-blink { 50% { opacity: 0.2; } }
+body.replay #hud .panel, body.replay #combat-hud, body.replay #crosshair { visibility: hidden; }

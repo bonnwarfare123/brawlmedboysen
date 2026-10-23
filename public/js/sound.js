@@ -101,6 +101,7 @@ export class Sound {
         const data = this.noise.getChannelData(0);
         for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
         this.loadFiles();
+        if (this.rainOn) this.setRain(true); // regnet valdes innan ljudet låstes upp
       }
       if (this.ctx.state === "suspended") this.ctx.resume();
     } catch {
@@ -681,6 +682,37 @@ export class Sound {
       // Svärd mot rustning: kort metallklang med några övertoner
       const f = 1500 + Math.random() * 600;
       [1, 1.47, 2.1].forEach((r, i) => this.tone({ volume: (0.12 / (i + 1)) * v, type: "triangle", freq: f * r, decay: 0.12 + i * 0.04 }));
+    }
+  }
+
+  // Regn: ett brusande sus som pågår så länge det regnar (on = false stänger av)
+  setRain(on) {
+    this.rainOn = on;
+    if (!this.ctx) return; // startas när ljudet låses upp
+    if (on && !this.rainNode) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = 2400;
+      const hp = this.ctx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.frequency.value = 350;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, this.ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.09, this.ctx.currentTime + 1.5);
+      src.connect(lp);
+      lp.connect(hp);
+      hp.connect(g);
+      g.connect(this.sfx);
+      src.start();
+      this.rainNode = { src, g };
+    } else if (!on && this.rainNode) {
+      const { src, g } = this.rainNode;
+      g.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.8);
+      src.stop(this.ctx.currentTime + 0.9);
+      this.rainNode = null;
     }
   }
 

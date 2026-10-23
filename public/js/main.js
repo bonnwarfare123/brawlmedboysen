@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { CONFIG } from "./config.js";
 import {
   COLORS, ARENA_RX, ARENA_RZ, ROOM_CODE_RE, VERSION, COMBAT, MATCH, ARMORS, HELMETS, SHIELDS, WEAPONS, CAPES, MODE_NAMES, TEAMS,
-  attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, TIME_NAMES, MAX_BOTS,
+  attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, TIME_NAMES, MAX_BOTS, WEATHERS, AWARDS,
 } from "./shared.js";
 import { buildArena, makeSky } from "./arena.js";
 import { Knight, setEnvironment } from "./knight.js";
@@ -12,6 +12,7 @@ import { Effects } from "./effects.js";
 import { Debris } from "./ragdoll.js";
 import { Sound } from "./sound.js";
 import { Net } from "./net.js";
+import { Weather } from "./weather.js";
 
 // ---------------------------------------------------------------------------
 // Hjälpfunktioner
@@ -125,24 +126,45 @@ scene.add(arena.group);
 // Dag eller kväll (lobbyledaren väljer). På kvällen står solen lågt och är orange,
 // himlen är mörkare och eldkorgarna lyser upp arenan.
 let timeOfDay = "day";
+let weatherKind = "sun";
+const weather = new Weather(scene);
 function applyTime(value) {
   timeOfDay = TIMES.includes(value) ? value : "day";
+  applyAtmosphere();
+}
+// Sol, regn eller dimma
+function applyWeather(value) {
+  weatherKind = WEATHERS.includes(value) ? value : "sun";
+  weather.set(weatherKind);
+  arena.setWet(weatherKind === "rain");
+  effects.wet = weatherKind === "rain";
+  sound.setRain(weatherKind === "rain");
+  applyAtmosphere();
+}
+// Ljus, himmel och dimma räknas ut från både tid på dygnet och väder
+function applyAtmosphere() {
   const evening = timeOfDay === "evening";
-  const fogColor = evening ? 0x6a5a70 : SKY;
+  const rain = weatherKind === "rain";
+  const fog = weatherKind === "fog";
+  let fogColor = evening ? 0x6a5a70 : SKY;
+  if (rain) fogColor = evening ? 0x4a4a58 : 0x8a949e;
+  if (fog) fogColor = evening ? 0x5a5662 : 0xb8bec4;
   scene.background.set(fogColor);
   scene.fog.color.set(fogColor);
-  scene.fog.near = evening ? 45 : 70;
-  scene.fog.far = evening ? 180 : 230;
+  scene.fog.near = fog ? 4 : rain ? 25 : evening ? 45 : 70;
+  scene.fog.far = fog ? 42 : rain ? 110 : evening ? 180 : 230;
+  const dim = rain ? 0.5 : fog ? 0.65 : 1; // molnigt: solen syns knappt
   skyLight.color.set(evening ? 0x8a8ac8 : 0xbfd8ff);
   skyLight.groundColor.set(evening ? 0x5a3a28 : 0x806040);
-  skyLight.intensity = evening ? 0.7 : 1.25;
-  sun.color.set(evening ? 0xff9a55 : 0xffe8c8);
-  sun.intensity = evening ? 1.6 : 2.7;
+  skyLight.intensity = (evening ? 0.7 : 1.25) * (rain || fog ? 1.15 : 1);
+  sun.color.set(evening ? 0xff9a55 : rain || fog ? 0xdde4ea : 0xffe8c8);
+  sun.intensity = (evening ? 1.6 : 2.7) * dim;
   if (evening) sun.position.set(26, 7, -14);
   else sun.position.set(14, 24, 10);
   renderer.toneMappingExposure = evening ? 1.15 : 1.05;
   setEnvironment(environmentFor(evening));
   arena.setTime(evening);
+  arena.setOvercast?.(rain || fog);
 }
 
 const effects = new Effects(scene);
@@ -433,7 +455,7 @@ function lineup() {
 // och resten står framför och applåderar. Kameran glider runt pallen.
 // ---------------------------------------------------------------------------
 
-const CEREMONY_WAIT = 2.2; // sekunder att se sista dråpet innan pallen kommer
+const CEREMONY_WAIT = 2.2; // sekunder att se sista dråpet innan pallen kommer (utan repris)
 const CEREMONY_RISE = 1.7; // så lång tid tar det för pallen att resa sig
 let ceremony = null;       // { at, placed, ranks: Map(id → 1–3), clappers: [id] }
 
@@ -450,7 +472,9 @@ function startCeremony(msg) {
   podiumOrder(msg).forEach((id, i) => {
     if (id && playerById(id)) ranks.set(id, i + 1);
   });
-  ceremony = { at: seconds() + CEREMONY_WAIT, placed: false, risen: false, ranks, clappers: [] };
+  // Först en repris av matchens sista dråp (om det finns inspelat), sedan prispallen
+  const replayLength = startReplay();
+  ceremony = { at: seconds() + (replayLength > 0 ? REPLAY_DELAY + replayLength + 0.5 : CEREMONY_WAIT), placed: false, risen: false, ranks, clappers: [] };
 }
 
 function ceremonyActive() {
@@ -458,6 +482,7 @@ function ceremonyActive() {
 }
 
 function endCeremony() {
+  stopReplay();
   ceremony = null;
   arena.podium.hide();
   $("scoreboard").hidden = true;
@@ -532,6 +557,132 @@ function updateCeremony(dt) {
 }
 
 // ---------------------------------------------------------------------------
+// Repris: alla riddares kroppsdelar spelas in (30 gånger i sekunden, de senaste 10 sekunderna).
+// När matchen är slut visas matchens sista dråp igen från en annan vinkel.
+// ---------------------------------------------------------------------------
+
+const REC_RATE = 30;
+const REC_SECONDS = 10;
+const REPLAY_BEFORE = 2.2; // sekunder före dråpet
+const REPLAY_AFTER = 1.5;  // och efter
+const REPLAY_DELAY = 0.6;  // paus innan reprisen börjar
+const recording = [];      // { t, objs: [Object3D], data: Float32Array, visible: [] }
+let recTimer = 0;
+let lastKill = null;       // { t, killer, victim, pos: Vector3, dir: Vector3 }
+let replay = null;         // { start, end, at, startedAt, touched: Set, center, side }
+
+// Allt som ska spelas in: riddarnas grupper och kroppsdelar, och lösa kroppsdelar på marken
+function recordTargets() {
+  const list = [];
+  for (const p of allPlayers()) {
+    const k = p.knight;
+    if (!k || !k.group.parent) continue;
+    list.push(k.group);
+    for (const seg of Object.values(k.seg)) if (!seg.userData.detached) list.push(seg);
+  }
+  for (const r of debris.items) for (const b of r.bodies) if (b.object.parent) list.push(b.object);
+  return list;
+}
+
+function recordFrame(dt) {
+  if (replay || !(phase === "round" || phase === "roundEnd")) return;
+  recTimer += dt;
+  if (recTimer < 1 / REC_RATE) return;
+  recTimer = 0;
+  const objs = recordTargets();
+  // Återanvänd den äldsta bilden när bufferten är full
+  const frame = recording.length >= REC_RATE * REC_SECONDS ? recording.shift() : { data: new Float32Array(0) };
+  if (frame.data.length < objs.length * 16) frame.data = new Float32Array(objs.length * 16 + 64);
+  frame.t = seconds();
+  frame.objs = objs;
+  frame.visible = objs.map((o) => o.visible);
+  objs.forEach((o, i) => frame.data.set(o.matrixWorld.elements, i * 16));
+  recording.push(frame);
+}
+
+function noteKillForReplay(attacker, victim) {
+  if (!victim) return;
+  const pos = positionOf(victim).clone();
+  const dir = attacker ? pos.clone().sub(positionOf(attacker)).setY(0) : new THREE.Vector3(1, 0, 0);
+  if (dir.lengthSq() < 0.01) dir.set(1, 0, 0);
+  dir.normalize();
+  lastKill = { t: seconds(), pos, dir, from: attacker ? positionOf(attacker).clone() : pos.clone() };
+}
+
+// Returnerar hur lång reprisen blir (0 = ingen)
+function startReplay() {
+  if (!lastKill || !recording.length || seconds() - lastKill.t > REC_SECONDS - REPLAY_BEFORE) return 0;
+  const start = Math.max(recording[0].t, lastKill.t - REPLAY_BEFORE);
+  const end = Math.min(recording[recording.length - 1].t, lastKill.t + REPLAY_AFTER);
+  if (end - start < 1) return 0;
+  const center = lastKill.pos.clone().lerp(lastKill.from, 0.5);
+  // Kameran ställs vid sidan av slaget (vinkelrätt mot riktningen), så man ser båda riddarna
+  const side = new THREE.Vector3(-lastKill.dir.z, 0, lastKill.dir.x);
+  replay = { start, end, startedAt: seconds() + REPLAY_DELAY, touched: new Set(), center, side, ended: false };
+  lastKill = null;
+  return end - start;
+}
+
+const _inv = new THREE.Matrix4();
+const _rm = new THREE.Matrix4();
+function updateReplay() {
+  if (!replay) return false;
+  const now = seconds();
+  if (now < replay.startedAt) return false;
+  const t = replay.start + (now - replay.startedAt);
+  if (t > replay.end) {
+    stopReplay();
+    return false;
+  }
+  // Bilden närmast tiden t
+  let frame = recording[0];
+  for (const f of recording) {
+    if (f.t > t) break;
+    frame = f;
+  }
+  document.body.classList.add("replay");
+  $("replay-label").hidden = false;
+  // Sätt varje del där den var: lokal matris = (förälderns inspelade matris)⁻¹ × inspelad världsmatris
+  const index = new Map(frame.objs.map((o, i) => [o, i]));
+  frame.objs.forEach((o, i) => {
+    if (!o.parent) return;
+    _rm.fromArray(frame.data, i * 16);
+    const pi = index.get(o.parent);
+    if (pi !== undefined) _inv.fromArray(frame.data, pi * 16).invert();
+    else _inv.copy(o.parent.matrixWorld).invert();
+    o.matrixAutoUpdate = false;
+    o.matrix.multiplyMatrices(_inv, _rm);
+    o.matrixWorldNeedsUpdate = true;
+    o.visible = frame.visible[i];
+    replay.touched.add(o);
+  });
+  // Kameran glider långsamt runt dråpet
+  const k = (t - replay.start) / Math.max(0.1, replay.end - replay.start);
+  const c = replay.center;
+  const s = replay.side;
+  const swing = (k - 0.5) * 0.9;
+  camera.position.set(
+    c.x + (s.x * Math.cos(swing) - s.z * Math.sin(swing)) * 4.2,
+    1.5 + k * 0.4,
+    c.z + (s.z * Math.cos(swing) + s.x * Math.sin(swing)) * 4.2,
+  );
+  camera.lookAt(c.x, 1.0, c.z);
+  return true;
+}
+
+function stopReplay() {
+  if (!replay) return;
+  for (const o of replay.touched) {
+    o.matrixAutoUpdate = true;
+  }
+  // Kroppar på marken tillbaka där fysiken har dem
+  for (const r of debris.items) r.sync();
+  replay = null;
+  document.body.classList.remove("replay");
+  $("replay-label").hidden = true;
+}
+
+// ---------------------------------------------------------------------------
 // Nätverk: vad som händer när servern skickar något
 // ---------------------------------------------------------------------------
 
@@ -580,13 +731,16 @@ const net = new Net({
       nextRoll: 0,
       downUntil: 0,      // ligger på marken (omsparkad) till den här tiden
       legless: false,    // båda benen avhuggna: sitter på marken
-      streak: 0,         // dråp i rad utan att dö (för utroparen)
+      ready: !!you.ready, // redo-knappen i lobbyn
+      holding: null,     // id på den jag håller fast
+      heldBy: null,      // id på den som håller fast mig
     };
     me.knight = createKnight(me);
     msg.players.forEach(addOther);
     hostId = msg.host;
     round = msg.round;
     applyTime(msg.time);
+    applyWeather(msg.weather);
 
     sound.startMusic(msg.phase !== "lobby");
     history.replaceState(null, "", `?rum=${roomCode}`);
@@ -715,6 +869,110 @@ const net = new Net({
     renderLobby();
   },
 
+  // Lobbyledaren valde väder
+  weather(msg) {
+    applyWeather(msg.v);
+    renderLobby();
+  },
+
+  // Någon tryckte på redo-knappen
+  ready(msg) {
+    const p = playerById(msg.id);
+    if (!p) return;
+    p.ready = msg.on === 1;
+    renderLobby();
+  },
+
+  // Någon kastade sitt vapen: det flyger iväg och landar (servern skickar träffen separat)
+  throw(msg) {
+    const p = playerById(msg.id);
+    if (!p) return;
+    const knight = p.knight;
+    if (p !== me) knight.playAttack("x");
+    const windup = COMBAT.throw.windup;
+    const w = msg.w;
+    p.cw = FISTS;
+    // Vapnet lämnar handen när kastet släpps
+    setTimeout(() => {
+      if (knight.disposed || p.knight !== knight) return;
+      const hand = knight.segmentPosition("handR", new THREE.Vector3()) || new THREE.Vector3(...msg.from);
+      spawnItem(msg.item, knight, hand, w, { fly: Math.max(0.1, msg.time - windup), to: msg.to });
+      knight.dropWeapon();
+      sound.swing(hand, true, "h", SWING_SOUND[w] ?? 0);
+    }, windup * 1000);
+    if (p === me) renderCooldowns();
+  },
+
+  // Brottning
+  grabTry(msg) {
+    const p = playerById(msg.id);
+    if (p && p !== me) p.knight.setGrab("reach");
+  },
+
+  grab(msg) {
+    const holder = playerById(msg.id);
+    const target = playerById(msg.target);
+    if (!holder || !target) return;
+    holder.knight.setGrab("hold");
+    target.knight.setGrab("held");
+    holder.holding = target.id;
+    target.heldBy = holder.id;
+    sound.grunt(positionOf(holder), voiceOf(holder), true);
+    sound.kickHit(positionOf(target));
+    arena.cheer(0.5);
+    if (target === me) {
+      stopCharging(false);
+      me.vel.set(0, 0, 0);
+      callout(`${holder.name} har tagit tag i dig! Tryck R snabbt för att slita dig loss`, 1800);
+    }
+    if (holder === me) callout("Vänsterklick: slå · R: knuffa iväg · F: kasta omkull", 2000);
+  },
+
+  struggle(msg) {
+    const p = playerById(msg.id);
+    if (p) p.knight.playStruggle();
+  },
+
+  grabEnd(msg) {
+    const holder = playerById(msg.id);
+    const target = playerById(msg.target);
+    if (holder) {
+      holder.knight.setGrab(null);
+      holder.holding = null;
+    }
+    if (!target) return;
+    target.knight.setGrab(null);
+    target.heldBy = null;
+    if (target === me) nextGrabTry = seconds() + 1; // inte ta tag direkt av alla knapptryck man slet med
+    const pos = positionOf(target);
+    if (msg.how === "shove") {
+      target.knight.playStagger();
+      effects.dust(pos, 8, 1.5);
+      sound.kickHit(pos);
+      arena.cheer(0.6);
+      if (target === me) {
+        me.knock.set(msg.dir[0] * COMBAT.grab.shove, 0, msg.dir[1] * COMBAT.grab.shove);
+        me.staggerUntil = seconds() + 0.9;
+        shake = 0.2;
+      }
+    } else if (msg.how === "down") {
+      target.knight.playKnockdown();
+      sound.fall(pos);
+      effects.dust(pos, 14, 2);
+      arena.cheer(1);
+      if (target === me) {
+        knockMeDown();
+        shake = 0.3;
+        callout("Kastad omkull! (Ctrl + Mellanslag rullar undan)", 1300);
+      }
+    } else if (msg.how === "escape") {
+      if (holder) holder.knight.playStagger();
+      sound.grunt(pos, voiceOf(target), true);
+      if (holder === me) me.staggerUntil = seconds() + 0.6;
+      if (target === me) callout("Du slet dig loss!", 900);
+    }
+  },
+
   // Någon rullar
   roll(msg) {
     const other = others.get(msg.id);
@@ -797,10 +1055,16 @@ const net = new Net({
     // Ny match: rustningarna är hela och rena igen
     if (round === 1) {
       for (const p of allPlayers()) p.wear = freshWear();
+      recording.length = 0;
+      lastKill = null;
     }
     for (const p of allPlayers()) {
       p.helmetOff = false;
       p.cw = p.look?.w ?? 0; // alla börjar rundan med sitt valda vapen
+    }
+    for (const p of allPlayers()) {
+      p.holding = null;
+      p.heldBy = null;
     }
     if (me) {
       me.crouch = false;
@@ -935,6 +1199,19 @@ const net = new Net({
         tr.append(name, wins, kills);
         tbody.appendChild(tr);
       });
+    // Utmärkelser: vem hade mest av vad?
+    const awardList = $("awards");
+    awardList.innerHTML = "";
+    for (const a of msg.awards || []) {
+      const info = AWARDS.find((x) => x.key === a.key);
+      const p = playerById(a.id);
+      if (!info || !p) continue;
+      const li = document.createElement("li");
+      const b = document.createElement("b");
+      b.textContent = info.title;
+      li.append(b, ` ${p.name}${p === me ? " (du)" : ""} – ${info.text} (${a.v})`);
+      awardList.appendChild(li);
+    }
     $("scoreboard").hidden = true;
     $("scoreboard").classList.add("corner");
     if (document.pointerLockElement) document.exitPointerLock();
@@ -953,6 +1230,9 @@ const net = new Net({
     clearItems();
     for (const p of allPlayers()) {
       p.cw = p.look?.w ?? 0;
+      p.ready = !!p.bot;
+      p.holding = null;
+      p.heldBy = null;
       p.hp = COMBAT.maxHp;
       p.dead = false;
       p.spectating = false;
@@ -983,6 +1263,7 @@ const net = new Net({
   },
 
   atk(msg) {
+    if (msg.k === "p" && msg.id === me?.id) return; // mitt eget slag visas redan
     const other = others.get(msg.id);
     if (!other) return;
     other.knight.playAttack(msg.k);
@@ -1179,6 +1460,7 @@ const net = new Net({
       victim.knight.group.visible = false;
 
       addKill(attacker ? attacker.name : "?", victim.name);
+      noteKillForReplay(attacker, victim);
       if (victim === me) {
         me.diedAt = seconds();
         stopCharging(false);
@@ -1213,6 +1495,7 @@ function addOther(player) {
     look: player.look,
     cw: player.cw ?? player.look?.w ?? 0,
     bot: !!player.bot,
+    ready: !!player.ready,
     kills: player.kills || 0,
     wins: player.wins || 0,
     knight: null,
@@ -1276,7 +1559,8 @@ const items = new Map(); // id → { id, w, p, group, from, t }
 let armory = null;       // en osynlig riddare som bygger vapenmodeller när ingen annan kan
 
 // Lägg ut ett vapen. builder = riddaren vars material används, from = varifrån det flyger
-function spawnItem(item, builder, from, kind = item.w) {
+// opts.fly = flygtid i sekunder (kastat vapen: rakt och snurrande), annars en kort båge ner till marken
+function spawnItem(item, builder, from, kind = item.w, opts = {}) {
   if (!item || items.has(item.id)) return;
   let model = null;
   try {
@@ -1298,6 +1582,8 @@ function spawnItem(item, builder, from, kind = item.w) {
     id: item.id, w: item.w, p: item.p, group, lift,
     from: from ? from.clone() : new THREE.Vector3(item.p[0], 1, item.p[2]),
     t: 0,
+    fly: opts.fly ?? 0.5,
+    thrown: !!opts.fly,
   };
   group.position.copy(entry.from);
   items.set(item.id, entry);
@@ -1321,21 +1607,33 @@ function clearItems() {
 
 // Vapnen flyger i en båge från handen till marken och snurrar; sen ligger de still
 function updateItems(dt) {
-  const FLY = 0.5;
   for (const item of items.values()) {
+    const FLY = item.fly;
     if (item.t >= FLY) continue;
     item.t = Math.min(FLY, item.t + dt);
     const f = item.t / FLY;
     const g = item.group;
-    g.position.set(
-      item.from.x + (item.p[0] - item.from.x) * f,
-      item.from.y * (1 - f) + item.lift * f + Math.sin(f * Math.PI) * 0.6,
-      item.from.z + (item.p[2] - item.from.z) * f,
-    );
-    g.children[0].rotation.z = (1 - f) * 5;
+    if (item.thrown) {
+      // Kastat: flyger nästan rakt, snurrar runt (som en yxa i luften) och faller sista biten
+      const drop = f > 0.75 ? ((f - 0.75) / 0.25) ** 2 : 0;
+      g.position.set(
+        item.from.x + (item.p[0] - item.from.x) * f,
+        item.from.y * (1 - drop) + item.lift * drop - Math.sin(f * Math.PI) * 0.1,
+        item.from.z + (item.p[2] - item.from.z) * f,
+      );
+      g.children[0].rotation.x = Math.PI / 2 + (f < 1 ? item.t * 14 : 0);
+    } else {
+      g.position.set(
+        item.from.x + (item.p[0] - item.from.x) * f,
+        item.from.y * (1 - f) + item.lift * f + Math.sin(f * Math.PI) * 0.6,
+        item.from.z + (item.p[2] - item.from.z) * f,
+      );
+      g.children[0].rotation.z = (1 - f) * 5;
+    }
     if (f >= 1) {
       g.children[0].rotation.z = 0;
-      effects.dust(g.position, 3, 0.6);
+      g.children[0].rotation.x = Math.PI / 2;
+      effects.dust(g.position, item.thrown ? 6 : 3, item.thrown ? 1 : 0.6);
       sound.pickup?.(g.position);
     }
   }
@@ -1395,7 +1693,7 @@ function knockMeDown() {
 
 // Ctrl (eller C) + Mellanslag: rulla åt det håll man går (framåt om man står still). Går också att rulla upp från marken.
 function tryRoll() {
-  if (!me || me.dead || phase !== "round" || me.legless) return;
+  if (!me || me.dead || phase !== "round" || me.legless || me.holding || me.heldBy) return;
   const t = seconds();
   if (t < me.nextRoll || rolling() || !me.onGround) return;
   if (t < me.staggerUntil && !isDown()) return;
@@ -1521,12 +1819,18 @@ function renderLobby() {
     b.disabled = !isHost;
   });
   $("mode-info").textContent = MODE_INFO[mode]();
-  $("lobby-rules").textContent = "Rustning, hjälm och mantel är bara utseende. Vapnen är olika – tvåhandsvapen har ingen sköld.";
+  $("lobby-rules").textContent = "Rustning, hjälm och mantel är bara utseende. Vapnen är olika – tvåhandsvapen har ingen sköld. G kastar vapnet, R tar tag i någon.";
   // Dag eller kväll, och träningsmotståndare (bara lobbyledaren väljer)
   document.querySelectorAll(".time-btn").forEach((b) => {
     b.classList.toggle("active", b.dataset.time === timeOfDay);
     b.disabled = !isHost;
   });
+  document.querySelectorAll(".weather-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.weather === weatherKind);
+    b.disabled = !isHost;
+  });
+  $("ready-button").textContent = me.ready ? "✅ Redo! (tryck för att ångra)" : "Jag är redo";
+  $("ready-button").classList.toggle("active", !!me.ready);
   const botCount = allPlayers().filter((p) => p.bot).length;
   $("bot-row").hidden = !isHost && botCount === 0;
   $("bot-add").disabled = !isHost || botCount >= MAX_BOTS || allPlayers().length >= 6;
@@ -1546,7 +1850,10 @@ function renderLobby() {
     dot.style.background = cssColor(displayColor(p));
     const label = document.createElement("span");
     label.textContent = (p.id === hostId ? "👑 " : "") + p.name + (p === me ? " (du)" : "") + (p.bot ? " 🤖" : "");
-    li.append(dot, label);
+    const ready = document.createElement("span");
+    ready.className = "ready-mark";
+    ready.textContent = p.ready ? "✅ redo" : "⏳";
+    li.append(dot, label, ready);
     list.appendChild(li);
   };
   if (mode === "team") {
@@ -1580,13 +1887,16 @@ function renderLobby() {
   const count = allPlayers().length;
   $("start-button").hidden = !isHost;
   $("start-button").disabled = count < MATCH.minPlayers;
+  const readyCount = allPlayers().filter((p) => p.ready).length;
+  const allReady = readyCount === count;
+  $("start-button").classList.toggle("all-ready", allReady && count >= MATCH.minPlayers);
   if (isHost) {
     $("lobby-wait").textContent = count < MATCH.minPlayers
       ? "Skicka inbjudningslänken till dina vänner – minst två riddare behövs."
-      : "Alla redo? Starta när du vill!";
+      : allReady ? "Alla är redo – starta matchen!" : `${readyCount} av ${count} är redo. Du kan starta ändå.`;
   } else {
     const host = playerById(hostId);
-    $("lobby-wait").textContent = `Väntar på att ${host ? host.name : "lobbyledaren"} startar matchen…`;
+    $("lobby-wait").textContent = `${readyCount} av ${count} redo · väntar på att ${host ? host.name : "lobbyledaren"} startar matchen…`;
   }
 }
 
@@ -1624,6 +1934,17 @@ document.querySelectorAll(".time-btn").forEach((button) => {
     if (!me || phase !== "lobby" || me.id !== hostId) return;
     net.send({ t: "time", v: button.dataset.time });
   });
+});
+document.querySelectorAll(".weather-btn").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (!me || phase !== "lobby" || me.id !== hostId) return;
+    net.send({ t: "weather", v: button.dataset.weather });
+  });
+});
+$("ready-button").addEventListener("click", () => {
+  if (!me || phase !== "lobby") return;
+  sound.unlock();
+  net.send({ t: "ready", on: me.ready ? 0 : 1 });
 });
 $("bot-add").addEventListener("click", () => {
   if (me && phase === "lobby") net.send({ t: "bot", add: 1 });
@@ -1839,11 +2160,13 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     // Ctrl (eller C) + Mellanslag = rulla, annars hoppa
     if (!e.repeat) {
-      if (crouchHeld() || isDown()) tryRoll();
+      if (me.heldBy) net.send({ t: "struggle" }); // fasthållen: sliter för att komma loss
+      else if (crouchHeld() || isDown()) tryRoll();
       else tryJump();
     }
   }
-  if (e.code === "KeyG" && !e.repeat) {
+  if (e.code === "F2" && !e.repeat) {
+    e.preventDefault();
     lowQuality = !lowQuality;
     applyQuality();
   }
@@ -1851,6 +2174,8 @@ window.addEventListener("keydown", (e) => {
   if (e.code === "KeyQ" && locked()) tryAttack("t");
   if (e.code === "KeyF" && locked()) tryKick();
   if (e.code === "KeyE") tryPickup();
+  if (e.code === "KeyG" && locked()) tryThrow();
+  if (e.code === "KeyR" && locked()) tryGrab();
   if (e.code === "KeyZ") changeWeapon(-1);
   if (e.code === "KeyX") changeWeapon(1);
   if (e.code === "Digit1" || e.code === "Digit2" || e.code === "Digit3") tryEmote(Number(e.code.slice(5)));
@@ -1948,7 +2273,7 @@ let mouseDownAt = 0;
 let charging = false;
 
 function canAct() {
-  return me && phase === "round" && !me.dead && seconds() >= me.staggerUntil && !isDown() && !rolling();
+  return me && phase === "round" && !me.dead && seconds() >= me.staggerUntil && !isDown() && !rolling() && !me.heldBy;
 }
 
 document.addEventListener("mousedown", (e) => {
@@ -2003,6 +2328,16 @@ function stopCharging(tellServer) {
 function tryAttack(kind) {
   if (!canAct()) return;
   const t = seconds();
+  // Håller man fast någon blir det ett knytnävsslag
+  if (me.holding) {
+    if (t < me.nextQuick) return;
+    me.nextQuick = t + COMBAT.grab.punchCooldown;
+    me.knight.playAttack("p");
+    sound.swing(me.pos, false, "q", 0);
+    sound.grunt(me.pos, voiceOf(me), false);
+    net.send({ t: "atk", k: "q" });
+    return;
+  }
   if (kind === "h" ? t < me.nextHeavy : kind === "t" ? t < me.nextThrust : t < me.nextQuick) {
     if (kind === "t") callout("Stöten är inte redo än", 600);
     return;
@@ -2041,6 +2376,10 @@ function checkQuintain(player, kind) {
 }
 
 function tryKick() {
+  if (me?.holding && canAct()) {
+    net.send({ t: "kick" }); // kasta omkull den man håller fast
+    return;
+  }
   if (!canAct() || me.legless || seconds() < me.nextKick) return;
   me.nextKick = seconds() + COMBAT.kick.cooldown;
   me.attackUntil = seconds() + 0.4;
@@ -2067,11 +2406,43 @@ function emoteSound(e, pos, player) {
 }
 
 function tryParry() {
-  if (!canAct() || seconds() < me.nextParry) return;
+  if (!canAct() || me.holding || seconds() < me.nextParry) return;
   me.nextParry = seconds() + COMBAT.parry.cooldown;
   me.knight.playParry();
   sendStateNow();
   net.send({ t: "par" });
+}
+
+// G: kasta vapnet rakt fram
+function tryThrow() {
+  if (!canAct() || me.holding || weaponOf(me) === FISTS || me.knight.seg.handR.userData.detached) return;
+  stopCharging(true);
+  me.knight.playAttack("x");
+  me.attackUntil = seconds() + 0.5;
+  me.nextQuick = Math.max(me.nextQuick, seconds() + COMBAT.throw.windup + 0.2);
+  sound.grunt(me.pos, voiceOf(me), true);
+  sendStateNow();
+  net.send({ t: "throw" });
+}
+
+// R: ta tag i någon framför (håller man redan fast någon: knuffa iväg den; är man fasthållen: slit)
+let nextGrabTry = 0;
+function tryGrab() {
+  if (!me || me.dead || phase !== "round") return;
+  if (me.heldBy) {
+    net.send({ t: "struggle" });
+    return;
+  }
+  if (me.holding) {
+    net.send({ t: "grab" });
+    return;
+  }
+  if (!canAct() || me.legless || seconds() < nextGrabTry) return;
+  nextGrabTry = seconds() + COMBAT.grab.cooldown;
+  stopCharging(true);
+  me.knight.setGrab("reach");
+  sendStateNow();
+  net.send({ t: "grab" });
 }
 
 function tryJump() {
@@ -2160,7 +2531,7 @@ function updateMe(dt) {
   const roll = inRound && rolling();
   const down = inRound && isDown();
   // Utan ben, omkull eller mitt i en rullning styr man inte själv vart man går
-  const canMove = inRound && !me.legless && !down && !roll;
+  const canMove = inRound && !me.legless && !down && !roll && !me.heldBy;
   // Huka: håll C (inte i luften, inte utan ben)
   me.crouch = canMove && me.onGround && crouchHeld();
   me.knight.setCrouch(me.crouch);
@@ -2179,6 +2550,7 @@ function updateMe(dt) {
     let speed = running ? CONFIG.runSpeed : CONFIG.walkSpeed;
     speed *= COMBAT.legLossSpeed[Math.min(2, me.knight.legLoss)]; // avhuggna ben gör en långsam
     if (me.crouch) speed *= COMBAT.crouch.speed;
+    if (me.holding) speed *= COMBAT.grab.moveFactor; // släpar runt på någon
     if (t < me.staggerUntil) speed *= CONFIG.staggerMoveFactor;
     else if (charging) speed *= CONFIG.chargeMoveFactor;
     else if (t < me.attackUntil) speed *= CONFIG.attackMoveFactor;
@@ -2197,6 +2569,17 @@ function updateMe(dt) {
     me.vel.lerp(wantedVel, 1 - Math.exp(-dt * accel));
   }
   me.pos.addScaledVector(me.vel, dt);
+  // Fasthållen: står precis framför den som håller fast en, vänd mot den
+  if (inRound && me.heldBy) {
+    const holder = others.get(me.heldBy);
+    if (holder) {
+      const hy = holder.knight.group.rotation.y;
+      const hp = holder.knight.group.position;
+      me.pos.set(hp.x + Math.sin(hy) * 0.8, 0, hp.z + Math.cos(hy) * 0.8);
+      me.yaw = hy + Math.PI;
+      me.vel.set(0, 0, 0);
+    }
+  }
   // Knuff (spark eller utfall) som avtar snabbt
   me.pos.addScaledVector(me.knock, dt);
   me.knock.multiplyScalar(Math.exp(-dt * 5));
@@ -2511,21 +2894,28 @@ function frame() {
     fpsStart = now;
   }
 
-  if (me) {
-    updateCharging();
-    updateMe(dt);
-    updateNetwork(dt);
-    renderCooldowns();
+  const replaying = replay && seconds() >= replay.startedAt;
+  if (!replaying) {
+    if (me) {
+      updateCharging();
+      updateMe(dt);
+      updateNetwork(dt);
+      renderCooldowns();
+    }
+    updateOthers(dt);
   }
-  updateOthers(dt);
   updateCeremony(dt);
   updateItems(dt);
-  updateBleeding(dt);
-  debris.update(dt);
+  weather.update(dt, camera.position);
+  if (!replaying) {
+    updateBleeding(dt);
+    debris.update(dt);
+  }
   effects.update(dt);
   updateFightCenter(dt);
   arena.update(dt, smoothCenter);
-  updateCamera(dt);
+  if (!updateReplay()) updateCamera(dt);
+  recordFrame(dt);
   updateAim();
   sound.setListener(camera.position.x, camera.position.y, camera.position.z);
   renderer.render(scene, camera);

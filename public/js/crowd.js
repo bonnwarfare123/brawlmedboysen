@@ -147,6 +147,41 @@ function buildShapes() {
   ]);
   // Saker i händerna
   S.kerchief = part(new THREE.PlaneGeometry(0.16, 0.14, 2, 1), 1, [0, -0.36, 0.06]);
+  // Nya hattar: chaperon (virad tygturban med en svans), blomsterkrans och linnehätta
+  S.chaperon = merge([
+    part(new THREE.TorusGeometry(0.1, 0.045, 8, 16), 1, [0, 0.19, 0], [1.05, 1.05, 0.9], [Math.PI / 2, 0, 0]),
+    part(new THREE.SphereGeometry(0.095, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), 0.85, [0, 0.2, 0], [1, 0.7, 1]),
+    part(new THREE.BoxGeometry(0.06, 0.26, 0.03), 0.8, [0.1, 0.08, -0.06], [1, 1, 1], [0.2, 0, 0.35]),
+  ]);
+  S.wreath = merge([
+    ...Array.from({ length: 10 }, (_, k) => {
+      const a = (k / 10) * Math.PI * 2;
+      return part(new THREE.SphereGeometry(0.024, 6, 5), k % 3 === 0 ? [1, 0.85, 0.3] : k % 3 === 1 ? [0.95, 0.4, 0.5] : [0.35, 0.6, 0.25], [Math.sin(a) * 0.098, 0.18, Math.cos(a) * 0.098]);
+    }),
+  ]);
+  S.coif = merge([
+    part(new THREE.SphereGeometry(0.11, 12, 8, 0, Math.PI * 2, 0, 1.75), 1, [0, 0.105, -0.01], [1.03, 1.08, 1.05]),
+    part(new THREE.TorusGeometry(0.07, 0.008, 4, 10, Math.PI), 0.8, [0, 0.06, 0.02], [1.1, 1, 1], [Math.PI, 0, 0]),
+  ]);
+  // Förkläde, mantel för de fina, käpp för de gamla
+  S.apron = part(new THREE.BoxGeometry(0.2, 0.3, 0.012), 1, [0, 0.0, 0.13], [1, 1, 1], [-0.08, 0, 0]);
+  S.cloak = merge([
+    part(new THREE.CylinderGeometry(0.17, 0.25, 0.5, 12, 1, true, Math.PI * 0.55, Math.PI * 0.9), 1, [0, 0.2, -0.01]),
+    part(new THREE.TorusGeometry(0.13, 0.025, 5, 14), 0.75, [0, 0.43, 0], [1.25, 1, 0.9], [Math.PI / 2, 0, 0]),
+  ]);
+  S.cane = merge([
+    part(new THREE.CylinderGeometry(0.012, 0.014, 0.8, 6), 1, [0, -0.72, 0.04]),
+    part(new THREE.TorusGeometry(0.03, 0.01, 4, 8, Math.PI), 1, [0.03, -0.33, 0.04], [1, 1, 1], [0, 0, 0]),
+  ]);
+  // Mat: en kycklinglår (kött och ett ben), och en mössa att vifta med
+  S.drumstick = merge([
+    part(new THREE.SphereGeometry(0.035, 8, 6), [0.6, 0.35, 0.18], [0, -0.36, 0.07], [1, 1.4, 1]),
+    part(new THREE.CylinderGeometry(0.008, 0.008, 0.06, 5), [0.95, 0.92, 0.85], [0, -0.31, 0.07]),
+  ]);
+  S.handHat = merge([
+    part(new THREE.CylinderGeometry(0.16, 0.16, 0.012, 12), 1, [0, -0.35, 0.08], [1, 1, 1], [Math.PI / 2, 0, 0]),
+    part(new THREE.CylinderGeometry(0.08, 0.095, 0.08, 10), 1, [0, -0.35, 0.12], [1, 1, 1], [Math.PI / 2, 0, 0]),
+  ]);
   S.mug = merge([
     part(new THREE.CylinderGeometry(0.035, 0.038, 0.09, 8), 1, [0, -0.34, 0.06]),
     part(new THREE.TorusGeometry(0.022, 0.007, 4, 8), 0.7, [0.04, -0.34, 0.06], [1, 1, 1], [0, Math.PI / 2, 0]),
@@ -170,30 +205,40 @@ export class Crowd {
     this.people = spots.map((spot, i) => {
       const r = rand();
       const front = spot.row === 0;
-      let type = r < 0.38 ? "woman" : r < 0.48 ? "child" : r < 0.53 ? "priest" : "man";
+      let type = r < 0.34 ? "woman" : r < 0.44 ? "child" : r < 0.49 ? "priest" : r < 0.57 ? "elder" : "man";
       if (front && rand() < 0.35) type = rand() < 0.5 ? "noble" : "lady";
       const female = type === "woman" || type === "lady";
       const pick = (list) => list[Math.floor(rand() * list.length)];
       const clothes = type === "priest" ? pick([0x4a3a2a, 0x2a2a2a, 0x5a4a3a]) : type === "noble" || type === "lady" ? pick(NOBLE) : pick(CLOTHES);
       const hatRoll = rand();
       let hat = null;
-      if (type === "man") hat = hatRoll < 0.25 ? "hood" : hatRoll < 0.45 ? "brim" : hatRoll < 0.6 ? "cap" : hatRoll < 0.7 ? "straw" : null;
-      if (type === "child") hat = hatRoll < 0.3 ? "cap" : null;
-      if (type === "woman") hat = hatRoll < 0.55 ? "wimple" : hatRoll < 0.7 ? "hood" : null;
+      if (type === "man") hat = hatRoll < 0.2 ? "hood" : hatRoll < 0.36 ? "brim" : hatRoll < 0.5 ? "cap" : hatRoll < 0.6 ? "straw" : hatRoll < 0.7 ? "chaperon" : hatRoll < 0.76 ? "coif" : null;
+      if (type === "elder") hat = hatRoll < 0.35 ? "hood" : hatRoll < 0.6 ? "cap" : hatRoll < 0.75 ? "coif" : null;
+      if (type === "child") hat = hatRoll < 0.25 ? "cap" : hatRoll < 0.45 ? "wreath" : null;
+      if (type === "woman") hat = hatRoll < 0.4 ? "wimple" : hatRoll < 0.52 ? "hood" : hatRoll < 0.68 ? "coif" : hatRoll < 0.82 ? "wreath" : null;
       if (type === "lady") hat = hatRoll < 0.6 ? "hennin" : "wimple";
-      if (type === "noble") hat = hatRoll < 0.7 ? "beret" : "brim";
+      if (type === "noble") hat = hatRoll < 0.5 ? "beret" : hatRoll < 0.8 ? "chaperon" : "brim";
       const styleRoll = rand();
-      const style = styleRoll < 0.3 ? "clap" : styleRoll < 0.5 ? "kerchief" : styleRoll < 0.65 ? "mug" : styleRoll < 0.85 ? "fist" : "wave";
+      let style = styleRoll < 0.22 ? "clap" : styleRoll < 0.36 ? "kerchief" : styleRoll < 0.48 ? "mug" : styleRoll < 0.6 ? "fist" : styleRoll < 0.68 ? "wave"
+        : styleRoll < 0.76 ? "eat" : styleRoll < 0.84 ? "point" : styleRoll < 0.92 ? "slap" : "hatwave";
+      if (style === "hatwave" && !["brim", "straw"].includes(hat)) style = "wave";
+      if (type === "elder" && (style === "slap" || style === "wave")) style = "clap";
       return {
         index: i, spot, type, female, hat,
-        hair: type === "priest" ? "tonsure" : female ? "long" : rand() < 0.15 ? null : "short",
-        beard: !female && type !== "child" && rand() < 0.35,
-        clothes, hose: female ? clothes : pick(HOSE), skin: pick(SKINS), hairColor: pick(HAIRS),
+        hair: type === "priest" ? "tonsure" : female ? "long" : rand() < (type === "elder" ? 0.4 : 0.15) ? null : "short",
+        beard: !female && type !== "child" && rand() < (type === "elder" ? 0.7 : 0.35),
+        clothes, hose: female ? clothes : pick(HOSE), skin: pick(SKINS),
+        hairColor: type === "elder" ? pick([0x8c8a86, 0xd8d4cc, 0xbdb8b0]) : pick(HAIRS),
+        apron: type === "woman" && rand() < 0.4,
+        cloak: (type === "noble" || type === "lady") && rand() < 0.6,
+        cloakColor: pick([0x2a1a3a, 0x3a1a1a, 0x1a2a3a, 0x8a6a2a]),
+        hunch: type === "elder" ? 0.22 : 0,
+        snackAt: rand() * 6,           // när personen tar en tugga eller en klunk
         hatColor: hat === "wimple" ? 0xf2efe6 : hat === "straw" ? 0xd9bf6a : hat === "hennin" ? pick([0xd9a521, 0xf2efe6, 0x8a1a2a]) : pick(HAT_COLORS),
-        scale: type === "child" ? 0.72 : 0.92 + rand() * 0.16,
+        scale: type === "child" ? 0.72 : type === "elder" ? 0.88 + rand() * 0.08 : 0.92 + rand() * 0.16,
         phase: rand() * Math.PI * 2,
         speed: 0.6 + rand() * 1.0,
-        eager: rand(),                 // hur lätt personen reser sig och jublar
+        eager: type === "elder" ? 0.6 + rand() * 0.4 : rand(), // hur lätt personen reser sig och jublar
         style: type === "priest" && style !== "clap" ? "fist" : style,
         look: 0, stand: 0, throwT: -1,
       };
@@ -243,9 +288,16 @@ export class Crowd {
     extra(S.hairLong, P.filter((p) => p.hair === "long" && !["wimple", "hennin"].includes(p.hat)), (p) => p.hairColor, "head");
     extra(S.tonsure, P.filter((p) => p.hair === "tonsure"), (p) => p.hairColor, "head");
     extra(S.beard, P.filter((p) => p.beard), (p) => p.hairColor, "head");
-    for (const hat of ["hood", "brim", "cap", "beret", "wimple", "hennin", "straw"]) {
-      extra(S[hat], P.filter((p) => p.hat === hat), (p) => p.hatColor, "head", material({ side: THREE.DoubleSide }));
+    for (const hat of ["hood", "brim", "cap", "beret", "wimple", "hennin", "straw", "chaperon", "coif"]) {
+      // Den som viftar med hatten håller den i handen i stället
+      extra(S[hat], P.filter((p) => p.hat === hat && p.style !== "hatwave"), (p) => (hat === "coif" ? 0xf2efe6 : p.hatColor), "head", material({ side: THREE.DoubleSide }));
     }
+    extra(S.wreath, P.filter((p) => p.hat === "wreath"), () => 0xffffff, "head");
+    extra(S.handHat, P.filter((p) => p.style === "hatwave"), (p) => p.hatColor, "armR", material({ side: THREE.DoubleSide }));
+    extra(S.apron, P.filter((p) => p.apron), () => 0xe8e0cc, "torso");
+    extra(S.cloak, P.filter((p) => p.cloak), (p) => p.cloakColor, "torso", material({ side: THREE.DoubleSide }));
+    extra(S.cane, P.filter((p) => p.type === "elder"), () => 0x5a3a1e, "armL");
+    extra(S.drumstick, P.filter((p) => p.style === "eat"), () => 0xffffff, "armR");
     extra(S.kerchief, P.filter((p) => p.style === "kerchief"), () => 0xf2efe6, "armR", material({ side: THREE.DoubleSide }));
     extra(S.mug, P.filter((p) => p.style === "mug"), (p) => (p.index % 2 ? 0x8a8e94 : 0x7a5434), "armR", material({ metalness: 0.3, roughness: 0.5 }));
 
@@ -333,7 +385,7 @@ export class Crowd {
       d.root.position.set(spot.pos.x, spot.pos.y + stand * 0.72 * p.scale + hop, spot.pos.z);
       d.root.rotation.set(0, spot.yaw + p.look * 0.25, 0);
       d.root.scale.setScalar(p.scale);
-      d.torso.rotation.set(0.12 * cheer * sit + Math.sin(t) * 0.03 - stand * 0.05, p.look * 0.25, Math.sin(t * 0.7) * 0.04);
+      d.torso.rotation.set(0.12 * cheer * sit + Math.sin(t) * 0.03 - stand * 0.05 + p.hunch, p.look * 0.25, Math.sin(t * 0.7) * 0.04);
       d.head.rotation.set(Math.sin(t * 0.9) * 0.06 - cheer * 0.25, p.look * 0.5, Math.sin(t * 0.5) * 0.05);
       d.mouth.scale.set(1, 0.25 + cheer * (0.8 + Math.abs(Math.sin(time * 6 + p.phase)) * 0.6) + (p.throwT >= 0 ? 0.6 : 0), 1);
       // Benen: sittande lår framåt och underben rakt ner; stående: raka ben
@@ -355,11 +407,34 @@ export class Crowd {
         const wave = Math.sin(time * 10 + p.phase) * 0.4;
         rx = lerp(rx, -2.8 + wave * 0.3, cheer); rz = lerp(-rest, -0.3 + wave, cheer);
         if (p.style === "wave") { lx = lerp(lx, -2.6, cheer); lz = lerp(rest, 0.4 - wave, cheer); }
-      } else if (p.style === "mug") {
-        rx = lerp(-1.0, -2.9, cheer); rz = lerp(-0.25, -0.15, cheer); // sejdeln i handen, höjs vid jubel
+      } else if (p.style === "mug" || p.style === "eat") {
+        // Sejdeln eller kycklinglåret i handen. Då och då en klunk/tugga (handen till munnen), vid jubel höjs den
+        const cycle = (time + p.snackAt) % 7;
+        const sip = cycle < 1.2 ? Math.sin((cycle / 1.2) * Math.PI) : 0;
+        rx = lerp(-1.0 - sip * 1.15, -2.9, cheer);
+        rz = lerp(-0.25 + sip * 0.55, -0.15, cheer);
+        if (sip > 0.5) d.head.rotation.x -= 0.15 * sip;
+      } else if (p.style === "point") {
+        // Pekar mot striden och skrattar
+        const jab = Math.max(0, Math.sin(time * 6 + p.phase)) * 0.15;
+        rx = lerp(-0.4 * sit - 0.2, -1.5 - jab, Math.max(cheer, 0.3)); rz = lerp(-rest, -0.05, cheer);
+      } else if (p.style === "slap") {
+        // Dunkar grannen i ryggen (höger arm ut åt sidan)
+        const slap = Math.max(0, Math.sin(time * 7 + p.phase));
+        rx = lerp(rx, -1.1, cheer); rz = lerp(-rest, -1.1 + slap * 0.6, cheer);
+        lx = lerp(lx, -2.4, cheer * 0.7);
+      } else if (p.style === "hatwave") {
+        // Viftar med hatten över huvudet
+        const wave = Math.sin(time * 9 + p.phase) * 0.5;
+        rx = lerp(-0.9, -2.9 + wave * 0.2, Math.max(cheer, 0.1)); rz = lerp(-0.2, -0.25 + wave, cheer);
       } else {
         const pump = Math.max(0, Math.sin(time * 9 + p.phase)) * 0.5;
         rx = lerp(rx, -2.6 - pump, cheer); rz = lerp(-rest, -0.2, cheer);
+      }
+      // De gamla stödjer sig på käppen med vänster hand
+      if (p.type === "elder") {
+        lx = -0.25 * sit - 0.15;
+        lz = 0.15;
       }
       // Kast: armen bakåt, sedan snabbt framåt
       if (p.throwT >= -1 && p.throwKind) {
@@ -715,6 +790,71 @@ export function makeRoyals() {
     },
     blow() {
       state.blowT = 0;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Försäljare som går runt utanför staketet med en bricka (bröd, äpplen eller öl)
+// path(t) = punkt på vägen (t från 0 till 1 runt hela vägen)
+// ---------------------------------------------------------------------------
+export function makeVendor(kind, path, start, speed = 0.012) {
+  const robe = { bread: 0x8a6b2e, apples: 0x3e5a2a, ale: 0x7a2a2a }[kind] ?? 0x6a4a2a;
+  const f = makeFigure({ robe, skin: [0xe6b890, 0xd09a6c, 0xf2cfaa][Math.floor(Math.random() * 3)], hair: 0x4a3018, beard: kind !== "apples", hat: "beret", hose: 0x3a2a1a });
+  // Bricka med varor, buren framför magen
+  const tray = new THREE.Group();
+  const wood = figureMat(0x7a5434);
+  addMesh(tray, new THREE.BoxGeometry(0.46, 0.03, 0.3), wood, [0, 0, 0]);
+  for (const sx of [1, -1]) addMesh(tray, new THREE.BoxGeometry(0.02, 0.05, 0.3), wood, [0.23 * sx, 0.02, 0]);
+  // Band över axeln som brickan hänger i
+  addMesh(f.torso, new THREE.TorusGeometry(0.2, 0.012, 4, 16), figureMat(0x3a2414), [0, 0.32, 0.02], [0.9, 1.4, 1], [0, 0, 0.6]);
+  const goods = kind === "bread"
+    ? { geo: new THREE.CapsuleGeometry(0.03, 0.07, 3, 8), mat: figureMat(0xc08a4a), rot: [0, 0, Math.PI / 2] }
+    : kind === "apples"
+      ? { geo: new THREE.SphereGeometry(0.03, 8, 6), mat: figureMat(0xb02a20, { roughness: 0.5 }), rot: [0, 0, 0] }
+      : { geo: new THREE.CylinderGeometry(0.028, 0.03, 0.08, 8), mat: figureMat(0x8a8e94, { metalness: 0.4, roughness: 0.4 }), rot: [0, 0, 0] };
+  for (let i = 0; i < 9; i++) {
+    addMesh(tray, goods.geo, goods.mat, [(i % 3 - 1) * 0.12 + (Math.random() - 0.5) * 0.03, 0.045, (Math.floor(i / 3) - 1) * 0.08], [1, 1, 1], goods.rot);
+  }
+  tray.position.set(0, 0.2, 0.3);
+  f.torso.add(tray);
+  // Armarna håller i brickan
+  for (const s of ["L", "R"]) {
+    f["arm" + s].rotation.set(-0.6, 0, s === "L" ? -0.15 : 0.15);
+    f["fore" + s].rotation.set(-0.9, 0, 0);
+  }
+  f.mouth.userData.keep = true; // munnen rör sig när försäljaren ropar
+  mergeFigure(f.group);
+  let t = start;
+  let pause = 0;
+  let walk = 0;
+  const p0 = new THREE.Vector3();
+  const p1 = new THREE.Vector3();
+  return {
+    group: f.group,
+    update(dt) {
+      // Stannar ibland för att ropa ut sina varor
+      if (pause > 0) {
+        pause -= dt;
+        f.head.rotation.y = Math.sin(pause * 2) * 0.6;
+        f.mouth.scale.y = 0.3 + Math.abs(Math.sin(pause * 9)) * 0.9;
+        for (const s of ["L", "R"]) f["thigh" + s].rotation.x *= 0.9;
+        return;
+      }
+      if (Math.random() < dt * 0.06) pause = 2 + Math.random() * 3;
+      f.mouth.scale.y = 0.3;
+      f.head.rotation.y *= 0.95;
+      t = (t + speed * dt) % 1;
+      path(t, p0);
+      path((t + 0.002) % 1, p1);
+      f.group.position.copy(p0);
+      f.group.rotation.y = Math.atan2(p1.x - p0.x, p1.z - p0.z);
+      walk += dt * 6;
+      f.thighL.rotation.x = Math.sin(walk) * 0.45;
+      f.thighR.rotation.x = -Math.sin(walk) * 0.45;
+      f.shinL.rotation.x = Math.max(0, -Math.sin(walk)) * 0.6;
+      f.shinR.rotation.x = Math.max(0, Math.sin(walk)) * 0.6;
+      f.root.position.y = Math.abs(Math.cos(walk)) * 0.03;
     },
   };
 }

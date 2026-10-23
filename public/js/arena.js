@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { ARENA_RX, ARENA_RZ } from "./shared.js";
 import { CONFIG } from "./config.js";
-import { Crowd, makeRoyals, mergeFigure } from "./crowd.js";
+import { Crowd, makeRoyals, mergeFigure, makeVendor } from "./crowd.js";
 import {
   plankTexture, stripeTexture, rakedSandTexture, glowTexture, heraldryTexture, daggedTexture, linenTexture, strawTexture,
   sandGrainTexture, podiumTexture,
@@ -127,6 +127,7 @@ export function buildArena() {
   grain.repeat.set(26, 26);
   const dirtMat = new THREE.MeshStandardMaterial({ roughness: 1, map: rakedSandTexture(), bumpMap: grain, bumpScale: 2.2 });
   dirtMat.map.repeat.set(4, 4);
+  dirtMat.userData.dryColor = dirtMat.color.clone();
   const dirt = new THREE.Mesh(new THREE.CircleGeometry(1, 64), dirtMat);
   dirt.receiveShadow = true;
   dirt.rotation.x = -Math.PI / 2;
@@ -137,6 +138,9 @@ export function buildArena() {
   group.add(radialPatch(FX + 0.4, FZ + 0.4, 0.84, 1.0, 0x4a3420, 0, 0.55, 0.012));
   group.add(radialPatch(FX * 0.55, FZ * 0.55, 0, 1.0, 0x5e4430, 0.32, 0, 0.013));
   group.add(sandScatter(FX, FZ));
+  // Vattenpölar (syns bara när det regnar)
+  const puddles = makePuddles(FX, FZ);
+  group.add(puddles);
 
   // ---------- Tornerbarriär runt arenan ----------
   // Plankväggar klädda med randigt tyg, en överliggare, en tandad tygkant och sköldar på stolparna
@@ -334,10 +338,14 @@ export function buildArena() {
     { t: 0.15, kind: "hay" }, { t: -0.2, kind: "barrels" }, { t: 0.45, kind: "rack" },
     { t: -0.55, kind: "hay" }, { t: 2.05, kind: "barrels" }, { t: -2.1, kind: "hay" },
     { t: 1.1, kind: "rack" }, { t: -1.15, kind: "barrels" },
+    { t: 0.75, kind: "baskets" }, { t: -0.8, kind: "pots" }, { t: 1.55, kind: "crates" }, { t: -1.6, kind: "baskets" },
+    { t: 0.0, kind: "banner", color: PALETTE.red }, { t: 1.33, kind: "pots" }, { t: -1.36, kind: "crates" },
+    { t: 1.85, kind: "banner", color: PALETTE.blue }, { t: -1.85, kind: "banner", color: PALETTE.gold },
   ];
-  for (const { t, kind } of props) {
+  for (const { t, kind, color } of props) {
     const p = ellipsePoint(t, FX + 1.6, FZ + 1.6);
-    const prop = kind === "hay" ? makeHayBales() : kind === "barrels" ? makeBarrels() : makeWeaponRack();
+    const prop = kind === "hay" ? makeHayBales() : kind === "barrels" ? makeBarrels() : kind === "baskets" ? makeBaskets()
+      : kind === "pots" ? makePots() : kind === "crates" ? makeCrates() : kind === "banner" ? makeBannerPole(color) : makeWeaponRack();
     prop.position.copy(p);
     prop.lookAt(center);
     group.add(prop);
@@ -595,6 +603,20 @@ export function buildArena() {
   const crowd = new Crowd(crowdSpots, 11);
   group.add(crowd.group);
 
+  // Liv runt arenan: försäljare framför läktarna, hundar, fåglar och flugor vid eldkorgarna
+  const vendorPath = (t, out) => {
+    const a = Math.PI + Math.sin(t * Math.PI * 2) * 1.15;
+    return out.set(Math.sin(a) * (FX + 1.25), 0, Math.cos(a) * (FZ + 1.25));
+  };
+  const vendors = [["bread", 0.05], ["apples", 0.4], ["ale", 0.72]].map(([kind, start]) => makeVendor(kind, vendorPath, start, 0.01 + Math.random() * 0.006));
+  vendors.forEach((v) => group.add(v.group));
+  const dogs = [0x8a6a4a, 0x2a2420].map((color, i) => makeDog(color, i, FX, FZ));
+  dogs.forEach((d) => group.add(d.group));
+  const birds = makeBirds();
+  group.add(birds.group);
+  const flies = makeFlies(fires.map((f) => f.group.position));
+  group.add(flies.points);
+
   // Prispallen (gömd under marken tills matchen är slut)
   const podium = makePodium();
   podium.group.rotation.y = Math.PI; // framsidan mot kungen
@@ -613,6 +635,10 @@ export function buildArena() {
     crowd.update(dt, time, excitement);
     royals.update(dt);
     podium.update(dt);
+    for (const v of vendors) v.update(dt);
+    for (const d of dogs) d.update(dt, time);
+    birds.update(dt, time);
+    flies.update(dt, time);
     quintain.update(dt);
     for (const fire of fires) fire.update(dt, time);
     // Flaggor fladdrar i vinden
@@ -637,8 +663,27 @@ export function buildArena() {
     royalReact: (up) => royals.react(up),
     heraldBlow: () => royals.blow(),
     setQuality: (low) => fires.forEach((f) => (f.light.visible = !low)),
+    // Regn: sanden blir mörk och lerig, med blanka vattenpölar
+    setWet(wet) {
+      dirtMat.color.copy(dirtMat.userData.dryColor).multiplyScalar(wet ? 0.6 : 1);
+      dirtMat.roughness = wet ? 0.62 : 1;
+      dirtMat.needsUpdate = true;
+      puddles.visible = wet;
+    },
+    // Mulet (regn och dimma): grå himmel och mörka moln
+    setOvercast(on) {
+      this.overcast = on;
+      if (on) {
+        sky.material.uniforms.top.value.set(this.evening ? 0x2c2e3a : 0x6c7782);
+        sky.material.uniforms.horizon.value.set(this.evening ? 0x55505a : 0xa9b1b8);
+        if (cloudMaterial) cloudMaterial.color.set(this.evening ? 0x5a5660 : 0x9aa2aa);
+      } else {
+        this.setTime(!!this.evening);
+      }
+    },
     // Dag eller kväll: himlen, molnen och eldkorgarna
     setTime(evening) {
+      this.evening = evening;
       setSkyColors(sky, evening);
       if (cloudMaterial) cloudMaterial.color.set(evening ? 0xf0b090 : 0xffffff);
       for (const f of fires) {
@@ -1617,6 +1662,267 @@ function radialPatch(rx, rz, r0, r1, color, a0, a1, y) {
   m.receiveShadow = true;
   m.userData.noMerge = true;
   return m;
+}
+
+// ---------- Mer rekvisita ----------
+
+// Korgar med äpplen och bröd
+function makeBaskets() {
+  const g = new THREE.Group();
+  [[-0.35, 0, 0.32], [0.3, 0.1, 0.26], [0, -0.45, 0.3]].forEach(([x, z, r], i) => {
+    const basket = mesh(new THREE.CylinderGeometry(r, r * 0.78, 0.3, 12, 1, true), PALETTE.woodLight);
+    basket.position.set(x, 0.15, z);
+    g.add(basket);
+    const bottom = mesh(new THREE.CylinderGeometry(r * 0.78, r * 0.78, 0.02, 12), PALETTE.woodLight);
+    bottom.position.set(x, 0.01, z);
+    g.add(bottom);
+    const rim = mesh(new THREE.TorusGeometry(r, 0.025, 4, 14), PALETTE.woodDark);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.set(x, 0.3, z);
+    g.add(rim);
+    // Innehåll: äpplen eller bröd
+    for (let k = 0; k < 9; k++) {
+      const a = (k / 9) * Math.PI * 2;
+      const rr = (k % 3) * r * 0.3;
+      const item = i === 1
+        ? mesh(new THREE.CapsuleGeometry(0.045, 0.1, 3, 6), 0xc08a4a)
+        : mesh(new THREE.SphereGeometry(0.05, 6, 5), k % 4 ? 0xb02a20 : 0x6a9a2a);
+      item.position.set(x + Math.sin(a) * rr, 0.3 + (k % 2) * 0.03, z + Math.cos(a) * rr);
+      if (i === 1) item.rotation.z = Math.PI / 2 + a;
+      item.castShadow = false;
+      g.add(item);
+    }
+  });
+  return g;
+}
+
+// Lerkrukor i olika storlekar
+function makePots() {
+  const g = new THREE.Group();
+  const profile = [[0.0, 0], [0.16, 0.02], [0.22, 0.15], [0.2, 0.32], [0.11, 0.42], [0.1, 0.48], [0.13, 0.5]].map(([r, y]) => new THREE.Vector2(r, y));
+  const geo = new THREE.LatheGeometry(profile, 12);
+  [[0, 0, 1], [0.45, 0.15, 0.75], [-0.4, 0.2, 0.85], [0.1, -0.4, 0.6]].forEach(([x, z, sc], i) => {
+    const pot = mesh(geo, [0xa85a34, 0x8a4a2a, 0xb87048][i % 3]);
+    pot.scale.setScalar(sc);
+    pot.position.set(x, 0, z);
+    if (i === 3) {
+      pot.rotation.z = Math.PI / 2; // en kruka har vält
+      pot.position.y = 0.18;
+    }
+    g.add(pot);
+  });
+  return g;
+}
+
+// Trälådor staplade på varandra
+function makeCrates() {
+  const g = new THREE.Group();
+  [[0, 0.25, 0, 0.5, 0], [0.55, 0.22, 0.05, 0.44, 0.3], [0.2, 0.72, 0.02, 0.44, -0.2]].forEach(([x, y, z, sz, ry]) => {
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(sz, sz, sz), plankMat(PALETTE.woodLight));
+    crate.castShadow = crate.receiveShadow = true;
+    crate.position.set(x, y, z);
+    crate.rotation.y = ry;
+    g.add(crate);
+    for (const sy of [-1, 1]) {
+      const slat = box(sz + 0.02, 0.05, sz + 0.02, PALETTE.woodDark);
+      slat.position.set(x, y + sy * sz * 0.42, z);
+      slat.rotation.y = ry;
+      g.add(slat);
+    }
+  });
+  return g;
+}
+
+// Hög stång med en lång hängande fana
+function makeBannerPole(color) {
+  const g = new THREE.Group();
+  const pole = box(0.1, 4.2, 0.1, PALETTE.woodDark);
+  pole.position.y = 2.1;
+  g.add(pole);
+  const bar = box(0.9, 0.06, 0.06, PALETTE.woodDark);
+  bar.position.y = 4.0;
+  g.add(bar);
+  const knob = mesh(new THREE.SphereGeometry(0.08, 8, 6), PALETTE.gold);
+  knob.position.y = 4.25;
+  g.add(knob);
+  const banner = heraldBanner(color, 1, 0.8, 1.6);
+  banner.position.set(0, 3.97, 0.05);
+  g.add(banner);
+  return g;
+}
+
+// Hund som springer runt utanför staketet, stannar och nosar, och viftar på svansen
+function makeDog(color, seed, FX, FZ) {
+  const rand = seededRandom(700 + seed);
+  const g = new THREE.Group();
+  g.userData.noMerge = true;
+  const fur = new THREE.MeshStandardMaterial({ color, roughness: 1 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x1a1410, roughness: 0.8 });
+  const add = (parent, geo, mat, pos, rot = [0, 0, 0], scale = [1, 1, 1]) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(...pos);
+    m.rotation.set(...rot);
+    m.scale.set(...scale);
+    m.castShadow = true;
+    parent.add(m);
+    return m;
+  };
+  const body = new THREE.Group();
+  body.position.y = 0.42;
+  g.add(body);
+  add(body, new THREE.CapsuleGeometry(0.13, 0.42, 4, 10), fur, [0, 0, 0], [Math.PI / 2, 0, 0], [1, 1, 0.95]);
+  const head = new THREE.Group();
+  head.position.set(0, 0.12, 0.33);
+  body.add(head);
+  add(head, new THREE.SphereGeometry(0.11, 10, 8), fur, [0, 0, 0], [0, 0, 0], [0.95, 0.9, 1]);
+  add(head, new THREE.CylinderGeometry(0.05, 0.065, 0.14, 8), fur, [0, -0.03, 0.12], [Math.PI / 2, 0, 0]);
+  add(head, new THREE.SphereGeometry(0.025, 6, 5), dark, [0, -0.02, 0.2]);
+  for (const sx of [1, -1]) {
+    add(head, new THREE.ConeGeometry(0.04, 0.1, 4), fur, [0.06 * sx, 0.09, -0.02], [0.3, 0, -0.4 * sx]);
+    add(head, new THREE.SphereGeometry(0.014, 5, 4), dark, [0.045 * sx, 0.03, 0.08]);
+  }
+  const legs = [];
+  for (const [x, z] of [[0.08, 0.2], [-0.08, 0.2], [0.08, -0.2], [-0.08, -0.2]]) {
+    const leg = new THREE.Group();
+    leg.position.set(x, -0.08, z);
+    body.add(leg);
+    add(leg, new THREE.CylinderGeometry(0.032, 0.026, 0.34, 6), fur, [0, -0.17, 0]);
+    legs.push(leg);
+  }
+  const tail = new THREE.Group();
+  tail.position.set(0, 0.06, -0.32);
+  body.add(tail);
+  add(tail, new THREE.CylinderGeometry(0.02, 0.012, 0.24, 5), fur, [0, 0.1, -0.04], [-0.5, 0, 0]);
+
+  // Rör sig längs en oval runt arenan (framsidan, där det inte står läktare)
+  const R = (t) => [Math.sin(t) * (FX + 2.4), Math.cos(t) * (FZ + 2.4)];
+  let angle = (rand() - 0.5) * 2;
+  let target = angle;
+  let rest = 1 + rand() * 2;
+  let gait = 0;
+  return {
+    group: g,
+    update(dt, time) {
+      let speed = 0;
+      if (rest > 0) {
+        rest -= dt;
+        if (rest <= 0) target = (rand() - 0.5) * 3.6; // springer till ett nytt ställe
+      } else {
+        const diff = target - angle;
+        const step = Math.sign(diff) * Math.min(Math.abs(diff), dt * 0.35);
+        angle += step;
+        speed = Math.abs(step) / Math.max(dt, 1e-4);
+        if (Math.abs(diff) < 0.01) rest = 1.5 + rand() * 4;
+      }
+      const [x, z] = R(angle);
+      const [x2, z2] = R(angle + (target > angle ? 0.01 : -0.01));
+      g.position.set(x, 0, z);
+      if (speed > 0) g.rotation.y = Math.atan2(x2 - x, z2 - z);
+      gait += dt * (speed > 0 ? 14 : 0);
+      const run = speed > 0 ? 1 : 0;
+      legs.forEach((leg, i) => (leg.rotation.x = Math.sin(gait + (i % 2 ? Math.PI : 0) + (i > 1 ? Math.PI / 2 : 0)) * 0.6 * run));
+      body.position.y = 0.42 + Math.abs(Math.sin(gait)) * 0.03 * run;
+      // Står den still nosar den i marken och viftar på svansen
+      head.rotation.x = run ? 0 : 0.5 + Math.sin(time * 3) * 0.15;
+      tail.rotation.z = Math.sin(time * (run ? 10 : 16)) * 0.5;
+    },
+  };
+}
+
+// Fåglar som cirklar högt över arenan
+function makeBirds() {
+  const group = new THREE.Group();
+  group.userData.noMerge = true;
+  const mat = new THREE.MeshBasicMaterial({ color: 0x2a2a30, side: THREE.DoubleSide, fog: true });
+  const wingGeo = new THREE.BufferGeometry();
+  wingGeo.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0.12, 0, 0, -0.12, 0.55, 0, -0.05], 3));
+  const birds = [];
+  for (let i = 0; i < 7; i++) {
+    const b = new THREE.Group();
+    const left = new THREE.Mesh(wingGeo, mat);
+    const right = new THREE.Mesh(wingGeo, mat);
+    right.scale.x = -1;
+    b.add(left, right);
+    group.add(b);
+    birds.push({ b, left, right, r: 22 + Math.random() * 20, h: 16 + Math.random() * 14, speed: 0.12 + Math.random() * 0.08, phase: Math.random() * 6, flap: 6 + Math.random() * 3 });
+  }
+  return {
+    group,
+    update(dt, time) {
+      for (const o of birds) {
+        const a = time * o.speed + o.phase;
+        o.b.position.set(Math.sin(a) * o.r, o.h + Math.sin(a * 2.3) * 1.5, Math.cos(a) * o.r);
+        o.b.rotation.set(0, a + Math.PI / 2, 0.25);
+        // Flaxar en stund, glider en stund
+        const flapping = Math.sin(time * 0.5 + o.phase) > 0;
+        const w = flapping ? Math.sin(time * o.flap + o.phase) * 0.6 : 0.12;
+        o.left.rotation.z = w;
+        o.right.rotation.z = -w;
+      }
+    },
+  };
+}
+
+// Flugor som surrar runt eldkorgarna (små prickar)
+function makeFlies(centers) {
+  const PER = 7;
+  const n = centers.length * PER;
+  const pos = new Float32Array(n * 3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  const points = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0x111111, size: 0.035 }));
+  points.frustumCulled = false;
+  points.userData.noMerge = true;
+  const seeds = Array.from({ length: n }, () => [Math.random() * 10, 0.5 + Math.random(), 0.6 + Math.random() * 0.8]);
+  return {
+    points,
+    update(dt, time) {
+      for (let i = 0; i < n; i++) {
+        const c = centers[Math.floor(i / PER)];
+        const [ph, sp, r] = seeds[i];
+        const t = time * sp * 3 + ph;
+        pos[i * 3] = c.x + Math.sin(t) * r + Math.sin(t * 3.1) * 0.15;
+        pos[i * 3 + 1] = 1.3 + Math.sin(t * 1.7) * 0.4 + Math.sin(t * 5.3) * 0.08;
+        pos[i * 3 + 2] = c.z + Math.cos(t * 1.3) * r + Math.cos(t * 2.7) * 0.15;
+      }
+      geo.attributes.position.needsUpdate = true;
+    },
+  };
+}
+
+// Blanka vattenpölar i sanden (regn). Varje pöl är en oregelbunden platt form.
+function makePuddles(rx, rz) {
+  const rand = seededRandom(4242);
+  const g = new THREE.Group();
+  g.userData.noMerge = true;
+  g.visible = false;
+  // Vattnet speglar den grå himlen: ljusgrå glans, halvgenomskinligt så sanden syns igenom
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x3c3a36, emissive: 0x7a848e, emissiveIntensity: 0.32, roughness: 0.12, metalness: 0,
+    transparent: true, opacity: 0.6, depthWrite: false,
+  });
+  for (let i = 0; i < 12; i++) {
+    const shape = new THREE.Shape();
+    const n = 14;
+    const base = 0.3 + rand() * 0.55;
+    for (let k = 0; k <= n; k++) {
+      const a = (k / n) * Math.PI * 2;
+      const r = base * (0.75 + rand() * 0.45);
+      const x = Math.cos(a) * r * 1.4;
+      const y = Math.sin(a) * r;
+      if (k === 0) shape.moveTo(x, y);
+      else shape.lineTo(x, y);
+    }
+    const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape, 2), mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.rotation.z = rand() * Math.PI;
+    const t = rand() * Math.PI * 2;
+    const d = Math.sqrt(rand()) * 0.85;
+    mesh.position.set(Math.sin(t) * rx * d, 0.016, Math.cos(t) * rz * d);
+    mesh.receiveShadow = true;
+    g.add(mesh);
+  }
+  return g;
 }
 
 // Småsten och halmtussar utspridda i sanden (riktiga små 3D-bitar, en ritning per sort)
