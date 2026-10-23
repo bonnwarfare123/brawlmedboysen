@@ -391,6 +391,98 @@ function renderStartSwatches() {
 }
 renderStartSwatches();
 
+// ---------------------------------------------------------------------------
+// Topplistan: en hemlig nyckel i webbläsaren gör att ditt namn är ditt.
+// Nyckeln är samma sak som återställningskoden (RIDD-XXXX-XXXX-XXXX).
+// ---------------------------------------------------------------------------
+const KEY_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+function cleanKey(value) {
+  const k = String(value ?? "").toUpperCase().replace(/^RIDD/, "").replace(/[^A-Z0-9]/g, "");
+  return k.length === 12 && [...k].every((c) => KEY_CHARS.includes(c)) ? k : null;
+}
+function myKey() {
+  let key = cleanKey(loadSetting("nyckel", ""));
+  if (!key) {
+    const bytes = new Uint8Array(12);
+    crypto.getRandomValues(bytes);
+    key = [...bytes].map((b) => KEY_CHARS[b % KEY_CHARS.length]).join("");
+    saveSetting("nyckel", key);
+  }
+  return key;
+}
+function prettyKey(key) {
+  return "RIDD-" + key.slice(0, 4) + "-" + key.slice(4, 8) + "-" + key.slice(8, 12);
+}
+$("restore-button").addEventListener("click", () => {
+  const key = cleanKey($("restore-input").value);
+  if (!key) {
+    $("restore-msg").textContent = "Det där ser inte ut som en kod. Den ser ut så här: RIDD-XXXX-XXXX-XXXX";
+    return;
+  }
+  saveSetting("nyckel", key);
+  $("restore-msg").textContent = "✔ Koden är sparad. Skriv ditt gamla namn och gå in i spelet.";
+  $("restore-input").value = "";
+});
+$("show-code").addEventListener("click", () => {
+  const box = $("code-box");
+  box.hidden = !box.hidden;
+  $("my-code").textContent = prettyKey(myKey());
+  $("show-code").textContent = box.hidden ? "🔑 Visa min kod" : "🔑 Dölj koden";
+});
+$("copy-code").addEventListener("click", () => {
+  navigator.clipboard?.writeText(prettyKey(myKey())).then(() => {
+    $("copy-code").textContent = "Kopierad!";
+    setTimeout(() => ($("copy-code").textContent = "Kopiera"), 1500);
+  }).catch(() => {});
+});
+
+function renderBoard(msg) {
+  const tbody = $("board-table").querySelector("tbody");
+  tbody.innerHTML = "";
+  const meRow = msg.me;
+  const row = (r, isMe) => {
+    const tr = document.createElement("tr");
+    if (isMe) tr.className = "me";
+    for (const v of [r.rank ?? "–", r.name, r.wins, r.kills, r.matches]) {
+      const td = document.createElement("td");
+      td.textContent = v;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  };
+  const top = msg.top || [];
+  for (const r of top) row(r, meRow && r.rank === meRow.rank);
+  // Är jag inte bland de tio visas min rad längst ner
+  if (meRow && meRow.rank && meRow.rank > top.length) {
+    const gap = document.createElement("tr");
+    gap.className = "gap";
+    gap.innerHTML = "<td colspan='5'>⋯</td>";
+    tbody.appendChild(gap);
+    row(meRow, true);
+  }
+  $("board-empty").hidden = top.length > 0;
+  const card = $("my-card");
+  card.hidden = !msg.ranked;
+  if (meRow) {
+    $("my-title").textContent = meRow.name;
+    $("my-rank").textContent = meRow.rank ? "#" + meRow.rank : "–";
+    $("my-wins").textContent = meRow.wins;
+    $("my-kills").textContent = meRow.kills;
+    $("my-matches").textContent = meRow.matches;
+    $("my-streak").textContent = meRow.best + (meRow.streak >= 2 ? ` (nu ${meRow.streak}🔥)` : "");
+    $("my-sev").textContent = meRow.sev;
+    const extra = [];
+    if (meRow.matches > 0) extra.push(`${Math.round((meRow.kills / meRow.matches) * 10) / 10} dråp per match`);
+    if (meRow.award) {
+      const a = AWARDS.find((x) => x.key === meRow.award[0]);
+      if (a) extra.push(`Oftast: ${a.title ?? a.name ?? a.key} ×${meRow.award[1]}`);
+    }
+    if (meRow.weapon && WEAPONS[Number(meRow.weapon[0])]) extra.push(`Vinner mest med: ${WEAPONS[Number(meRow.weapon[0])]}`);
+    $("my-extra").textContent = extra.join(" · ") || "Spela en match så syns dina siffror här.";
+  }
+  $("board").hidden = false;
+}
+
 function showLobbyError(text) {
   $("lobby-error").textContent = text;
   $("lobby-error").hidden = false;
@@ -407,7 +499,7 @@ $("join-button").addEventListener("click", () => {
   $("join-button").disabled = true;
   $("lobby-error").hidden = true;
   wasFull = false;
-  net.connect(roomCode, { name, color: selectedColor, look: myLook });
+  net.connect(roomCode, { name, color: selectedColor, look: myLook, key: myKey() });
 });
 
 nameInput.addEventListener("keydown", (e) => {
@@ -438,7 +530,7 @@ function createKnight(player) {
   };
   knight.onFootstep = (side, [x, z], yaw) => {
     if (phase !== "round" && phase !== "countdown") return;
-    effects.footprint(x, z, yaw, side);
+    effects.footprint(x, z, yaw, side, player.id);
     _stepPos.set(x, 0, z);
     sound.footstep(_stepPos, metal, player === me ? 0.6 : 1);
     if (player.look?.a === 5 && Math.random() < 0.5) sound.bells(_stepPos, player === me ? 0.5 : 0.8); // gycklarens bjällror
@@ -1226,6 +1318,7 @@ const net = new Net({
         tbody.appendChild(tr);
       });
     // Utmärkelser: vem hade mest av vad?
+    $("score-counted").textContent = msg.counted === false ? "Matchen räknades inte till topplistan (minst två riktiga spelare behövs)." : msg.counted ? "Matchen är sparad på topplistan." : "";
     const awardList = $("awards");
     awardList.innerHTML = "";
     for (const a of msg.awards || []) {
@@ -1503,6 +1596,16 @@ const net = new Net({
     showLobbyError("Rummet är fullt (max 6 riddare).");
   },
 
+  nameTaken(msg) {
+    wasFull = true;
+    showLobbyError(`Namnet "${msg.name}" används redan av någon annan på topplistan. Välj ett annat namn, eller skriv in din återställningskod nedanför om namnet är ditt.`);
+    $("restore").open = true;
+  },
+
+  board(msg) {
+    renderBoard(msg);
+  },
+
   close(wasJoined) {
     if (wasJoined) {
       showStatus("Anslutningen till servern bröts.", true);
@@ -1552,10 +1655,29 @@ function addOther(player) {
 }
 
 // Varje riddare får sin egen röst (ljusare eller mörkare), räknad från spelarens id
+// rasp = hur hes rösten är, muffle = stängd hjälm (låter dovt)
 function voiceOf(player) {
   let h = 0;
-  for (const ch of player.id) h = (h * 31 + ch.charCodeAt(0)) % 997;
-  return h / 997;
+  let h2 = 7;
+  for (const ch of player.id) {
+    h = (h * 31 + ch.charCodeAt(0)) % 997;
+    h2 = (h2 * 17 + ch.charCodeAt(0)) % 991;
+  }
+  const k = player.knight;
+  return { v: h / 997, rasp: h2 / 991, muffle: !!(k && k.closedHelmet && !k.helmetOff && !player.helmetOff) };
+}
+
+// Flämtar när man har lite liv kvar
+function updatePanting(dt) {
+  if (phase !== "round") return;
+  for (const p of allPlayers()) {
+    if (p.dead || !p.knight || p.hp > 35) continue;
+    p.pantT = (p.pantT ?? Math.random()) - dt;
+    if (p.pantT <= 0) {
+      p.pantT = 0.95 + Math.random() * 0.5 - (35 - p.hp) * 0.008;
+      sound.pant(positionOf(p), voiceOf(p), 0.6 + (35 - p.hp) / 50);
+    }
+  }
 }
 
 function applyTeams(teams) {
@@ -2876,11 +2998,20 @@ function updateBleeding(dt) {
   const knights = allPlayers().filter((p) => !p.dead).map((p) => p.knight);
   for (const knight of knights) {
     knight.forEachBleedingStump(dt, (pos, age, dir) => {
-      // Pulserande strålar i hjärtats takt, som blir svagare med tiden
-      const strength = Math.max(0, 1 - age / 3.5);
-      const pulse = Math.sin(age * Math.PI * 2 * 2.2) > 0.3;
-      if (pulse && Math.random() < dt * 30) effects.spurt(pos, dir, strength);
-      else if (Math.random() < dt * 6 * strength) effects.blood(pos, 1, dir, 0.4);
+      // Pulserande strålar i hjärtats takt ("dunk-dunk"): hjärtat slår långsammare och
+      // strålarna blir svagare när blodet tar slut, sedan bara droppar
+      const strength = Math.max(0, 1 - age / 4);
+      const beat = (a) => a * 2.1 - a * a * 0.12;
+      const b1 = beat(age);
+      const b0 = beat(Math.max(0, age - dt));
+      if (strength > 0 && Math.floor(b1) !== Math.floor(b0)) {
+        effects.spurt(pos, dir, strength);
+        effects.spurt(pos, dir, strength * 0.8);
+      } else if (strength > 0 && Math.floor(b1 - 0.22) !== Math.floor(b0 - 0.22)) {
+        effects.spurt(pos, dir, strength * 0.45); // andra slaget i "dunk-dunk"
+      } else if (Math.random() < dt * (2 + 6 * strength)) {
+        effects.blood(pos, 1, dir, 0.25);
+      }
     });
   }
   // Blodpölar växer fram under döda kroppar och avhuggna delar när de har landat
@@ -2892,6 +3023,24 @@ function updateBleeding(dt) {
     if (!p.ragdoll.bodies || !p.ragdoll.points) continue;
     const c = p.ragdoll.center();
     if (c[1] < 1.2 && (c[0] / 15) ** 2 + (c[2] / 12) ** 2 < 1) effects.pool(c[0], c[2], p.size * (0.8 + Math.random() * 0.4));
+  }
+}
+
+// Färskt blod droppar från vapnet efter en träff
+const _tip = new THREE.Vector3();
+const _base = new THREE.Vector3();
+const _dropVel = new THREE.Vector3();
+function updateBladeDrips(dt) {
+  const now = performance.now() / 1000;
+  for (const p of allPlayers()) {
+    const k = p.knight;
+    if (!k || p.dead || !k.bladeHitAt || !k.weapon || k.wIndex === FISTS) continue;
+    const age = now - k.bladeHitAt;
+    if (age > 6 || Math.random() > dt * (3.5 - age * 0.5)) continue;
+    k.trailEnds(_tip, _base);
+    _tip.lerp(_base, Math.random() * 0.5);
+    _dropVel.set((Math.random() - 0.5) * 0.3, -0.4, (Math.random() - 0.5) * 0.3);
+    effects.spawnDrop(_tip, _dropVel, 0.008 + Math.random() * 0.006, true);
   }
 }
 
@@ -2937,8 +3086,10 @@ function frame() {
   if (!replaying) {
     updateBleeding(dt);
     debris.update(dt);
+    updateBladeDrips(dt);
   }
   effects.update(dt);
+  updatePanting(dt);
   updateFightCenter(dt);
   arena.update(dt, smoothCenter);
   if (!updateReplay()) updateCamera(dt);

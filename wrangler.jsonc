@@ -10,16 +10,18 @@
     "directory": "./public"
   },
 
-  // Ett Durable Object per spelrum
+  // Ett Durable Object per spelrum, och ett enda för den gemensamma topplistan
   "durable_objects": {
     "bindings": [
-      { "name": "ROOMS", "class_name": "GameRoom" }
+      { "name": "ROOMS", "class_name": "GameRoom" },
+      { "name": "BOARD", "class_name": "Leaderboard" }
     ]
   },
 
   // Krävs första gången ett Durable Object skapas. Ta inte bort.
   // (new_sqlite_classes är det som fungerar på gratisplanen.)
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["GameRoom"] }
+    { "tag": "v1", "new_sqlite_classes": ["GameRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["Leaderboard"] }
   ]
 }

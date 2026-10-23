@@ -52,6 +52,26 @@ function part(geo, shade, pos, scale, rot) {
 function merge(parts) {
   return mergeGeometries(parts);
 }
+// Formad lem (smalnar av, med en bula för musklerna) i stället för en rak kapsel.
+// prof = [[andel av längden, radie]...] uppifrån och ner, back = hur mycket vaden/baksidan buktar ut
+function limb(prof, length, back = 0, backAt = 0.3) {
+  const pts = [new THREE.Vector2(0.0001, -length - 0.02)];
+  for (let i = prof.length - 1; i >= 0; i--) pts.push(new THREE.Vector2(prof[i][1], -prof[i][0] * length));
+  pts.push(new THREE.Vector2(0.0001, prof[0][1] * 0.6));
+  const geo = new THREE.LatheGeometry(pts, 10);
+  if (back) {
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const z = pos.getZ(i);
+      if (z >= 0) continue;
+      const f = -pos.getY(i) / length;
+      pos.setZ(i, z * (1 + back * Math.exp(-(((f - backAt) / 0.22) ** 2))));
+    }
+    geo.computeVertexNormals();
+  }
+  return geo;
+}
+
 // Veck i tyget: puttar ut/in hörnen runt en cylinder (mer nedåt än uppåt)
 function folds(geo, n, amp, top, bottom) {
   const pos = geo.attributes.position;
@@ -134,9 +154,9 @@ function buildShapes() {
   ]);
   S.hand = part(new THREE.SphereGeometry(0.038, 8, 6), 1, [0, -0.32, 0.005], [0.9, 1.1, 0.8]);
   // Ben: lår (hosor) och underben med sko (skon blir mörk)
-  S.thigh = part(new THREE.CapsuleGeometry(0.06, 0.26, 3, 8), 1, [0, -0.18, 0]);
+  S.thigh = part(limb([[0, 0.07], [0.2, 0.068], [0.7, 0.056], [1, 0.05]], 0.36, -0.1, 0.4), 1, [0, 0, 0]);
   S.shin = merge([
-    part(new THREE.CapsuleGeometry(0.05, 0.28, 3, 8), 1, [0, -0.2, 0]),
+    part(limb([[0, 0.05], [0.25, 0.056], [0.55, 0.048], [0.92, 0.036], [1, 0.036]], 0.38, 0.3, 0.3), 1, [0, 0, 0]),
     part(new THREE.SphereGeometry(0.06, 8, 6), 0.3, [0, -0.39, 0.04], [0.9, 0.6, 1.6]),
   ]);
   // Kjol (kvinnor): bredare lår och en klocka nedtill
@@ -929,7 +949,7 @@ export function makeVendor(kind, path, start, speed = 0.012) {
       f.thighR.rotation.x = -Math.sin(walk) * 0.45;
       f.shinL.rotation.x = Math.max(0, -Math.sin(walk)) * 0.6;
       f.shinR.rotation.x = Math.max(0, Math.sin(walk)) * 0.6;
-      f.root.position.y = Math.abs(Math.cos(walk)) * 0.03;
+      f.root.position.y = 0.78 + Math.abs(Math.cos(walk)) * 0.03; // ståhöjd + lite gung
       if (walker) {
         f.armL.rotation.x = -Math.sin(walk) * 0.35;
         f.armR.rotation.x = Math.sin(walk) * 0.35;

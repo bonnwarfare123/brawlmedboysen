@@ -57,9 +57,22 @@ function randomId() {
   return Math.random().toString(36).slice(2, 8);
 }
 
+// Den hemliga nyckeln (= återställningskoden) är 12 tecken, t.ex. RIDD-7K4P-QX2M-9TAB
+const KEY_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+function cleanKey(value) {
+  const k = String(value ?? "").toUpperCase().replace(/^RIDD/, "").replace(/[^A-Z0-9]/g, "");
+  return k.length === 12 && [...k].every((c) => KEY_CHARS.includes(c)) ? k : null;
+}
+async function hashKey(key) {
+  const data = new TextEncoder().encode("brawlmedboysen:" + key);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+const DEFAULT_NAME = "Namnlös riddare";
+
 function cleanName(value) {
   const name = String(value ?? "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, NAME_MAX);
-  return name || "Namnlös riddare";
+  return name || DEFAULT_NAME;
 }
 
 // Utseende: { a: rustning, h: hjälm, s: sköld, w: vapen, c: mantel } som index i listorna
@@ -370,7 +383,7 @@ export class GameRoom extends DurableObject {
     for (const ws of this.ctx.getWebSockets()) {
       const info = ws.deserializeAttachment();
       if (info && info.id === player.id) {
-        ws.serializeAttachment({ id: player.id, name: player.name, color: player.color, look: player.look, team: player.team });
+        ws.serializeAttachment({ id: player.id, name: player.name, color: player.color, look: player.look, team: player.team, pid: info.pid ?? null });
       }
     }
   }
@@ -465,8 +478,43 @@ export class GameRoom extends DurableObject {
 
   // ===================== Lobby =====================
 
-  handleJoin(ws, info, msg) {
+  // Topplistan (en gemensam för alla rum). Finns inte i testerna.
+  board() {
+    try {
+      const B = this.env?.BOARD;
+      return B ? B.get(B.idFromName("global")) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async handleJoin(ws, info, msg) {
     if (info) return; // redan med
+    this.joining ||= new Set();
+    if (this.joining.has(ws)) return;
+    // Topplistan: namnet "ägs" av den hemliga nyckeln i spelarens webbläsare
+    let pid = null;
+    const key = cleanKey(msg.key);
+    const wantedName = cleanName(msg.name);
+    const board = this.board();
+    if (board && key && wantedName !== DEFAULT_NAME) {
+      this.joining.add(ws);
+      try {
+        const res = await board.claim(await hashKey(key), wantedName);
+        if (res && res.ok === false) {
+          this.send(ws, { t: "nameTaken", name: wantedName });
+          ws.close(4002, "Namnet är upptaget");
+          return;
+        }
+        pid = res?.pid ?? null;
+      } catch {
+        // topplistan svarar inte: spela ändå, men utan att räknas
+      } finally {
+        this.joining.delete(ws);
+      }
+      if (ws.deserializeAttachment()) return;
+      if (ws.readyState !== undefined && ws.readyState !== 1) return; // gick innan vi fick svar
+    }
 
     // Fullt? Då får en träningsmotståndare gå (bara i lobbyn)
     if (this.players.size >= MAX_PLAYERS && this.phase === "lobby") {
@@ -484,7 +532,7 @@ export class GameRoom extends DurableObject {
     let color = Number.isInteger(msg.color) && msg.color >= 0 && msg.color < COLORS.length ? msg.color : 0;
     if (taken.has(color)) color = COLORS.findIndex((_, i) => !taken.has(i));
 
-    const playerInfo = { id: randomId(), name: cleanName(msg.name), color, look: cleanLook(msg.look), team: null };
+    const playerInfo = { id: randomId(), name: wantedName, color, look: cleanLook(msg.look), team: null, pid };
     const player = newPlayerState(playerInfo);
     if (this.mode === "team") player.team = this.smallerTeam();
     playerInfo.team = player.team;
@@ -511,6 +559,48 @@ export class GameRoom extends DurableObject {
       items: [...this.items.values()],
     });
     this.broadcast({ t: "join", player: publicPlayer(player) }, ws);
+    this.sendBoard([ws]);
+  }
+
+  // Skicka topplistan (topp 10) och varje spelares eget kort
+  async sendBoard(sockets = this.ctx.getWebSockets()) {
+    const board = this.board();
+    if (!board) return;
+    const targets = sockets.map((ws) => ({ ws, info: ws.deserializeAttachment() })).filter((x) => x.info);
+    if (!targets.length) return;
+    try {
+      const res = await board.top(targets.map((x) => x.info.pid).filter(Boolean));
+      for (const { ws, info } of targets) {
+        this.send(ws, { t: "board", top: res.top, total: res.total, me: (info.pid && res.mine[info.pid]) || null, ranked: !!info.pid });
+      }
+    } catch {
+      // ignorera
+    }
+  }
+
+  // Efter en match: skicka in resultatet till topplistan (bara om minst två riktiga spelare var med)
+  async recordMatch(winner, team) {
+    const humans = this.humans();
+    if (humans.length < 2) return false;
+    const board = this.board();
+    const awardCount = {};
+    for (const a of this.awards()) (awardCount[a.id] ||= []).push(a.key);
+    const results = humans.filter((p) => p.pid).map((p) => ({
+      pid: p.pid,
+      win: this.mode === "team" ? team !== null && p.team === team : p.id === winner,
+      kills: p.kills || 0,
+      sev: p.stats?.sev || 0,
+      awards: awardCount[p.id] || [],
+      weapon: p.look?.w ?? 0,
+    }));
+    if (board && results.length) {
+      try {
+        await board.record(results);
+      } catch {
+        // ignorera
+      }
+    }
+    return true;
   }
 
   handleColor(ws, player, color) {
@@ -891,8 +981,10 @@ export class GameRoom extends DurableObject {
   // winner = spelarens id (eller null), team = vinnande lag i lagspel
   matchEnd(winner, team = null) {
     const token = this.setPhase("matchEnd");
+    const counted = this.humans().length >= 2;
+    this.recordMatch(winner, team);
     this.broadcast({
-      t: "matchEnd", winner, team, mode: this.mode,
+      t: "matchEnd", winner, team, mode: this.mode, counted,
       wins: this.winsTable(), kills: this.killsTable(), teamWins: this.teamWins,
       podium: this.podium(winner, team),
       awards: this.awards(),
@@ -944,6 +1036,7 @@ export class GameRoom extends DurableObject {
       p.ready = !!p.bot; // alla får trycka redo igen
     }
     this.broadcast({ t: "lobby" });
+    this.sendBoard();
   }
 
   // ===================== Strid =====================
@@ -1742,3 +1835,100 @@ export class GameRoom extends DurableObject {
   }
 }
 
+
+// ===========================================================================
+// TOPPLISTAN – en enda gemensam för alla rum (ett eget Durable Object med namnet "global")
+//
+// Sparas i minnet:
+//   k:<hash av nyckeln>  → spelar-id     (nyckeln själv sparas aldrig, bara en "fingeravtryck"-kod av den)
+//   n:<namn i små bokst> → spelar-id     (vem som äger namnet)
+//   p:<spelar-id>        → { name, wins, kills, matches, sev, streak, best, awards, weapons }
+// ===========================================================================
+
+export class Leaderboard extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.rows = null;
+  }
+
+  async load() {
+    if (this.rows) return;
+    const rows = new Map();
+    const list = await this.ctx.storage.list({ prefix: "p:" });
+    for (const [, row] of list) rows.set(row.pid, row);
+    this.rows = rows;
+  }
+
+  // Ta (eller behåll) ett namn. Svarar { ok: true, pid } eller { ok: false } om någon annan äger namnet.
+  async claim(keyHash, name) {
+    await this.load();
+    if (typeof keyHash !== "string" || keyHash.length !== 64) return { ok: false };
+    name = cleanName(name);
+    const lname = name.toLowerCase();
+    let pid = await this.ctx.storage.get("k:" + keyHash);
+    const owner = await this.ctx.storage.get("n:" + lname);
+    if (owner && owner !== pid) return { ok: false };
+    if (!pid) {
+      pid = randomId() + randomId();
+      await this.ctx.storage.put("k:" + keyHash, pid);
+    }
+    let row = this.rows.get(pid);
+    if (!row) row = { pid, name, wins: 0, kills: 0, matches: 0, sev: 0, streak: 0, best: 0, awards: {}, weapons: {} };
+    // Bytt namn: det gamla namnet blir ledigt, siffrorna följer med
+    const old = row.name.toLowerCase();
+    if (old !== lname && (await this.ctx.storage.get("n:" + old)) === pid) await this.ctx.storage.delete("n:" + old);
+    row.name = name;
+    this.rows.set(pid, row);
+    await this.ctx.storage.put({ ["n:" + lname]: pid, ["p:" + pid]: row });
+    return { ok: true, pid };
+  }
+
+  async record(results) {
+    await this.load();
+    if (!Array.isArray(results)) return;
+    const puts = {};
+    for (const r of results.slice(0, 6)) {
+      const row = this.rows.get(r?.pid);
+      if (!row) continue;
+      row.matches += 1;
+      row.kills += Math.max(0, Math.min(200, Math.round(finite(r.kills))));
+      row.sev += Math.max(0, Math.min(200, Math.round(finite(r.sev))));
+      if (r.win) {
+        row.wins += 1;
+        row.streak += 1;
+        row.best = Math.max(row.best, row.streak);
+        const w = String(Math.round(finite(r.weapon)));
+        row.weapons[w] = (row.weapons[w] || 0) + 1;
+      } else {
+        row.streak = 0;
+      }
+      for (const key of Array.isArray(r.awards) ? r.awards.slice(0, 8) : []) {
+        if (AWARDS.some((a) => a.key === key)) row.awards[key] = (row.awards[key] || 0) + 1;
+      }
+      puts["p:" + row.pid] = row;
+    }
+    if (Object.keys(puts).length) await this.ctx.storage.put(puts);
+  }
+
+  sorted() {
+    return [...this.rows.values()].filter((r) => r.matches > 0).sort((a, b) => b.wins - a.wins || b.kills - a.kills || a.matches - b.matches || a.name.localeCompare(b.name));
+  }
+
+  async top(pids = []) {
+    await this.load();
+    const list = this.sorted();
+    const pub = (r, i) => ({ rank: i + 1, name: r.name, wins: r.wins, kills: r.kills, matches: r.matches });
+    const mine = {};
+    for (const pid of Array.isArray(pids) ? pids.slice(0, 6) : []) {
+      const row = this.rows.get(pid);
+      if (!row) continue;
+      const i = list.indexOf(row);
+      const topEntry = (obj) => Object.entries(obj || {}).sort((a, b) => b[1] - a[1])[0] || null;
+      mine[pid] = {
+        rank: i >= 0 ? i + 1 : null, name: row.name, wins: row.wins, kills: row.kills, matches: row.matches,
+        sev: row.sev, streak: row.streak, best: row.best, award: topEntry(row.awards), weapon: topEntry(row.weapons),
+      };
+    }
+    return { top: list.slice(0, 10).map(pub), total: list.length, mine };
+  }
+}

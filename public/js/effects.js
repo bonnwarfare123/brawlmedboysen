@@ -19,6 +19,12 @@ const DRY = new THREE.Color(0x3a1a0e);   // intorkat blod: mörkt brunrött, har
 const PRINT = new THREE.Color(0x5e4630); // fotspår (lite mörkare sand)
 const MUD_PRINT = new THREE.Color(0x2e2014); // fotspår i lera (regn): mörka och djupa
 const DIRT = new THREE.Color(0x8a6a48);  // marken (fotspåren tonar mot den)
+const BLOODY_PRINT = new THREE.Color(0x6a0c08); // fotspår efter att man gått genom en blodpöl
+const RAIN_BLOOD = new THREE.Color(0x8a3a30);   // utspätt av regnet: ljusare och rosaaktigt
+const MAX_WALL = 60;
+// Sargens insida (där blodstänk fastnar): lite innanför plankorna
+const WALL_RX = 13.62;
+const WALL_RZ = 10.62;
 
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
@@ -90,6 +96,25 @@ export class Effects {
     this.prints.mesh.material.opacity = 0.7;
     scene.add(this.prints.mesh);
     this.colorTimer = 0;
+
+    // Blodstänk på sargen (lodräta fläckar som rinner lite nedåt)
+    {
+      const geo = new THREE.PlaneGeometry(1, 1);
+      geo.translate(0, -0.25, 0); // fläcken rinner nedåt från träffpunkten
+      const mat = new THREE.MeshStandardMaterial({
+        map: splatterTexture(1), transparent: true, alphaTest: 0.35, depthWrite: false,
+        roughness: 0.35, metalness: 0.05, polygonOffset: true, polygonOffsetFactor: -3,
+      });
+      this.wall = { mesh: new THREE.InstancedMesh(geo, mat, MAX_WALL), items: new Array(MAX_WALL).fill(null), next: 0 };
+      for (let i = 0; i < MAX_WALL; i++) {
+        this.wall.mesh.setMatrixAt(i, HIDDEN);
+        this.wall.mesh.setColorAt(i, WET);
+      }
+      this.wall.mesh.frustumCulled = false;
+      scene.add(this.wall.mesh);
+    }
+    // Vem som har blod under fötterna (gick genom en pöl): id → antal blodiga steg kvar
+    this.bloodyFeet = new Map();
 
     // Moln: mjuka runda bilder som växer och tonar bort (damm och blodmoln)
     const canvas = document.createElement("canvas");
@@ -168,11 +193,33 @@ export class Effects {
     set.mesh.instanceColor.needsUpdate = true;
   }
 
+  // Stänk på sargens insida där droppen träffade
+  wallSplat(x, y, z, size) {
+    const i = this.wall.next;
+    this.wall.next = (this.wall.next + 1) % MAX_WALL;
+    // Punkten på sargen och riktningen in mot arenan
+    const k = 1 / Math.hypot(x / WALL_RX, z / WALL_RZ);
+    const wx = x * k;
+    const wz = z * k;
+    const nx = -wx / (WALL_RX * WALL_RX);
+    const nz = -wz / (WALL_RZ * WALL_RZ);
+    _q.setFromAxisAngle(_up, Math.atan2(nx, nz));
+    _p.set(wx, Math.min(0.75, Math.max(0.08, y)), wz);
+    const s = size * (0.8 + Math.random() * 0.6);
+    _s.set(s, s * (1.3 + Math.random() * 0.8), 1);
+    _m.compose(_p, _q, _s);
+    this.wall.mesh.setMatrixAt(i, _m);
+    this.wall.mesh.setColorAt(i, WET);
+    this.wall.items[i] = { born: this.time };
+    this.wall.mesh.instanceMatrix.needsUpdate = true;
+    this.wall.mesh.instanceColor.needsUpdate = true;
+  }
+
   // Blodpöl som sakta växer (under döda kroppar och avhuggna delar)
   pool(x, z, size = 0.8) {
     const i = this.pools.next;
     this.pools.next = (this.pools.next + 1) % MAX_POOLS;
-    this.pools.items[i] = { x, z, size, born: this.time, angle: Math.random() * Math.PI * 2 };
+    this.pools.items[i] = { x, z, size, born: this.time, angle: Math.random() * Math.PI * 2, sx: 0.85 + Math.random() * 0.35, sz: 0.85 + Math.random() * 0.35 };
     this.pools.mesh.setColorAt(i, WET);
     this.pools.mesh.instanceColor.needsUpdate = true;
   }
@@ -197,8 +244,22 @@ export class Effects {
   }
 
   // Ett fotspår i sanden (bara inne på arenan, tonar bort med tiden)
-  footprint(x, z, yaw, side) {
+  footprint(x, z, yaw, side, who = null) {
     if ((x / 13) ** 2 + (z / 10) ** 2 > 1) return;
+    // Gick man genom en färsk blodpöl blir de närmaste stegen röda
+    let bloody = 0;
+    if (who !== null) {
+      for (const p of this.pools.items) {
+        if (!p || this.time - p.born > 45) continue;
+        const r = p.size * 0.42 * Math.min(1, (this.time - p.born) / 6 + 0.2);
+        if ((x - p.x) ** 2 + (z - p.z) ** 2 < r * r) {
+          this.bloodyFeet.set(who, 9);
+          break;
+        }
+      }
+      bloody = this.bloodyFeet.get(who) || 0;
+      if (bloody > 0) this.bloodyFeet.set(who, bloody - 1);
+    }
     const i = this.prints.next;
     this.prints.next = (this.prints.next + 1) % MAX_PRINTS;
     const lx = side === "L" ? 0.02 : -0.02;
@@ -208,8 +269,10 @@ export class Effects {
     else _s.set(0.12, 1, 0.28);
     _m.compose(_p, _q, _s);
     this.prints.mesh.setMatrixAt(i, _m);
-    this.prints.mesh.setColorAt(i, this.wet ? MUD_PRINT : PRINT);
-    this.prints.items[i] = { born: this.time };
+    const base = this.wet ? MUD_PRINT : PRINT;
+    const col = bloody > 0 ? new THREE.Color().copy(base).lerp(BLOODY_PRINT, Math.min(1, bloody / 6)) : base;
+    this.prints.mesh.setColorAt(i, col);
+    this.prints.items[i] = { born: this.time, color: col.clone() };
     this.prints.mesh.instanceMatrix.needsUpdate = true;
     this.prints.mesh.instanceColor.needsUpdate = true;
   }
@@ -240,7 +303,8 @@ export class Effects {
     this.puffs = [];
     for (const d of this.dropData) d.alive = false;
     for (const d of this.sparkData) d.alive = false;
-    for (const set of [...this.splats, this.pools, this.prints]) {
+    this.bloodyFeet.clear();
+    for (const set of [...this.splats, this.pools, this.prints, this.wall]) {
       set.items.fill(null);
       for (let i = 0; i < set.items.length; i++) set.mesh.setMatrixAt(i, HIDDEN);
       set.mesh.instanceMatrix.needsUpdate = true;
@@ -259,6 +323,13 @@ export class Effects {
       d.vel.y += GRAVITY * dt;
       d.pos.addScaledVector(d.vel, dt);
       d.life -= dt;
+      // Träffar sargen?
+      if (d.pos.y < 1.15 && (d.pos.x / WALL_RX) ** 2 + (d.pos.z / WALL_RZ) ** 2 > 1) {
+        if (d.splat || d.size > 0.018) this.wallSplat(d.pos.x, d.pos.y, d.pos.z, d.size * (6 + Math.random() * 5));
+        d.alive = false;
+        this.drops.setMatrixAt(i, HIDDEN);
+        continue;
+      }
       if (d.pos.y <= 0.02 || d.life <= 0) {
         if (d.pos.y <= 0.02 && d.splat) this.splat(d.pos.x, d.pos.z, d.size * (8 + Math.random() * 6), d.vel.x, d.vel.z);
         d.alive = false;
@@ -301,8 +372,10 @@ export class Effects {
       const grow = Math.min(1, age / 6);
       _q.setFromAxisAngle(_up, p.angle);
       _p.set(p.x, 0.012, p.z);
-      const s = p.size * (0.15 + 0.85 * (1 - (1 - grow) ** 2));
-      _s.set(s, 1, s);
+      // Växer snabbt först, sedan sakta vidare (och mer i regn när vattnet sprider ut blodet)
+      const spread = 1 + Math.min(0.25, age / 60) + (this.wet ? Math.min(0.5, age / 30) : 0);
+      const s = p.size * (0.15 + 0.85 * (1 - (1 - grow) ** 2)) * spread;
+      _s.set(s * (p.sx || 1), 1, s * (p.sz || 1));
       _m.compose(_p, _q, _s);
       this.pools.mesh.setMatrixAt(i, _m);
       poolsChanged = true;
@@ -314,10 +387,16 @@ export class Effects {
     if (this.colorTimer > 0.5) {
       this.colorTimer = 0;
       const c = new THREE.Color();
-      for (const set of [...this.splats, this.pools]) {
+      for (const set of [...this.splats, this.pools, this.wall]) {
         set.items.forEach((item, i) => {
           if (!item) return;
-          c.copy(WET).lerp(DRY, Math.min(1, (this.time - item.born) / 25));
+          const age = this.time - item.born;
+          if (this.wet) {
+            // I regn: blodet späds ut (ljusare, rosa) och tonar sakta bort i den blöta sanden
+            c.copy(WET).lerp(RAIN_BLOOD, Math.min(1, age / 8)).lerp(set === this.wall ? RAIN_BLOOD : DIRT, Math.min(0.85, Math.max(0, age - 10) / 50));
+          } else {
+            c.copy(WET).lerp(DRY, Math.min(1, age / 25));
+          }
           set.mesh.setColorAt(i, c);
         });
         set.mesh.instanceColor.needsUpdate = true;
@@ -330,7 +409,7 @@ export class Effects {
           this.prints.mesh.setMatrixAt(i, HIDDEN);
           this.prints.mesh.instanceMatrix.needsUpdate = true;
         } else {
-          c.copy(PRINT).lerp(DIRT, f);
+          c.copy(item.color || PRINT).lerp(DIRT, f);
           this.prints.mesh.setColorAt(i, c);
         }
       });

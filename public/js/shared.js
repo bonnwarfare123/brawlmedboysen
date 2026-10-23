@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.15.1";
+export const VERSION = "0.16";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -22,7 +22,7 @@ export const COMBAT = {
   // Utan ben sitter man på marken och blöder så här mycket liv per sekund
   leglessBleed: 3,
   // Kasta vapnet (G): flyger rakt fram, skadan = snabbt slag x vapnets skada x damage
-  throw: { speed: 17, range: 13, radius: 0.55, damage: 1.3, stagger: 0.5, windup: 0.22 },
+  throw: { speed: 17, range: 13, radius: 0.55, damage: 0.9, stagger: 0.5, windup: 0.22 },
   // Ta tag i någon (R): reach/arc = hur nära och rakt framför, hold = längsta greppet,
   // escape = antal knapptryck för att slita sig loss, shove = knuffen, punch = slag medan man håller fast
   grab: { reach: 1.5, arc: 50, cooldown: 2.5, hold: 2.8, escape: 7, shove: 13, punch: 10, punchCooldown: 0.55, moveFactor: 0.45 },

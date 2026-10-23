@@ -146,6 +146,7 @@ export function buildArena() {
   trampled.rotation.x = -Math.PI / 2;
   trampled.scale.set(FX + 0.4, FZ + 0.4, 1);
   trampled.position.y = 0.011;
+  trampled.renderOrder = -2; // ritas före fotspår och blod (annars täcker den dem)
   trampled.receiveShadow = true;
   trampled.userData.noMerge = true;
   group.add(trampled);

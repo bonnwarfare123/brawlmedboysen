@@ -1,4 +1,4 @@
-# Brawlmedboysen – v0.15.1
+# Brawlmedboysen – v0.16
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
@@ -11,6 +11,8 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 **Arenan:** tornerbarriär av plankor med järnband, lera nedtill, hängande tygdraperier och vapensköldar, upptrampad lerig sand där blodet sjunker in, eldkorgar med eld och rök, träningsdocka som snurrar när man slår på den, torn byggda av riktiga plankor (med stege, fönsterluckor och tinnar), krattad sand med småsten och halmstrån, läktare med plankbänkar, snidade räcken, tak med fransar och ståplats längst bak, levande publik (axlar, armbågar, kläder med veck, smala och runda, tydligare ansikten) med barn, gamla med käpp, damer och adelsmän (reser sig, jublar, klappar, pekar, dricker, äter, dunkar grannen i ryggen och viftar med hatten), försäljare som går runt, folk som går på marknaden, en lägereld med gryta och rök vid tälten, tätare gräs med blommor, damm som svävar i luften, hundar, fåglar och flugor runt elden, kungapar som visar tummen upp eller ner, vakter och en härold med trumpet.
 
 **Grafik:** på hög grafik (F2) får ljusa saker ett mjukt glöd-sken, och färgtonen anpassas efter dag, kväll, regn och dimma (varmare på kvällen, gråare i regn, mörka hörn). På låg grafik stängs glöd, skuggor och dammet av.
+
+**Topplista:** en gemensam lista för alla rum som visas i lobbyn (matchvinster, dråp och matcher), med ditt eget kort (placering, bästa vinstsvit, avhuggna lemmar, vilket vapen du vinner mest med). Ditt namn är ditt: en hemlig nyckel i webbläsaren gör att ingen annan kan ta det. Byter du dator använder du din återställningskod (lobbyn → "Visa min kod", och på startskärmen "Har du en återställningskod?"). Matcher räknas bara när minst två riktiga spelare är med.
 
 **Efter matchen:** först visas matchens sista dråp i repris från en annan vinkel. Sedan reser sig en prispall ur sanden, de tre bästa ställer sig på den och firar, resten applåderar framför, och utmärkelser delas ut (Slaktaren, Muren, Klumpigast, Kastaren, Brottaren …).
 
@@ -37,6 +39,7 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 | `public/index.html` | Själva webbsidan |
 | `public/js/main.js` | Startskärm, styrning, kamera, spel-loop |
 | `public/js/arena.js` | Bygger arenan av enkla former (barriär, läktare, kungaloge, plankstorn, eldkorgar, träningsdocka, prispall) |
+| `server/index.js` (Leaderboard) | Den gemensamma topplistan (ett eget Durable Object som heter BOARD i `wrangler.jsonc`) |
 | `public/js/postfx.js` | Glöd och färgton (efterbehandling av bilden, bara på hög grafik) |
 | `public/js/crowd.js` | Publiken, kungaparet, vakterna och härolden |
 | `public/js/cloth.js` | Fysik för tyg (mantel, vapenrock) och kedjan på slagkedjan |

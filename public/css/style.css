@@ -527,3 +527,32 @@ body.replay #hud .panel, body.replay #combat-hud, body.replay #crosshair { visib
 .kill { max-width: 100%; box-sizing: border-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* "Klicka i spelet ..." ligger under siktet i stället för ovanpå det */
 #click-hint { top: calc(50% + 64px); transform: translate(-50%, 0); }
+
+/* ---------- v0.16: topplistan ---------- */
+.board-card {
+  position: fixed; right: 24px; top: 16px; width: 330px; max-width: calc(100% - 48px);
+  max-height: calc(100vh - 170px); overflow-y: auto; z-index: 5; padding: 14px 16px;
+}
+body:not([data-phase="lobby"]) #board { display: none; }
+#board-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+#board-table th { font-size: 12px; text-align: left; color: #6b4a2b; padding: 2px 4px; }
+#board-table td { padding: 3px 4px; border-top: 1px solid rgba(107, 74, 43, 0.18); white-space: nowrap; }
+#board-table td:nth-child(2) { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+#board-table td:nth-child(n+3), #board-table th:nth-child(n+3) { text-align: right; font-variant-numeric: tabular-nums; }
+#board-table tr.me td { background: rgba(217, 165, 33, 0.22); font-weight: bold; }
+#board-table tr.gap td { text-align: center; color: #8a6a4a; border-top: none; padding: 0; }
+#board-table tr:nth-child(1) td:first-child { color: #c8961a; font-weight: bold; }
+#my-card { margin-top: 12px; padding: 10px; border-radius: 8px; background: rgba(107, 74, 43, 0.1); }
+#my-card h3 { margin: 0 0 6px; font-size: 16px; text-align: center; }
+.my-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; text-align: center; }
+.my-stats b { display: block; font-size: 18px; }
+.my-stats span { font-size: 11px; color: #6b4a2b; }
+#my-extra { margin: 8px 0 6px; text-align: center; }
+#show-code { width: 100%; }
+#code-box code { font-size: 13px; letter-spacing: 0.5px; white-space: nowrap; background: #fff8e8; padding: 4px 8px; border-radius: 4px; flex: 1; text-align: center; }
+.restore-row { display: flex; gap: 6px; align-items: center; }
+.restore-row input { flex: 1; margin: 0; text-transform: uppercase; }
+#restore { margin-top: 10px; font-size: 14px; }
+#restore summary { cursor: pointer; color: #6b4a2b; }
+.name-note { margin: 2px 0 8px; font-size: 12px; }
+@media (max-width: 900px) { .board-card { display: none; } }

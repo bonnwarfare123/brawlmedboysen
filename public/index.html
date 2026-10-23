@@ -26,12 +26,19 @@
 
       <label for="name-input">Ditt riddarnamn</label>
       <input id="name-input" type="text" maxlength="20" placeholder="Sir Klumpig" autocomplete="off">
+      <p class="rules name-note">Namnet blir ditt på topplistan, så heta samma sak varje gång.</p>
 
       <label>Din färg</label>
       <div id="color-picker" class="colors"></div>
 
       <button id="join-button" class="primary">Skapa nytt rum</button>
       <p id="lobby-error" class="error" hidden></p>
+      <details id="restore">
+        <summary>Har du en återställningskod?</summary>
+        <p class="rules">Skriv in koden från din andra dator eller webbläsare, så får du tillbaka ditt namn och dina siffror.</p>
+        <div class="restore-row"><input id="restore-input" type="text" maxlength="24" placeholder="RIDD-XXXX-XXXX-XXXX" autocomplete="off"><button id="restore-button" class="small">Använd</button></div>
+        <p id="restore-msg" class="rules"></p>
+      </details>
       <p class="version">v<span id="version"></span></p>
     </div>
   </div>
@@ -91,6 +98,34 @@
     <p class="rules" id="lobby-rules"></p>
   </div>
 
+  <!-- Topplistan (gemensam för alla rum) och mitt eget kort, visas i lobbyn -->
+  <div id="board" class="card board-card" hidden>
+    <h2>🏆 Topplista</h2>
+    <table id="board-table">
+      <thead><tr><th>#</th><th>Riddare</th><th title="Matchvinster">🏆</th><th title="Dråp">⚔</th><th title="Matcher">Matcher</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="board-empty" class="rules" hidden>Ingen har spelat en match än. Bli först!</p>
+    <div id="my-card">
+      <h3 id="my-title">Du</h3>
+      <div class="my-stats">
+        <div><b id="my-rank">–</b><span>Placering</span></div>
+        <div><b id="my-wins">0</b><span>Vinster</span></div>
+        <div><b id="my-kills">0</b><span>Dråp</span></div>
+        <div><b id="my-matches">0</b><span>Matcher</span></div>
+        <div><b id="my-streak">0</b><span>Bästa svit</span></div>
+        <div><b id="my-sev">0</b><span>Avhuggna lemmar</span></div>
+      </div>
+      <p id="my-extra" class="rules"></p>
+      <button id="show-code" class="small">🔑 Visa min kod</button>
+      <div id="code-box" hidden>
+        <p class="rules">Med koden kommer du åt ditt namn från en annan dator. Visa den inte för någon!</p>
+        <div class="restore-row"><code id="my-code"></code><button id="copy-code" class="small">Kopiera</button></div>
+      </div>
+    </div>
+    <p class="rules">Matcher räknas bara när minst två riktiga spelare är med (inte bara botar).</p>
+  </div>
+
   <!-- Turneringsträdet (visas mellan duellerna) -->
   <div id="bracket" class="overlay see-through" hidden>
     <div class="card wide">
@@ -109,6 +144,7 @@
         <tbody></tbody>
       </table>
       <ul id="awards"></ul>
+      <p class="rules" id="score-counted"></p>
       <p class="subtitle" id="score-back">Tillbaka till lobbyn strax…</p>
     </div>
   </div>
