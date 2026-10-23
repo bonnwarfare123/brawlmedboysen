@@ -1,14 +1,16 @@
-# Brawlmedboysen – v0.14
+# Brawlmedboysen – v0.15
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
 **Spelsätt** (lobbyledaren väljer, även dag eller kväll, sol, regn eller dimma och upp till 3 träningsmotståndare som servern styr; alla trycker på redo-knappen så man ser när alla är redo): **Alla mot alla** (först till 5 rundor), **Lag** (Röda mot Blå, välj lag själv eller slumpa, inga skador på lagkamrater) och **Turnering** (1 mot 1 med utslagsträd, bäst av 3 per duell, fripass om det inte går jämnt ut).
 
-**Riddarna:** 6 utstyrslar (bland annat en gycklare med bjällror), 7 hjälmar med riktiga hjälmprydnader (vingar, plym, kam), 5 sköldar, 10 vapen: svärd, yxa, slagkedja, spjut och stridshammare med sköld, samt tvåhandssvärd, stridsyxa, hillebard, slägga och en jättelik zweihänder utan sköld. Tvåhandsvapnen är långsammare men når längre och slår hårdare. Hammare krossar i stället för att hugga av, slår av hjälmar och får fienden att vingla; släggan kan fälla den. Vapnen får hack i eggen under matchen och kan bytas mellan rundorna (mushjulet eller Z/X), valfri tygmantel som fladdrar, vapenrock i tyg, bucklor, repor, smuts och blod som byggs på under matchen, hjälmar som kan flyga av, ansiktsuttryck, stön och skrik.
+**Riddarna:** 7 utstyrslar (bland annat en gycklare med bjällror och en fattig vandrande riddare i rostig, lappad rustning), 7 hjälmar med riktiga hjälmprydnader (vingar, plym, kam), 5 sköldar, 10 vapen: svärd, yxa, slagkedja, spjut och stridshammare med sköld, samt tvåhandssvärd, stridsyxa, hillebard, slägga och en jättelik zweihänder utan sköld. Tvåhandsvapnen är långsammare men når längre och slår hårdare. Hammare krossar i stället för att hugga av, slår av hjälmar och får fienden att vingla; släggan kan fälla den. Vapnen får hack i eggen under matchen och kan bytas mellan rundorna (mushjulet eller Z/X), valfri tygmantel som fladdrar, vapenrock i tyg, bucklor, repor, smuts och blod som byggs på under matchen, hjälmar som kan flyga av, ansikten med näsa, kindben, ögonlock och ögonbryn som rör sig, stön och skrik. Namnskyltarna krymper så de inte går in i varandra, och datorstyrda riddare har en BOT-skylt.
 
 **Strid:** varje vapen har egna rörelser (snabba slag växlar mellan hugg och bakhandshugg, tunga slag och stötar med hela kroppen), snabbt slag, tungt slag, stöt (ett riktigt utfallssteg med egen, längre väntetid), spark som kan fälla motståndaren, kasta vapnet, ta tag i någon och brottas (knuffa, kasta omkull eller slå), huka, rulla (går inte att träffa mitt i rullningen), tappade vapen som kan plockas upp, sittande utan ben, parering, hån-gester, skada per kroppsdel och avhuggna lemmar, ragdolls med leder som bara böjer sig åt rätt håll, blod som stänker, sprutar, torkar och bildar pölar. Servern avgör alla träffar.
 
-**Arenan:** tornerbarriär med randigt tyg och sköldar, eldkorgar med eld och rök, träningsdocka som snurrar när man slår på den, torn byggda av riktiga plankor (med stege, fönsterluckor och tinnar), krattad sand med småsten och halmstrån, levande publik med barn, gamla med käpp, damer och adelsmän (reser sig, jublar, klappar, pekar, dricker, äter, dunkar grannen i ryggen och viftar med hatten), försäljare som går runt, hundar, fåglar och flugor runt elden, kungapar som visar tummen upp eller ner, vakter och en härold med trumpet.
+**Arenan:** tornerbarriär av plankor med järnband, lera nedtill, hängande tygdraperier och vapensköldar, upptrampad lerig sand där blodet sjunker in, eldkorgar med eld och rök, träningsdocka som snurrar när man slår på den, torn byggda av riktiga plankor (med stege, fönsterluckor och tinnar), krattad sand med småsten och halmstrån, läktare med plankbänkar, snidade räcken, tak med fransar och ståplats längst bak, levande publik (axlar, armbågar, kläder med veck, smala och runda, tydligare ansikten) med barn, gamla med käpp, damer och adelsmän (reser sig, jublar, klappar, pekar, dricker, äter, dunkar grannen i ryggen och viftar med hatten), försäljare som går runt, folk som går på marknaden, en lägereld med gryta och rök vid tälten, tätare gräs med blommor, damm som svävar i luften, hundar, fåglar och flugor runt elden, kungapar som visar tummen upp eller ner, vakter och en härold med trumpet.
+
+**Grafik:** på hög grafik (F2) får ljusa saker ett mjukt glöd-sken, och färgtonen anpassas efter dag, kväll, regn och dimma (varmare på kvällen, gråare i regn, mörka hörn). På låg grafik stängs glöd, skuggor och dammet av.
 
 **Efter matchen:** först visas matchens sista dråp i repris från en annan vinkel. Sedan reser sig en prispall ur sanden, de tre bästa ställer sig på den och firar, resten applåderar framför, och utmärkelser delas ut (Slaktaren, Muren, Klumpigast, Kastaren, Brottaren …).
 
@@ -35,6 +37,7 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 | `public/index.html` | Själva webbsidan |
 | `public/js/main.js` | Startskärm, styrning, kamera, spel-loop |
 | `public/js/arena.js` | Bygger arenan av enkla former (barriär, läktare, kungaloge, plankstorn, eldkorgar, träningsdocka, prispall) |
+| `public/js/postfx.js` | Glöd och färgton (efterbehandling av bilden, bara på hög grafik) |
 | `public/js/crowd.js` | Publiken, kungaparet, vakterna och härolden |
 | `public/js/cloth.js` | Fysik för tyg (mantel, vapenrock) och kedjan på slagkedjan |
 | `public/js/knight.js` | Bygger riddaren (15 kroppsdelar med leder), ansikte, rustningar, hjälmar, vapen, skador, animationer och kapning |

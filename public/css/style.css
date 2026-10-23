@@ -517,3 +517,13 @@ body[data-phase="matchEnd"] .help { display: none; }
 #replay-label .rec { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #e53935; margin-right: 6px; animation: rec-blink 1s infinite; }
 @keyframes rec-blink { 50% { opacity: 0.2; } }
 body.replay #hud .panel, body.replay #combat-hud, body.replay #crosshair { visibility: hidden; }
+
+/* ---------- v0.15: rättningar ---------- */
+/* "Träningsmotståndare" fick inte plats i 80px och hamnade under minusknappen */
+.look-row.bot-row { grid-template-columns: 1fr 30px 60px 30px; }
+.bot-row span { white-space: nowrap; }
+/* Dödslistan: håll den innanför skärmkanten, korta av långa namn */
+#killfeed { right: max(16px, env(safe-area-inset-right)); max-width: min(46vw, 380px); box-sizing: border-box; }
+.kill { max-width: 100%; box-sizing: border-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* "Klicka i spelet ..." ligger under siktet i stället för ovanpå det */
+#click-hint { top: calc(50% + 64px); transform: translate(-50%, 0); }

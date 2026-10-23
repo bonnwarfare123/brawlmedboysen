@@ -360,6 +360,15 @@ export function splatterTexture(variant) {
       ctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, 0.8 + rand() * 2.2, 0, Math.PI * 2);
       ctx.fill();
     }
+    // Blodet sugs in i sanden: små hål där sandkorn sticker upp, och en mjukare kant
+    ctx.globalCompositeOperation = "destination-out";
+    for (let i = 0; i < 260; i++) {
+      ctx.fillStyle = `rgba(0,0,0,${0.25 + rand() * 0.5})`;
+      ctx.beginPath();
+      ctx.arc(rand() * n, rand() * n, 0.5 + rand() * 1.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = "source-over";
   });
 }
 
@@ -791,6 +800,222 @@ export function woodGrainTexture() {
     for (let i = 0; i < 10; i++) {
       ctx.fillStyle = "rgba(170,130,85,0.12)";
       ctx.fillRect(0, rand() * n, n, 6 + rand() * 20);
+    }
+  });
+}
+
+// Plåt: borstad yta med fina repor och små gropar. Ljus (nästan vit) så att materialets färg bestämmer tonen.
+// Används både som färg och som höjdkarta, så detaljerna syns i ljuset i stället för att sticka ut som klossar.
+export function plateTexture() {
+  return makeTexture("plate", 256, (ctx, n) => {
+    const rand = seeded(1201);
+    ctx.fillStyle = "#e6e6e6";
+    ctx.fillRect(0, 0, n, n);
+    // Borstning: mycket svaga, tunna streck (syns bara som en mjuk glans på nära håll)
+    for (let i = 0; i < 220; i++) {
+      ctx.strokeStyle = `rgba(${rand() < 0.5 ? "255,255,255" : "185,185,185"},${0.025 + rand() * 0.04})`;
+      ctx.lineWidth = 0.5 + rand() * 0.8;
+      const y = rand() * n;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(n, y + (rand() - 0.5) * 6);
+      ctx.stroke();
+    }
+    // Mjuka fläckar (ojämn polering)
+    for (let i = 0; i < 30; i++) {
+      const x = rand() * n;
+      const y = rand() * n;
+      const r = 10 + rand() * 30;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, `rgba(${rand() < 0.5 ? "255,255,255" : "170,170,170"},0.18)`);
+      g.addColorStop(1, "rgba(200,200,200,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    // Små gropar och repor
+    for (let i = 0; i < 22; i++) {
+      ctx.fillStyle = "rgba(120,120,120,0.22)";
+      ctx.beginPath();
+      ctx.arc(rand() * n, rand() * n, 0.8 + rand() * 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.lineWidth = 0.8;
+    for (let i = 0; i < 16; i++) {
+      ctx.strokeStyle = "rgba(110,110,110,0.25)";
+      const x = rand() * n;
+      const y = rand() * n;
+      const a = rand() * Math.PI;
+      const l = 4 + rand() * 14;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
+      ctx.stroke();
+    }
+  });
+}
+
+// Rostig, gammal plåt: grått stål med rostränder som runnit nedåt, gropar och bucklor
+export function rustyPlateTexture() {
+  return makeTexture("rustyPlate", 256, (ctx, n) => {
+    const rand = seeded(733);
+    ctx.fillStyle = "#6c6a66";
+    ctx.fillRect(0, 0, n, n);
+    for (let i = 0; i < 300; i++) {
+      ctx.fillStyle = rand() < 0.5 ? "rgba(40,38,36,0.15)" : "rgba(140,136,128,0.12)";
+      ctx.fillRect(rand() * n, rand() * n, 2 + rand() * 12, 2 + rand() * 6);
+    }
+    // Rostfläckar och rostränder
+    for (let i = 0; i < 34; i++) {
+      const x = rand() * n;
+      const y = rand() * n;
+      const r = 4 + rand() * 16;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, "rgba(128,72,30,0.7)");
+      g.addColorStop(0.6, "rgba(120,74,36,0.32)");
+      g.addColorStop(1, "rgba(120,74,36,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+      if (rand() < 0.6) {
+        const run = ctx.createLinearGradient(x, y, x, y + 30 + rand() * 50);
+        run.addColorStop(0, "rgba(118,68,28,0.45)");
+        run.addColorStop(1, "rgba(118,68,28,0)");
+        ctx.fillStyle = run;
+        ctx.fillRect(x - 1.5 - rand() * 2, y, 3 + rand() * 3, 80);
+      }
+    }
+    // Gropar (punktrost)
+    for (let i = 0; i < 160; i++) {
+      ctx.fillStyle = rand() < 0.7 ? "rgba(70,40,20,0.6)" : "rgba(40,38,36,0.6)";
+      ctx.beginPath();
+      ctx.arc(rand() * n, rand() * n, 0.6 + rand() * 1.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Ljusa repor där rosten skrapats bort
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 30; i++) {
+      ctx.strokeStyle = "rgba(200,196,188,0.45)";
+      const x = rand() * n;
+      const y = rand() * n;
+      const a = rand() * Math.PI;
+      const l = 6 + rand() * 18;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
+      ctx.stroke();
+    }
+  });
+}
+
+// Sargens nedre del: stående grova bräder med springor, spikar, ett järnband och lera som stänkt upp nertill
+export function barrierBoardTexture() {
+  return makeTexture("barrierBoards", 256, (ctx, n) => {
+    const rand = seeded(2025);
+    const boards = 5;
+    const w = n / boards;
+    for (let b = 0; b < boards; b++) {
+      const shade = 150 + Math.floor(rand() * 50);
+      ctx.fillStyle = `rgb(${shade},${Math.floor(shade * 0.78)},${Math.floor(shade * 0.55)})`;
+      ctx.fillRect(b * w, 0, w, n);
+      // Ådring längs brädan
+      for (let i = 0; i < 10; i++) {
+        ctx.strokeStyle = `rgba(60,36,18,${0.15 + rand() * 0.2})`;
+        ctx.lineWidth = 0.7 + rand();
+        const x0 = b * w + 3 + rand() * (w - 6);
+        ctx.beginPath();
+        for (let y = 0; y <= n; y += 12) ctx.lineTo(x0 + Math.sin(y * 0.04 + i) * 2, y);
+        ctx.stroke();
+      }
+      // Springa mellan brädorna
+      ctx.fillStyle = "rgba(25,15,8,0.85)";
+      ctx.fillRect(b * w, 0, 2, n);
+      // Spikar upptill och nertill
+      ctx.fillStyle = "rgba(30,30,32,0.9)";
+      for (const y of [n * 0.12, n * 0.62]) {
+        ctx.beginPath();
+        ctx.arc(b * w + w / 2, y, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // Järnband tvärs över
+    ctx.fillStyle = "#3e3c3a";
+    ctx.fillRect(0, n * 0.58, n, n * 0.07);
+    ctx.fillStyle = "rgba(120,70,30,0.5)";
+    for (let i = 0; i < 12; i++) ctx.fillRect(rand() * n, n * 0.58, 4 + rand() * 12, n * 0.07);
+    ctx.fillStyle = "#2a2826";
+    for (let x = 10; x < n; x += 26) {
+      ctx.beginPath();
+      ctx.arc(x, n * 0.615, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Lera nertill: tjockt vid marken och stänk uppåt
+    const g = ctx.createLinearGradient(0, n, 0, n * 0.7);
+    g.addColorStop(0, "rgba(70,48,28,0.95)");
+    g.addColorStop(1, "rgba(70,48,28,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, n * 0.7, n, n * 0.3);
+    for (let i = 0; i < 90; i++) {
+      const x = rand() * n;
+      const y = n - rand() * rand() * n * 0.5;
+      ctx.fillStyle = `rgba(${60 + rand() * 20},${40 + rand() * 12},${22 + rand() * 10},${0.5 + rand() * 0.4})`;
+      ctx.beginPath();
+      ctx.ellipse(x, y, 1.5 + rand() * 5, 1 + rand() * 3, rand() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+}
+
+// Upptrampad arena: mörka fuktiga partier, gropar efter fötter, släpspår och klumpar (läggs ovanpå sanden)
+export function trampledTexture() {
+  return makeTexture("trampled", 1024, (ctx, n) => {
+    const rand = seeded(4711);
+    ctx.clearRect(0, 0, n, n);
+    // Fuktiga, mörkare partier
+    for (let i = 0; i < 40; i++) {
+      const x = rand() * n;
+      const y = rand() * n;
+      const r = 30 + rand() * 120;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, `rgba(40,26,14,${0.18 + rand() * 0.18})`);
+      g.addColorStop(1, "rgba(40,26,14,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    // Släpspår: dubbla böjda fåror (från krattan och kärran)
+    for (let k = 0; k < 4; k++) {
+      const y0 = rand() * n;
+      const bend = (rand() - 0.5) * 300;
+      for (const off of [0, 22]) {
+        ctx.strokeStyle = "rgba(38,24,12,0.35)";
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(-20, y0 + off);
+        ctx.bezierCurveTo(n * 0.3, y0 + off + bend, n * 0.7, y0 + off - bend, n + 20, y0 + off);
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(190,160,120,0.2)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    }
+    // Gropar efter fötter: små mörka ovaler med ljus kant (där sanden trycks upp)
+    for (let i = 0; i < 700; i++) {
+      const x = rand() * n;
+      const y = rand() * n;
+      const a = rand() * Math.PI;
+      ctx.fillStyle = "rgba(190,160,120,0.22)";
+      ctx.beginPath();
+      ctx.ellipse(x + 1.5, y + 1.5, 5, 8, a, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(45,30,16,0.3)";
+      ctx.beginPath();
+      ctx.ellipse(x, y, 4, 7, a, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Klumpar och lerstänk
+    for (let i = 0; i < 500; i++) {
+      ctx.fillStyle = rand() < 0.6 ? "rgba(60,40,22,0.45)" : "rgba(170,140,100,0.35)";
+      ctx.beginPath();
+      ctx.arc(rand() * n, rand() * n, 1 + rand() * 3, 0, Math.PI * 2);
+      ctx.fill();
     }
   });
 }

@@ -8,7 +8,7 @@ import { CONFIG } from "./config.js";
 import { Crowd, makeRoyals, mergeFigure, makeVendor } from "./crowd.js";
 import {
   plankTexture, stripeTexture, rakedSandTexture, glowTexture, heraldryTexture, daggedTexture, linenTexture, strawTexture,
-  sandGrainTexture, podiumTexture,
+  sandGrainTexture, podiumTexture, barrierBoardTexture, trampledTexture,
 } from "./textures.js";
 
 const PALETTE = {
@@ -138,6 +138,17 @@ export function buildArena() {
   group.add(radialPatch(FX + 0.4, FZ + 0.4, 0.84, 1.0, 0x4a3420, 0, 0.55, 0.012));
   group.add(radialPatch(FX * 0.55, FZ * 0.55, 0, 1.0, 0x5e4430, 0.32, 0, 0.013));
   group.add(sandScatter(FX, FZ));
+  // Upptrampad yta ovanpå sanden: fuktiga partier, gropar efter fötter, släpspår och klumpar
+  const trampled = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 64),
+    new THREE.MeshStandardMaterial({ map: trampledTexture(), transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -1 }),
+  );
+  trampled.rotation.x = -Math.PI / 2;
+  trampled.scale.set(FX + 0.4, FZ + 0.4, 1);
+  trampled.position.y = 0.011;
+  trampled.receiveShadow = true;
+  trampled.userData.noMerge = true;
+  group.add(trampled);
   // Vattenpölar (syns bara när det regnar)
   const puddles = makePuddles(FX, FZ);
   group.add(puddles);
@@ -152,25 +163,42 @@ export function buildArena() {
 
   const dummy = new THREE.Object3D();
   const BARRIER_COLORS = [PALETTE.red, PALETTE.blue, PALETTE.gold, 0x3f8a3a];
-  const panelMeshes = BARRIER_COLORS.map((color) => {
-    const m = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1, 1, 0.07),
-      new THREE.MeshStandardMaterial({ map: stripeTexture(color, PALETTE.cream, 6), roughness: 0.92 }),
-      Math.ceil(POSTS / BARRIER_COLORS.length),
-    );
-    m.count = 0;
-    m.castShadow = true;
-    m.receiveShadow = true;
-    group.add(m);
-    return m;
-  });
-  const railMat = new THREE.MeshStandardMaterial({ map: plankTexture(), color: PALETTE.wood, roughness: 0.85 });
-  const railMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.1, 0.18), railMat, POSTS);
-  const valance = new THREE.InstancedMesh(
-    new THREE.PlaneGeometry(1, 0.2),
-    new THREE.MeshStandardMaterial({ alphaMap: daggedTexture(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.9, map: linenTexture() }),
+  // Nedre delen: grova bräder med järnband och lera nertill (olika träton på varje panel)
+  const boardMesh = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(1, 0.78, 0.08),
+    new THREE.MeshStandardMaterial({ map: barrierBoardTexture(), roughness: 0.9 }),
     POSTS,
   );
+  // Övre delen: tygdraperier som hänger i en båge mellan stolparna, med veck och fransar
+  const drapeGeo = new THREE.PlaneGeometry(1, 0.5, 20, 6);
+  {
+    const pos = drapeGeo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      const down = (0.25 - y) / 0.5;           // 0 överst, 1 nederst
+      const sag = (1 - (2 * x) ** 2) * (0.06 + down * 0.12); // hänger mer i mitten och nertill
+      pos.setY(i, y - sag);
+      pos.setZ(i, Math.cos(x * Math.PI * 7) * 0.018 * (0.3 + down) + down * 0.03); // veck och lite utåt
+    }
+    drapeGeo.computeVertexNormals();
+    drapeGeo.translate(0, -0.25, 0); // överkanten vid origo
+  }
+  const drapeMesh = new THREE.InstancedMesh(
+    drapeGeo,
+    new THREE.MeshStandardMaterial({ map: linenTexture(), alphaMap: daggedTexture(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.92 }),
+    POSTS,
+  );
+  // Guldsnodd längs draperiets överkant
+  const cordMesh = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.018, 0.018, 1, 6).rotateZ(Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0xc89a3a, roughness: 0.5, metalness: 0.4 }),
+    POSTS,
+  );
+  const railMat = new THREE.MeshStandardMaterial({ map: plankTexture(), color: PALETTE.wood, roughness: 0.85 });
+  const railMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.1, 0.18), railMat, POSTS);
+  const woodShades = [0xd8c0a0, 0xc8aa88, 0xe0caa8, 0xbfa080];
+  let drapes = 0;
   points.forEach((a, i) => {
     const b = points[(i + 1) % POSTS];
     const dx = b.x - a.x;
@@ -179,47 +207,73 @@ export function buildArena() {
     const mx = (a.x + b.x) / 2;
     const mz = (a.z + b.z) / 2;
     const angle = -Math.atan2(dz, dx);
-    // Tygklädd plankvägg
-    const pm = panelMeshes[i % BARRIER_COLORS.length];
-    dummy.position.set(mx, 0.56, mz);
+    // Bräderna
+    dummy.position.set(mx, 0.39, mz);
     dummy.rotation.set(0, angle, 0);
-    dummy.scale.set(length + 0.02, 1.02, 1);
+    dummy.scale.set(length + 0.02, 1, 1);
     dummy.updateMatrix();
-    pm.setMatrixAt(pm.count++, dummy.matrix);
+    boardMesh.setMatrixAt(i, dummy.matrix);
+    boardMesh.setColorAt(i, new THREE.Color(woodShades[(i * 7) % woodShades.length]));
     // Överliggare
     dummy.position.set(mx, 1.12, mz);
     dummy.scale.set(length + 0.05, 1, 1);
     dummy.updateMatrix();
     railMesh.setMatrixAt(i, dummy.matrix);
-    // Tandad tygkant på insidan
+    // Draperi på insidan (var sjunde panel saknar draperi, så det inte blir så upprepat)
+    if (i % 7 === 3) return;
     const inv = 1 / Math.hypot(mx, mz);
-    dummy.position.set(mx - mx * inv * 0.06, 0.98, mz - mz * inv * 0.06);
-    dummy.scale.set(length, 1, 1);
+    dummy.position.set(mx - mx * inv * 0.1, 1.07, mz - mz * inv * 0.1);
+    dummy.scale.set(length + 0.04, 1 + ((i * 5) % 3) * 0.08, 1);
     dummy.updateMatrix();
-    valance.setMatrixAt(i, dummy.matrix);
-    valance.setColorAt(i, new THREE.Color(BARRIER_COLORS[(i + 2) % BARRIER_COLORS.length]));
+    drapeMesh.setMatrixAt(drapes, dummy.matrix);
+    drapeMesh.setColorAt(drapes, new THREE.Color(BARRIER_COLORS[(i * 3) % BARRIER_COLORS.length]));
+    dummy.position.set(mx - mx * inv * 0.1, 1.07, mz - mz * inv * 0.1);
+    dummy.scale.set(length + 0.04, 1, 1);
+    dummy.updateMatrix();
+    cordMesh.setMatrixAt(drapes, dummy.matrix);
+    drapes++;
   });
+  drapeMesh.count = drapes;
+  cordMesh.count = drapes;
+  for (const m of [boardMesh, drapeMesh, cordMesh]) {
+    m.castShadow = true;
+    m.receiveShadow = true;
+  }
+  group.add(boardMesh, drapeMesh, cordMesh);
   dummy.scale.set(1, 1, 1);
   railMesh.castShadow = true;
   railMesh.receiveShadow = true;
-  group.add(railMesh, valance);
+  group.add(railMesh);
 
   // Stolpar med mässingsknoppar
-  const postMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.2, 1.3, 0.2), mat(PALETTE.woodDark), POSTS);
+  // Tjocka stolpar med en snidad topp (krage och spets) och en mässingsknopp, och järnbeslag nertill
+  const postGeo = mergeGeometries([
+    new THREE.BoxGeometry(0.24, 1.25, 0.24).translate(0, 0.625, 0),
+    new THREE.BoxGeometry(0.3, 0.06, 0.3).translate(0, 1.22, 0),
+    new THREE.CylinderGeometry(0.1, 0.13, 0.12, 8).translate(0, 1.31, 0),
+  ]);
+  const postMesh = new THREE.InstancedMesh(postGeo, plankMat(PALETTE.woodDark), POSTS);
+  const ironMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.26, 0.12, 0.26), mat(0x3a3836), POSTS);
   const knobMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.075, 10, 8), new THREE.MeshStandardMaterial({ color: 0xc49440, metalness: 0.8, roughness: 0.35 }), POSTS);
   points.forEach((p, i) => {
-    dummy.position.set(p.x, 0.65, p.z);
-    dummy.rotation.set(0, 0, 0);
+    const yaw = Math.atan2(p.x, p.z);
+    dummy.position.set(p.x, 0, p.z);
+    dummy.rotation.set(0, yaw, 0);
     dummy.updateMatrix();
     postMesh.setMatrixAt(i, dummy.matrix);
-    dummy.position.set(p.x, 1.35, p.z);
+    dummy.position.set(p.x, 0.12, p.z);
+    dummy.updateMatrix();
+    ironMesh.setMatrixAt(i, dummy.matrix);
+    dummy.position.set(p.x, 1.43, p.z);
+    dummy.rotation.set(0, 0, 0);
     dummy.updateMatrix();
     knobMesh.setMatrixAt(i, dummy.matrix);
   });
-  postMesh.castShadow = true;
-  postMesh.receiveShadow = true;
-  knobMesh.castShadow = true;
-  group.add(postMesh, knobMesh);
+  for (const m of [postMesh, ironMesh, knobMesh]) {
+    m.castShadow = true;
+    m.receiveShadow = true;
+  }
+  group.add(postMesh, ironMesh, knobMesh);
 
   // Sköldar med vapenmönster på varannan stolpe, vända mot mitten
   const shieldColors = [PALETTE.red, PALETTE.blue, PALETTE.gold, 0x3f8a3a, 0x7a3fa0, 0x2a2a2e];
@@ -310,7 +364,7 @@ export function buildArena() {
     stand.updateMatrixWorld(true);
     const e = stand.matrixWorld.elements;
     const yaw = Math.atan2(e[8], e[10]);
-    for (const spot of spots) crowdSpots.push({ pos: spot.pos.clone().applyMatrix4(stand.matrixWorld), yaw, row: spot.row });
+    for (const spot of spots) crowdSpots.push({ pos: spot.pos.clone().applyMatrix4(stand.matrixWorld), yaw, row: spot.row, standing: !!spot.standing });
   });
 
   // Kungliga logen i mitten av baksidan, med kungaparet, vakter och en härold
@@ -488,9 +542,9 @@ export function buildArena() {
   // Grästuvor och blommor (en ritning var för hundratals stycken)
   const tufts = [];
   const flowers = [];
-  for (let i = 0; i < 1100; i++) {
+  for (let i = 0; i < 2600; i++) {
     const spot = ringSpot(15.5, 60);
-    if (spot) (i % 4 === 0 ? flowers : tufts).push(spot);
+    if (spot) (i % 5 === 0 ? flowers : tufts).push(spot);
   }
   // Gräset svajar i vinden: toppen av varje tuva flyttas lite i sidled i grafikkortet
   const windTime = { value: 0 };
@@ -509,7 +563,13 @@ export function buildArena() {
         transformed.z += wave * 0.03 * bend * bend;`
       );
   };
-  const tuftMesh = new THREE.InstancedMesh(new THREE.ConeGeometry(0.07, 0.32, 4), windGrassMat, tufts.length);
+  // Varje tuva är tre strån som lutar lite åt olika håll
+  const tuftGeo = mergeGeometries([
+    new THREE.ConeGeometry(0.05, 0.34, 3).translate(0, 0.17, 0),
+    new THREE.ConeGeometry(0.04, 0.26, 3).translate(0, 0.13, 0).rotateZ(0.35).translate(0.04, 0, 0),
+    new THREE.ConeGeometry(0.04, 0.28, 3).translate(0, 0.14, 0).rotateX(-0.35).translate(0, 0, -0.04),
+  ]).translate(0, -0.16, 0);
+  const tuftMesh = new THREE.InstancedMesh(tuftGeo, windGrassMat, tufts.length);
   tuftMesh.userData.noMerge = true;
   tufts.forEach(([x, z], i) => {
     dummy.position.set(x, 0.14, z);
@@ -569,6 +629,28 @@ export function buildArena() {
     lantern.position.set(x, 0, z);
     group.add(lantern);
   });
+
+  // Lägereld mellan tälten med rök, och folk som går omkring på marknaden
+  const camp = makeCampfire();
+  camp.group.position.set(-23, 0, 12.5);
+  group.add(camp.group);
+  const walkers = [
+    [[-17, 6], [-24, 9], [-27, 16], [-21, 18], [-16, 13]],
+    [[-28, 12], [-22, 14], [-19, 8], [-25, 6]],
+    [[-15, 16], [-20, 21], [-27, 19], [-23, 15]],
+  ].map((pts, i) => {
+    const path = (t, out) => {
+      const n = pts.length;
+      const f = t * n;
+      const k = Math.floor(f) % n;
+      const u = f - Math.floor(f);
+      const a = pts[k];
+      const b = pts[(k + 1) % n];
+      return out.set(a[0] + (b[0] - a[0]) * u, 0, a[1] + (b[1] - a[1]) * u);
+    };
+    return makeVendor("walker" + i, path, i * 0.3, 0.012 + i * 0.003);
+  });
+  walkers.forEach((w) => group.add(w.group));
 
   // Brunn och hästar till höger om stigen
   const well = makeWell();
@@ -636,6 +718,8 @@ export function buildArena() {
     royals.update(dt);
     podium.update(dt);
     for (const v of vendors) v.update(dt);
+    for (const w of walkers) w.update(dt);
+    camp.update(dt, time);
     for (const d of dogs) d.update(dt, time);
     birds.update(dt, time);
     flies.update(dt, time);
@@ -917,6 +1001,7 @@ export function makeSky(evening = false) {
   const sky = new THREE.Mesh(geo, material);
   setSkyColors(sky, evening);
   sky.userData.noMerge = true;
+  sky.userData.skyUniforms = material.uniforms; // efterbehandlingen (postfx.js) justerar färgerna
   sky.renderOrder = -1;
   return sky;
 }
@@ -1056,22 +1141,73 @@ function makeStand(color, seed) {
   const width = 5;
   const spots = [];
   const rand = seededRandom(31 + seed * 17);
+  const woods = [PALETTE.wood, PALETTE.woodLight, 0x8a6040, 0x6e4a2e];
   for (let i = 0; i < 3; i++) {
-    const step = new THREE.Mesh(new THREE.BoxGeometry(width, 0.5 * (i + 1), 0.9), plankMat(i % 2 ? PALETTE.wood : PALETTE.woodLight));
-    step.castShadow = true;
-    step.receiveShadow = true;
-    step.position.set(0, 0.25 * (i + 1), -i * 0.9);
-    stand.add(step);
-    // Bänkkant (en mörkare list där man sitter)
-    const lip = box(width, 0.05, 0.08, PALETTE.woodDark);
-    lip.position.set(0, 0.5 * (i + 1) + 0.025, -i * 0.9 + 0.41);
-    stand.add(lip);
+    const top = 0.5 * (i + 1);
+    const z = -i * 0.9;
+    // Trappstegets framsida: stående bräder (en mörk vägg bakom så det inte syns igenom)
+    const riser = new THREE.Mesh(new THREE.BoxGeometry(width, top - 0.06, 0.04), plankMat(PALETTE.woodDark));
+    riser.position.set(0, (top - 0.06) / 2, z + 0.43);
+    riser.castShadow = riser.receiveShadow = true;
+    stand.add(riser);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(width, top - 0.06, 0.86), plankMat(PALETTE.woodDark));
+    body.position.set(0, (top - 0.06) / 2, z);
+    body.receiveShadow = true;
+    stand.add(body);
+    // Sittbänken: tre lösa plankor med springor, i lite olika träton
+    for (let k = 0; k < 3; k++) {
+      const plank = new THREE.Mesh(new THREE.BoxGeometry(width + (rand() - 0.5) * 0.06, 0.05, 0.27), plankMat(woods[Math.floor(rand() * woods.length)]));
+      plank.position.set((rand() - 0.5) * 0.03, top - 0.025, z + 0.3 - k * 0.29);
+      plank.rotation.y = (rand() - 0.5) * 0.01;
+      plank.castShadow = plank.receiveShadow = true;
+      stand.add(plank);
+    }
+    // Ben under bänkens framkant
+    for (let x = -width / 2 + 0.25; x <= width / 2; x += 1.15) {
+      const leg = box(0.08, top - 0.05, 0.08, PALETTE.woodDark);
+      leg.position.set(x, (top - 0.05) / 2, z + 0.47);
+      stand.add(leg);
+    }
     // Publik på varje trappsteg (några platser står tomma)
     for (let x = -width / 2 + 0.4; x <= width / 2 - 0.3; x += 0.55) {
-      if (rand() < 0.8) spots.push({ pos: new THREE.Vector3(x + (rand() - 0.5) * 0.12, 0.5 * (i + 1), -i * 0.9 - 0.08), row: i });
+      if (rand() < 0.8) spots.push({ pos: new THREE.Vector3(x + (rand() - 0.5) * 0.12, top, z - 0.08), row: i });
     }
   }
-  // Stolpar
+  // Ståplats längst bak: en gångbro och en plankvägg bakom
+  const walk = new THREE.Mesh(new THREE.BoxGeometry(width, 0.06, 0.55), plankMat(PALETTE.woodLight));
+  walk.position.set(0, 1.47, -2.52);
+  walk.castShadow = walk.receiveShadow = true;
+  stand.add(walk);
+  const back = new THREE.Mesh(new THREE.BoxGeometry(width, 2.6, 0.06), plankMat(PALETTE.wood));
+  back.position.set(0, 1.3, -2.82);
+  back.castShadow = back.receiveShadow = true;
+  stand.add(back);
+  for (let x = -width / 2 + 0.45; x <= width / 2 - 0.4; x += 0.62) {
+    if (rand() < 0.7) spots.push({ pos: new THREE.Vector3(x + (rand() - 0.5) * 0.15, 1.5, -2.5), row: 3, standing: true });
+  }
+  // Kryssförband och en stege på sidorna
+  for (const sx of [-1, 1]) {
+    const x = sx * (width / 2 + 0.02);
+    for (const r of [0.72, -0.72]) {
+      const brace = box(0.05, 0.08, 3.1, PALETTE.woodDark);
+      brace.position.set(x, 0.85, -1.1);
+      brace.rotation.x = r * 0.42;
+      stand.add(brace);
+    }
+  }
+  const ladderX = width / 2 + 0.3;
+  for (const z of [-2.0, -2.45]) {
+    const rail = box(0.05, 1.7, 0.05, PALETTE.woodLight);
+    rail.position.set(ladderX, 0.8, z);
+    rail.rotation.x = 0.12;
+    stand.add(rail);
+  }
+  for (let y = 0.2; y < 1.5; y += 0.28) {
+    const rung = box(0.04, 0.04, 0.5, PALETTE.wood);
+    rung.position.set(ladderX, y, -2.22 + y * 0.06);
+    stand.add(rung);
+  }
+  // Stolpar som bär taket
   [-width / 2 + 0.1, width / 2 - 0.1].forEach((x) => {
     [0.4, -2.2].forEach((z) => {
       const post = box(0.16, 3.4, 0.16, PALETTE.woodDark);
@@ -1079,21 +1215,50 @@ function makeStand(color, seed) {
       stand.add(post);
     });
   });
-  // Räcke framtill (lågt, så man ser publiken) med banderoller i läktarens färg
+  // Räcke framtill med svarvade spjälor, snidade stolpar med knoppar och banderoller
   for (const x of [-width / 2 + 0.1, -0.85, 0.85, width / 2 - 0.1]) {
-    const post = box(0.09, 0.75, 0.09, PALETTE.woodDark);
-    post.position.set(x, 0.375, 0.52);
+    const post = mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.78, 8), PALETTE.woodDark);
+    post.position.set(x, 0.39, 0.52);
     stand.add(post);
+    const knob = mesh(new THREE.SphereGeometry(0.065, 8, 6), PALETTE.woodLight);
+    knob.position.set(x, 0.82, 0.52);
+    stand.add(knob);
   }
-  const rail = box(width, 0.08, 0.1, PALETTE.wood);
-  rail.position.set(0, 0.74, 0.52);
-  stand.add(rail);
+  for (const y of [0.74, 0.18]) {
+    const rail = box(width, 0.06, 0.08, PALETTE.wood);
+    rail.position.set(0, y, 0.52);
+    stand.add(rail);
+  }
+  const spindle = new THREE.CylinderGeometry(0.018, 0.022, 0.54, 6);
+  for (let x = -width / 2 + 0.3; x < width / 2 - 0.2; x += 0.22) {
+    if (Math.abs(x + 0.85) < 0.1 || Math.abs(x - 0.85) < 0.1) continue;
+    const sp = mesh(spindle, PALETTE.woodLight);
+    sp.position.set(x, 0.46, 0.52);
+    stand.add(sp);
+  }
   [-1.7, 0, 1.7].forEach((x, k) => {
     const banner = heraldBanner(k === 1 ? PALETTE.gold : color, seed + k, 0.55, 0.62);
     banner.position.set(x, 0.72, 0.58);
     stand.add(banner);
   });
-  // Tygtaket: randigt, hänger lite i mitten, med en tandad kant framtill
+  // Korgar och krus under bänkarna längst fram
+  for (let k = 0; k < 4; k++) {
+    const x = -width / 2 + 0.6 + rand() * (width - 1.2);
+    if (rand() < 0.5) {
+      const jug = mesh(new THREE.CylinderGeometry(0.07, 0.1, 0.22, 8), [0xa85a34, 0x8a8e94][k % 2]);
+      jug.position.set(x, 0.11, 0.3);
+      stand.add(jug);
+    } else {
+      const basket = mesh(new THREE.CylinderGeometry(0.14, 0.11, 0.16, 10), PALETTE.woodLight);
+      basket.position.set(x, 0.08, 0.3);
+      stand.add(basket);
+      const bread = mesh(new THREE.CapsuleGeometry(0.04, 0.12, 3, 6), 0xc08a4a);
+      bread.rotation.z = Math.PI / 2;
+      bread.position.set(x, 0.17, 0.3);
+      stand.add(bread);
+    }
+  }
+  // Tygtaket: randigt, hänger lite i mitten, med tandad kant och tofsar framtill och på sidorna
   const roofMat = new THREE.MeshStandardMaterial({ map: stripeTexture(color, PALETTE.cream, 10), side: THREE.DoubleSide, roughness: 0.9 });
   const roof = saggingRoof(width + 0.4, 3.2, roofMat);
   roof.position.set(0, 3.45, -0.9);
@@ -1102,10 +1267,25 @@ function makeStand(color, seed) {
   const valance = new THREE.Mesh(new THREE.PlaneGeometry(width + 0.4, 0.32), valanceMat);
   valance.position.set(0, 3.45 - 0.19 - 0.16, -0.9 + 1.6);
   stand.add(valance);
-  // Flagga
+  for (const sx of [-1, 1]) {
+    const side = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.26), valanceMat);
+    side.rotation.y = Math.PI / 2;
+    side.position.set(sx * (width / 2 + 0.2), 3.45 - 0.2, -0.9);
+    stand.add(side);
+  }
+  for (let x = -width / 2; x <= width / 2 + 0.01; x += 0.42) {
+    const tassel = mesh(new THREE.ConeGeometry(0.03, 0.12, 6), PALETTE.gold);
+    tassel.rotation.x = Math.PI;
+    tassel.position.set(x, 3.45 - 0.19 - 0.38, -0.9 + 1.61);
+    stand.add(tassel);
+  }
+  // Flaggor
   const flag = makeFlag(color);
   flag.position.set(width / 2 - 0.1, 3.4, -2.2);
   stand.add(flag);
+  const flag2 = makeFlag(PALETTE.gold);
+  flag2.position.set(-width / 2 + 0.1, 3.4, -2.2);
+  stand.add(flag2);
   return { stand, spots };
 }
 
@@ -1749,6 +1929,82 @@ function makeBannerPole(color) {
   banner.position.set(0, 3.97, 0.05);
   g.add(banner);
   return g;
+}
+
+// Lägereld: stenar i ring, vedträn, fladdrande lågor och rök som stiger (utan eget ljus, för prestandans skull)
+function makeCampfire() {
+  const g = new THREE.Group();
+  for (let i = 0; i < 9; i++) {
+    const a = (i / 9) * Math.PI * 2;
+    const st = mesh(new THREE.DodecahedronGeometry(0.13, 0), [0x8f8a80, 0x7a766d][i % 2]);
+    st.position.set(Math.sin(a) * 0.5, 0.06, Math.cos(a) * 0.5);
+    st.scale.set(1, 0.6, 1);
+    g.add(st);
+  }
+  for (let i = 0; i < 4; i++) {
+    const log = mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.6, 6), PALETTE.woodDark);
+    log.rotation.set(Math.PI / 2 - 0.35, (i / 4) * Math.PI * 2, 0);
+    log.position.set(Math.sin((i / 4) * Math.PI * 2) * 0.12, 0.12, Math.cos((i / 4) * Math.PI * 2) * 0.12);
+    g.add(log);
+  }
+  // Trefot med gryta och stockar att sitta på
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    const leg = mesh(new THREE.CylinderGeometry(0.018, 0.022, 1.25, 5), PALETTE.woodDark);
+    leg.position.set(Math.sin(a) * 0.32, 0.58, Math.cos(a) * 0.32);
+    leg.lookAt(0, 1.6, 0);
+    leg.rotateX(Math.PI / 2);
+    g.add(leg);
+  }
+  const pot = mesh(new THREE.SphereGeometry(0.17, 10, 8, 0, Math.PI * 2, Math.PI * 0.25, Math.PI * 0.75), 0x2a2724);
+  pot.position.y = 0.72;
+  g.add(pot);
+  const chain = mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.42, 4), 0x3a3836);
+  chain.position.y = 0.98;
+  g.add(chain);
+  for (const [x, z, r] of [[1.25, 0.2, 0.2], [-0.9, 0.95, -0.7], [0.3, -1.45, 1.5]]) {
+    const log = mesh(new THREE.CylinderGeometry(0.14, 0.15, 1.1, 8), PALETTE.wood);
+    log.rotation.set(Math.PI / 2, r, 0);
+    log.rotateZ(0);
+    log.position.set(x, 0.14, z);
+    g.add(log);
+  }
+  const fireMat = new THREE.MeshBasicMaterial({ color: 0xffa030, transparent: true, opacity: 0.85 });
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xff9040, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.5, depthWrite: false }));
+  glow.position.y = 0.35;
+  glow.scale.setScalar(1.6);
+  g.add(glow);
+  const flames = [0, 1, 2].map((i) => {
+    const f = new THREE.Mesh(new THREE.ConeGeometry(0.12 - i * 0.03, 0.45 - i * 0.1, 6), fireMat);
+    f.position.set((i - 1) * 0.06, 0.3, (i % 2) * 0.05);
+    g.add(f);
+    return f;
+  });
+  const smokeMat = new THREE.SpriteMaterial({ map: glowTexture(), color: 0x6a6a6a, transparent: true, opacity: 0.25, depthWrite: false });
+  const smoke = Array.from({ length: 6 }, (_, i) => {
+    const s = new THREE.Sprite(smokeMat.clone());
+    s.userData.phase = i / 6;
+    g.add(s);
+    return s;
+  });
+  g.userData.noMerge = true;
+  return {
+    group: g,
+    update(dt, time) {
+      glow.material.opacity = 0.42 + Math.sin(time * 13) * 0.06 + Math.sin(time * 7.3) * 0.05;
+      flames.forEach((f, i) => {
+        const k = 1 + Math.sin(time * (11 + i * 3) + i) * 0.18;
+        f.scale.set(1, k, 1);
+        f.position.y = 0.25 + (k - 1) * 0.2;
+      });
+      for (const s of smoke) {
+        const k = (time * 0.18 + s.userData.phase) % 1;
+        s.position.set(Math.sin(time * 0.5 + s.userData.phase * 9) * 0.2 + k * 0.6, 0.6 + k * 4, k * 0.3);
+        s.scale.setScalar(0.5 + k * 2.2);
+        s.material.opacity = 0.4 * (1 - k) * Math.min(1, k * 6);
+      }
+    },
+  };
 }
 
 // Hund som springer runt utanför staketet, stannar och nosar, och viftar på svansen

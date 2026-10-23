@@ -52,6 +52,22 @@ function part(geo, shade, pos, scale, rot) {
 function merge(parts) {
   return mergeGeometries(parts);
 }
+// Veck i tyget: puttar ut/in hörnen runt en cylinder (mer nedåt än uppåt)
+function folds(geo, n, amp, top, bottom) {
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const r = Math.hypot(x, z);
+    if (r < 1e-4) continue;
+    const a = Math.atan2(x, z);
+    const t = Math.min(1, Math.max(0, (top - y) / (top - bottom)));
+    const k = 1 + (Math.sin(a * n) * 0.7 + Math.sin(a * n * 2.3 + 1.3) * 0.3) * amp * t;
+    pos.setX(i, x * k);
+    pos.setZ(i, z * k);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
 
 // ---------------------------------------------------------------------------
 // Kroppsdelarnas former (i personens egna koordinater, tittar mot +Z)
@@ -60,38 +76,61 @@ function buildShapes() {
   const S = {};
   // Bål: tunika med axlar, krage och bälte (mörkare)
   S.torso = merge([
-    part(new THREE.CylinderGeometry(0.12, 0.16, 0.42, 10), 1, [0, 0.21, 0], [1.1, 1, 0.85]),
-    part(new THREE.SphereGeometry(0.14, 10, 6), 1, [0, 0.39, 0], [1.3, 0.5, 0.85]),
-    part(new THREE.CylinderGeometry(0.168, 0.168, 0.045, 12), 0.4, [0, 0.11, 0], [1.1, 1, 0.85]),
-    part(new THREE.TorusGeometry(0.06, 0.018, 5, 12), 0.7, [0, 0.44, 0.01], [1, 1, 1], [Math.PI / 2, 0, 0]),
+    part(folds(new THREE.CylinderGeometry(0.13, 0.155, 0.32, 16, 3), 7, 0.06, 0.4, 0.05), 1, [0, 0.27, 0], [1.1, 1, 0.82]),
+    part(new THREE.SphereGeometry(0.14, 12, 6), 1, [0, 0.41, 0], [1.25, 0.45, 0.8]),
+    // axlar (rundade) och nacke
+    part(new THREE.SphereGeometry(0.06, 8, 6), 0.95, [0.155, 0.385, 0], [1.1, 0.9, 1]),
+    part(new THREE.SphereGeometry(0.06, 8, 6), 0.95, [-0.155, 0.385, 0], [1.1, 0.9, 1]),
+    // tunikans kjol med veck nedanför bältet
+    part(folds(new THREE.CylinderGeometry(0.168, 0.205, 0.17, 18, 2, true), 9, 0.09, 0.11, -0.06), 0.92, [0, 0.03, 0], [1.1, 1, 0.9]),
+    part(new THREE.CylinderGeometry(0.172, 0.172, 0.04, 14), 0.35, [0, 0.12, 0], [1.1, 1, 0.84]),
+    part(new THREE.BoxGeometry(0.04, 0.035, 0.01), [0.75, 0.62, 0.3], [0, 0.12, 0.148]), // bältesspänne
+    part(new THREE.TorusGeometry(0.062, 0.02, 5, 12), 0.7, [0, 0.455, 0.01], [1, 1, 1], [Math.PI / 2, 0, 0]),
+    part(new THREE.BoxGeometry(0.012, 0.09, 0.008), 0.6, [0, 0.4, 0.122], [1, 1, 1], [-0.25, 0, 0]),   // halsslits
   ]);
   // Klänning upptill (snörliv med urringning)
   S.bodice = merge([
-    part(new THREE.CylinderGeometry(0.11, 0.14, 0.42, 10), 1, [0, 0.21, 0], [1.1, 1, 0.85]),
-    part(new THREE.SphereGeometry(0.13, 10, 6), 1, [0, 0.39, 0], [1.25, 0.45, 0.85]),
-    part(new THREE.BoxGeometry(0.012, 0.22, 0.01), 0.35, [0, 0.27, 0.115]), // snörning
+    part(new THREE.CylinderGeometry(0.115, 0.13, 0.3, 14), 1, [0, 0.28, 0], [1.1, 1, 0.85]),
+    part(new THREE.SphereGeometry(0.13, 12, 6), 1, [0, 0.4, 0], [1.22, 0.45, 0.82]),
+    part(new THREE.SphereGeometry(0.052, 8, 6), 0.95, [0.14, 0.38, 0], [1.1, 0.9, 1]),
+    part(new THREE.SphereGeometry(0.052, 8, 6), 0.95, [-0.14, 0.38, 0], [1.1, 0.9, 1]),
+    part(new THREE.SphereGeometry(0.075, 10, 6), 1, [0, 0.31, 0.06], [1.5, 0.75, 0.9]), // byst
+    part(folds(new THREE.CylinderGeometry(0.145, 0.2, 0.18, 18, 2, true), 10, 0.08, 0.13, -0.05), 0.92, [0, 0.05, 0], [1.1, 1, 0.92]),
+    part(new THREE.BoxGeometry(0.012, 0.2, 0.01), 0.35, [0, 0.27, 0.125]), // snörning
+    part(new THREE.TorusGeometry(0.085, 0.012, 4, 14, Math.PI), [0.93, 0.9, 0.84], [0, 0.44, 0.02], [1.2, 1, 1], [Math.PI / 2 + 0.25, 0, Math.PI]), // linnekant i urringningen
   ]);
   // Huvud med näsa och öron (hudfärg)
   S.head = merge([
     part(new THREE.CylinderGeometry(0.04, 0.045, 0.08, 8), 0.92, [0, 0.0, 0]),
     part(new THREE.SphereGeometry(0.1, 12, 10), 1, [0, 0.1, 0], [1, 1.1, 1.02]),
     part(new THREE.SphereGeometry(0.068, 10, 8), 1, [0, 0.058, 0.03], [1.05, 0.8, 1]),
-    part(new THREE.BoxGeometry(0.02, 0.04, 0.03), 0.95, [0, 0.095, 0.1], [1, 1, 1], [-0.3, 0, 0]),
+    part(new THREE.ConeGeometry(0.019, 0.05, 5), 0.93, [0, 0.093, 0.108], [1, 1, 0.9], [-0.35, 0, 0]),
+    part(new THREE.SphereGeometry(0.014, 6, 5), 0.93, [0, 0.074, 0.11], [1.3, 0.8, 0.9]),           // nästipp
+    part(new THREE.SphereGeometry(0.026, 6, 5), [1.04, 0.9, 0.88], [0.048, 0.082, 0.078], [1, 0.8, 0.6]), // kinder (lite rosiga)
+    part(new THREE.SphereGeometry(0.026, 6, 5), [1.04, 0.9, 0.88], [-0.048, 0.082, 0.078], [1, 0.8, 0.6]),
+    part(new THREE.SphereGeometry(0.03, 8, 5), 0.97, [0, 0.025, 0.07], [1.2, 0.8, 0.9]),             // haka
     part(new THREE.SphereGeometry(0.02, 6, 5), 0.9, [0.098, 0.1, 0], [0.5, 1, 0.8]),
     part(new THREE.SphereGeometry(0.02, 6, 5), 0.9, [-0.098, 0.1, 0], [0.5, 1, 0.8]),
   ]);
   // Ögon och ögonbryn (mörk färg)
   S.face = merge([
-    part(new THREE.SphereGeometry(0.013, 6, 5), 1, [0.034, 0.118, 0.09], [1, 1, 0.6]),
-    part(new THREE.SphereGeometry(0.013, 6, 5), 1, [-0.034, 0.118, 0.09], [1, 1, 0.6]),
-    part(new THREE.BoxGeometry(0.03, 0.007, 0.01), 1, [0.035, 0.142, 0.094], [1, 1, 1], [0, 0, 0.12]),
-    part(new THREE.BoxGeometry(0.03, 0.007, 0.01), 1, [-0.035, 0.142, 0.094], [1, 1, 1], [0, 0, -0.12]),
+    part(new THREE.SphereGeometry(0.018, 8, 6), [0.9, 0.87, 0.8], [0.034, 0.117, 0.088], [1.15, 0.8, 0.55]),  // ögonvitor
+    part(new THREE.SphereGeometry(0.018, 8, 6), [0.9, 0.87, 0.8], [-0.034, 0.117, 0.088], [1.15, 0.8, 0.55]),
+    part(new THREE.SphereGeometry(0.011, 6, 5), [0.03, 0.02, 0.015], [0.034, 0.117, 0.097], [1, 1, 0.6]),
+    part(new THREE.SphereGeometry(0.011, 6, 5), [0.03, 0.02, 0.015], [-0.034, 0.117, 0.097], [1, 1, 0.6]),
+    part(new THREE.BoxGeometry(0.034, 0.009, 0.012), [0.1, 0.065, 0.045], [0.035, 0.142, 0.094], [1, 1, 1], [0, 0, 0.12]),
+    part(new THREE.BoxGeometry(0.034, 0.009, 0.012), [0.1, 0.065, 0.045], [-0.035, 0.142, 0.094], [1, 1, 1], [0, 0, -0.12]),
   ]);
   S.mouth = part(new THREE.SphereGeometry(0.02, 8, 6), 1, [0, 0, 0], [1.3, 1, 0.5]);
   // Arm (ärm med mörkare mudd) och hand
+  // Överarm (axel till armbåge) och underarm (armbåge till handled med mudd)
   S.arm = merge([
-    part(new THREE.CapsuleGeometry(0.045, 0.22, 3, 8), 1, [0, -0.14, 0]),
-    part(new THREE.CylinderGeometry(0.05, 0.05, 0.04, 8), 0.6, [0, -0.27, 0]),
+    part(new THREE.CapsuleGeometry(0.048, 0.08, 3, 8), 1, [0, -0.075, 0]),
+    part(new THREE.SphereGeometry(0.045, 8, 6), 0.9, [0, -0.15, 0]),
+  ]);
+  S.fore = merge([
+    part(folds(new THREE.CylinderGeometry(0.044, 0.05, 0.12, 10, 2), 5, 0.12, -0.17, -0.27), 1, [0, -0.215, 0]),
+    part(new THREE.CylinderGeometry(0.052, 0.052, 0.035, 8), 0.6, [0, -0.28, 0]),
   ]);
   S.hand = part(new THREE.SphereGeometry(0.038, 8, 6), 1, [0, -0.32, 0.005], [0.9, 1.1, 0.8]);
   // Ben: lår (hosor) och underben med sko (skon blir mörk)
@@ -235,6 +274,8 @@ export class Crowd {
         hunch: type === "elder" ? 0.22 : 0,
         snackAt: rand() * 6,           // när personen tar en tugga eller en klunk
         hatColor: hat === "wimple" ? 0xf2efe6 : hat === "straw" ? 0xd9bf6a : hat === "hennin" ? pick([0xd9a521, 0xf2efe6, 0x8a1a2a]) : pick(HAT_COLORS),
+        // kroppsbyggnad: smal, vanlig eller rund (bara bålens bredd)
+        girth: type === "child" ? 0.95 : type === "noble" || type === "priest" ? 1.0 + rand() * 0.3 : 0.86 + rand() * 0.34,
         scale: type === "child" ? 0.72 : type === "elder" ? 0.88 + rand() * 0.08 : 0.92 + rand() * 0.16,
         phase: rand() * Math.PI * 2,
         speed: 0.6 + rand() * 1.0,
@@ -266,6 +307,7 @@ export class Crowd {
       face: inst(S.face, n, material({ roughness: 0.5 })),
       mouth: inst(S.mouth, n, material({ roughness: 0.6 })),
       arm: inst(S.arm, n * 2),
+      fore: inst(S.fore, n * 2),
       hand: inst(S.hand, n * 2),
       thigh: inst(S.thigh, men.length * 2),
       shin: inst(S.shin, men.length * 2),
@@ -293,13 +335,13 @@ export class Crowd {
       extra(S[hat], P.filter((p) => p.hat === hat && p.style !== "hatwave"), (p) => (hat === "coif" ? 0xf2efe6 : p.hatColor), "head", material({ side: THREE.DoubleSide }));
     }
     extra(S.wreath, P.filter((p) => p.hat === "wreath"), () => 0xffffff, "head");
-    extra(S.handHat, P.filter((p) => p.style === "hatwave"), (p) => p.hatColor, "armR", material({ side: THREE.DoubleSide }));
-    extra(S.apron, P.filter((p) => p.apron), () => 0xe8e0cc, "torso");
-    extra(S.cloak, P.filter((p) => p.cloak), (p) => p.cloakColor, "torso", material({ side: THREE.DoubleSide }));
-    extra(S.cane, P.filter((p) => p.type === "elder"), () => 0x5a3a1e, "armL");
-    extra(S.drumstick, P.filter((p) => p.style === "eat"), () => 0xffffff, "armR");
-    extra(S.kerchief, P.filter((p) => p.style === "kerchief"), () => 0xf2efe6, "armR", material({ side: THREE.DoubleSide }));
-    extra(S.mug, P.filter((p) => p.style === "mug"), (p) => (p.index % 2 ? 0x8a8e94 : 0x7a5434), "armR", material({ metalness: 0.3, roughness: 0.5 }));
+    extra(S.handHat, P.filter((p) => p.style === "hatwave"), (p) => p.hatColor, "wristR", material({ side: THREE.DoubleSide }));
+    extra(S.apron, P.filter((p) => p.apron), () => 0xe8e0cc, "body");
+    extra(S.cloak, P.filter((p) => p.cloak), (p) => p.cloakColor, "body", material({ side: THREE.DoubleSide }));
+    extra(S.cane, P.filter((p) => p.type === "elder"), () => 0x5a3a1e, "wristL");
+    extra(S.drumstick, P.filter((p) => p.style === "eat"), () => 0xffffff, "wristR");
+    extra(S.kerchief, P.filter((p) => p.style === "kerchief"), () => 0xf2efe6, "wristR", material({ side: THREE.DoubleSide }));
+    extra(S.mug, P.filter((p) => p.style === "mug"), (p) => (p.index % 2 ? 0x8a8e94 : 0x7a5434), "wristR", material({ metalness: 0.3, roughness: 0.5 }));
 
     // Fasta färger
     for (const p of P) {
@@ -308,10 +350,11 @@ export class Crowd {
       if (p.female) this.mesh.bodice.setColorAt(p.wi, clothes);
       else this.mesh.torso.setColorAt(p.mi, clothes);
       this.mesh.head.setColorAt(i, new THREE.Color(p.skin));
-      this.mesh.face.setColorAt(i, new THREE.Color(0x2a1a12));
+      this.mesh.face.setColorAt(i, new THREE.Color(0xffffff));
       this.mesh.mouth.setColorAt(i, new THREE.Color(0x4a1410));
       for (const s of [0, 1]) {
         this.mesh.arm.setColorAt(i * 2 + s, clothes);
+        this.mesh.fore.setColorAt(i * 2 + s, clothes);
         this.mesh.hand.setColorAt(i * 2 + s, new THREE.Color(p.skin));
         if (p.female) {
           this.mesh.skirtThigh.setColorAt(p.wi * 2 + s, clothes);
@@ -331,12 +374,23 @@ export class Crowd {
     d.mouth = new THREE.Object3D();
     d.armL = new THREE.Object3D();
     d.armR = new THREE.Object3D();
+    d.body = new THREE.Object3D();
+    for (const s of ["L", "R"]) {
+      // Armbågen sitter 0.15 ner. "wrist" ligger tillbaka på axelns höjd i underarmens koordinater,
+      // så att underarm, hand och saker kan ritas med samma mått som förut
+      d["fore" + s] = new THREE.Object3D();
+      d["fore" + s].position.set(0, -0.15, 0);
+      d["wrist" + s] = new THREE.Object3D();
+      d["wrist" + s].position.set(0, 0.15, 0);
+      d["fore" + s].add(d["wrist" + s]);
+      d["arm" + s].add(d["fore" + s]);
+    }
     d.thighL = new THREE.Object3D();
     d.thighR = new THREE.Object3D();
     d.shinL = new THREE.Object3D();
     d.shinR = new THREE.Object3D();
     d.root.add(d.torso, d.thighL, d.thighR);
-    d.torso.add(d.head, d.armL, d.armR);
+    d.torso.add(d.head, d.armL, d.armR, d.body);
     d.head.add(d.mouth);
     d.thighL.add(d.shinL);
     d.thighR.add(d.shinR);
@@ -369,7 +423,7 @@ export class Crowd {
       const t = time * p.speed + p.phase;
       const spot = p.spot;
       // Reser sig vid häftiga händelser (de ivrigaste först)
-      const wantStand = cheer > 0.25 + p.eager * 0.6 ? 1 : 0;
+      const wantStand = spot.standing || cheer > 0.25 + p.eager * 0.6 ? 1 : 0; // ståplats längst bak: står alltid
       p.stand += (wantStand - p.stand) * Math.min(1, dt * (wantStand ? 6 : 2.5));
       const stand = p.stand;
       const sit = 1 - stand;
@@ -385,6 +439,9 @@ export class Crowd {
       d.root.position.set(spot.pos.x, spot.pos.y + stand * 0.72 * p.scale + hop, spot.pos.z);
       d.root.rotation.set(0, spot.yaw + p.look * 0.25, 0);
       d.root.scale.setScalar(p.scale);
+      d.body.scale.set(p.girth, 1, 0.9 + p.girth * 0.1 + (p.girth - 1) * 0.6);
+      d.armL.position.x = 0.18 * (0.35 + p.girth * 0.65);
+      d.armR.position.x = -d.armL.position.x;
       d.torso.rotation.set(0.12 * cheer * sit + Math.sin(t) * 0.03 - stand * 0.05 + p.hunch, p.look * 0.25, Math.sin(t * 0.7) * 0.04);
       d.head.rotation.set(Math.sin(t * 0.9) * 0.06 - cheer * 0.25, p.look * 0.5, Math.sin(t * 0.5) * 0.05);
       d.mouth.scale.set(1, 0.25 + cheer * (0.8 + Math.abs(Math.sin(time * 6 + p.phase)) * 0.6) + (p.throwT >= 0 ? 0.6 : 0), 1);
@@ -397,57 +454,67 @@ export class Crowd {
 
       // Armarna efter personens sätt att jubla
       const rest = 0.12;
-      let lx = -0.35 * sit, lz = rest, rx = -0.35 * sit, rz = -rest;
+      let lx = -0.2 * sit, lz = rest, rx = -0.2 * sit, rz = -rest;
+      const restE = -0.75 * sit - 0.12; // armbågen: händerna i knät när man sitter
+      let le = restE, re = restE;
       if (p.style === "clap") {
         const clap = Math.abs(Math.sin(time * 12 + p.phase)) * 0.45;
         const c = Math.max(cheer, 0.15 * (Math.sin(t * 0.4) > 0.9 ? 1 : 0));
-        lx = lerp(lx, -1.35, c); lz = lerp(rest, 0.15 + clap, c);
-        rx = lerp(rx, -1.35, c); rz = lerp(-rest, -0.15 - clap, c);
+        lx = lerp(lx, -1.05, c); lz = lerp(rest, 0.12 + clap, c);
+        rx = lerp(rx, -1.05, c); rz = lerp(-rest, -0.12 - clap, c);
+        le = lerp(restE, -0.75, c); re = le;
       } else if (p.style === "kerchief" || p.style === "wave") {
         const wave = Math.sin(time * 10 + p.phase) * 0.4;
         rx = lerp(rx, -2.8 + wave * 0.3, cheer); rz = lerp(-rest, -0.3 + wave, cheer);
-        if (p.style === "wave") { lx = lerp(lx, -2.6, cheer); lz = lerp(rest, 0.4 - wave, cheer); }
+        re = lerp(restE, -0.35 + wave * 0.4, cheer);
+        if (p.style === "wave") { lx = lerp(lx, -2.6, cheer); lz = lerp(rest, 0.4 - wave, cheer); le = lerp(restE, -0.3, cheer); }
       } else if (p.style === "mug" || p.style === "eat") {
         // Sejdeln eller kycklinglåret i handen. Då och då en klunk/tugga (handen till munnen), vid jubel höjs den
         const cycle = (time + p.snackAt) % 7;
         const sip = cycle < 1.2 ? Math.sin((cycle / 1.2) * Math.PI) : 0;
-        rx = lerp(-1.0 - sip * 1.15, -2.9, cheer);
-        rz = lerp(-0.25 + sip * 0.55, -0.15, cheer);
+        rx = lerp(-0.55 - sip * 0.55, -2.9, cheer);
+        rz = lerp(-0.2 + sip * 0.35, -0.15, cheer);
+        re = lerp(-0.9 - sip * 1.1, -0.25, cheer);
         if (sip > 0.5) d.head.rotation.x -= 0.15 * sip;
       } else if (p.style === "point") {
         // Pekar mot striden och skrattar
         const jab = Math.max(0, Math.sin(time * 6 + p.phase)) * 0.15;
         rx = lerp(-0.4 * sit - 0.2, -1.5 - jab, Math.max(cheer, 0.3)); rz = lerp(-rest, -0.05, cheer);
+        re = lerp(restE, -0.1 + jab, Math.max(cheer, 0.3));
       } else if (p.style === "slap") {
         // Dunkar grannen i ryggen (höger arm ut åt sidan)
         const slap = Math.max(0, Math.sin(time * 7 + p.phase));
         rx = lerp(rx, -1.1, cheer); rz = lerp(-rest, -1.1 + slap * 0.6, cheer);
         lx = lerp(lx, -2.4, cheer * 0.7);
+        re = lerp(restE, -0.4 - slap * 0.5, cheer); le = lerp(restE, -0.4, cheer * 0.7);
       } else if (p.style === "hatwave") {
         // Viftar med hatten över huvudet
         const wave = Math.sin(time * 9 + p.phase) * 0.5;
         rx = lerp(-0.9, -2.9 + wave * 0.2, Math.max(cheer, 0.1)); rz = lerp(-0.2, -0.25 + wave, cheer);
+        re = lerp(-0.5, -0.3, cheer);
       } else {
         const pump = Math.max(0, Math.sin(time * 9 + p.phase)) * 0.5;
         rx = lerp(rx, -2.6 - pump, cheer); rz = lerp(-rest, -0.2, cheer);
+        re = lerp(restE, -0.25 - (0.5 - pump) * 0.8, cheer);
       }
       // De gamla stödjer sig på käppen med vänster hand
       if (p.type === "elder") {
         lx = -0.25 * sit - 0.15;
         lz = 0.15;
+        le = -0.1;
       }
       // Kast: armen bakåt, sedan snabbt framåt
       if (p.throwT >= -1 && p.throwKind) {
         p.throwT += dt;
         if (p.throwT >= 0) {
           const k = p.throwT;
-          if (k < 0.25) rx = lerp(rx, -3.2, k / 0.25);
-          else if (k < 0.4) rx = lerp(-3.2, -0.9, (k - 0.25) / 0.15);
-          else rx = lerp(-0.9, rx, Math.min(1, (k - 0.4) / 0.3));
+          if (k < 0.25) { rx = lerp(rx, -3.2, k / 0.25); re = lerp(re, -1.3, k / 0.25); }
+          else if (k < 0.4) { rx = lerp(-3.2, -0.9, (k - 0.25) / 0.15); re = lerp(-1.3, 0, (k - 0.25) / 0.15); }
+          else { rx = lerp(-0.9, rx, Math.min(1, (k - 0.4) / 0.3)); re = lerp(0, re, Math.min(1, (k - 0.4) / 0.3)); }
           if (k >= 0.33 && !p.thrown) {
             p.thrown = true;
             d.root.updateMatrixWorld(true);
-            handPos.set(0, -0.32, 0.05).applyMatrix4(d.armR.matrixWorld);
+            handPos.set(0, -0.32, 0.05).applyMatrix4(d.wristR.matrixWorld);
             p.throwables?.launch(p.throwKind, handPos, p.throwTarget);
           }
           if (k > 0.8) {
@@ -458,17 +525,21 @@ export class Crowd {
       }
       d.armL.rotation.set(lx, 0, lz);
       d.armR.rotation.set(rx, 0, rz);
+      d.foreL.rotation.set(le, 0, 0);
+      d.foreR.rotation.set(re, 0, 0);
 
       d.root.updateMatrixWorld(true);
-      if (p.female) M.bodice.setMatrixAt(p.wi, d.torso.matrixWorld);
-      else M.torso.setMatrixAt(p.mi, d.torso.matrixWorld);
+      if (p.female) M.bodice.setMatrixAt(p.wi, d.body.matrixWorld);
+      else M.torso.setMatrixAt(p.mi, d.body.matrixWorld);
       M.head.setMatrixAt(i, d.head.matrixWorld);
       M.face.setMatrixAt(i, d.head.matrixWorld);
       M.mouth.setMatrixAt(i, d.mouth.matrixWorld);
       M.arm.setMatrixAt(i * 2, d.armL.matrixWorld);
       M.arm.setMatrixAt(i * 2 + 1, d.armR.matrixWorld);
-      M.hand.setMatrixAt(i * 2, d.armL.matrixWorld);
-      M.hand.setMatrixAt(i * 2 + 1, d.armR.matrixWorld);
+      M.fore.setMatrixAt(i * 2, d.wristL.matrixWorld);
+      M.fore.setMatrixAt(i * 2 + 1, d.wristR.matrixWorld);
+      M.hand.setMatrixAt(i * 2, d.wristL.matrixWorld);
+      M.hand.setMatrixAt(i * 2 + 1, d.wristR.matrixWorld);
       if (p.female) {
         M.skirtThigh.setMatrixAt(p.wi * 2, d.thighL.matrixWorld);
         M.skirtThigh.setMatrixAt(p.wi * 2 + 1, d.thighR.matrixWorld);
@@ -799,7 +870,8 @@ export function makeRoyals() {
 // path(t) = punkt på vägen (t från 0 till 1 runt hela vägen)
 // ---------------------------------------------------------------------------
 export function makeVendor(kind, path, start, speed = 0.012) {
-  const robe = { bread: 0x8a6b2e, apples: 0x3e5a2a, ale: 0x7a2a2a }[kind] ?? 0x6a4a2a;
+  const walker = kind.startsWith("walker"); // vanligt folk på marknaden (ingen bricka)
+  const robe = { bread: 0x8a6b2e, apples: 0x3e5a2a, ale: 0x7a2a2a, walker0: 0x2e5a8a, walker1: 0x8a3b2e, walker2: 0x6b8a2e }[kind] ?? 0x6a4a2a;
   const f = makeFigure({ robe, skin: [0xe6b890, 0xd09a6c, 0xf2cfaa][Math.floor(Math.random() * 3)], hair: 0x4a3018, beard: kind !== "apples", hat: "beret", hose: 0x3a2a1a });
   // Bricka med varor, buren framför magen
   const tray = new THREE.Group();
@@ -817,11 +889,13 @@ export function makeVendor(kind, path, start, speed = 0.012) {
     addMesh(tray, goods.geo, goods.mat, [(i % 3 - 1) * 0.12 + (Math.random() - 0.5) * 0.03, 0.045, (Math.floor(i / 3) - 1) * 0.08], [1, 1, 1], goods.rot);
   }
   tray.position.set(0, 0.2, 0.3);
-  f.torso.add(tray);
-  // Armarna håller i brickan
-  for (const s of ["L", "R"]) {
-    f["arm" + s].rotation.set(-0.6, 0, s === "L" ? -0.15 : 0.15);
-    f["fore" + s].rotation.set(-0.9, 0, 0);
+  if (!walker) {
+    f.torso.add(tray);
+    // Armarna håller i brickan
+    for (const s of ["L", "R"]) {
+      f["arm" + s].rotation.set(-0.6, 0, s === "L" ? -0.15 : 0.15);
+      f["fore" + s].rotation.set(-0.9, 0, 0);
+    }
   }
   f.mouth.userData.keep = true; // munnen rör sig när försäljaren ropar
   mergeFigure(f.group);
@@ -841,7 +915,7 @@ export function makeVendor(kind, path, start, speed = 0.012) {
         for (const s of ["L", "R"]) f["thigh" + s].rotation.x *= 0.9;
         return;
       }
-      if (Math.random() < dt * 0.06) pause = 2 + Math.random() * 3;
+      if (Math.random() < dt * (walker ? 0.03 : 0.06)) pause = 2 + Math.random() * 3;
       f.mouth.scale.y = 0.3;
       f.head.rotation.y *= 0.95;
       t = (t + speed * dt) % 1;
@@ -855,6 +929,10 @@ export function makeVendor(kind, path, start, speed = 0.012) {
       f.shinL.rotation.x = Math.max(0, -Math.sin(walk)) * 0.6;
       f.shinR.rotation.x = Math.max(0, Math.sin(walk)) * 0.6;
       f.root.position.y = Math.abs(Math.cos(walk)) * 0.03;
+      if (walker) {
+        f.armL.rotation.x = -Math.sin(walk) * 0.35;
+        f.armR.rotation.x = Math.sin(walk) * 0.35;
+      }
     },
   };
 }

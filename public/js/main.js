@@ -12,7 +12,8 @@ import { Effects } from "./effects.js";
 import { Debris } from "./ragdoll.js";
 import { Sound } from "./sound.js";
 import { Net } from "./net.js";
-import { Weather } from "./weather.js";
+import { Weather, Motes } from "./weather.js";
+import { PostFX } from "./postfx.js";
 
 // ---------------------------------------------------------------------------
 // Hjälpfunktioner
@@ -128,6 +129,14 @@ scene.add(arena.group);
 let timeOfDay = "day";
 let weatherKind = "sun";
 const weather = new Weather(scene);
+const motes = new Motes(scene, ARENA_RX, ARENA_RZ);
+// Glöd och färgton (stängs av på låg grafik). Om något går fel ritar vi som vanligt.
+let postfx = null;
+try {
+  postfx = new PostFX(renderer, scene, camera);
+} catch (err) {
+  console.warn("Efterbehandling gick inte att starta", err);
+}
 function applyTime(value) {
   timeOfDay = TIMES.includes(value) ? value : "day";
   applyAtmosphere();
@@ -165,9 +174,19 @@ function applyAtmosphere() {
   setEnvironment(environmentFor(evening));
   arena.setTime(evening);
   arena.setOvercast?.(rain || fog);
+  motes.set(weatherKind, evening);
+  postfx?.setGrade(rain ? "rain" : fog ? "fog" : evening ? "evening" : "day");
 }
 
 const effects = new Effects(scene);
+// Större dammoln (fall, knuffar, ny runda) rör också upp dammet i luften
+{
+  const dust = effects.dust.bind(effects);
+  effects.dust = (pos, n, spread) => {
+    if (n >= 6) motes.kick(n / 40);
+    return dust(pos, n, spread);
+  };
+}
 const debris = new Debris(30, 45); // döda kroppar och avhuggna delar
 const RAGDOLL_BOUNDS = { rx: ARENA_RX + 0.55, rz: ARENA_RZ + 0.55 }; // staketet
 const sound = new Sound(
@@ -292,6 +311,12 @@ function applyQuality() {
     sun.shadow.map = null;
   }
   arena.setQuality(lowQuality); // eldkorgarnas ljus kostar lite extra
+  if (postfx) {
+    postfx.enabled = !lowQuality;
+    postfx.setSize(window.innerWidth, window.innerHeight);
+  }
+  motes.off = lowQuality;
+  motes.set();
   $("quality-label").textContent = lowQuality ? "Låg" : "Hög";
   saveSetting("grafik", lowQuality ? "lag" : "hog");
 }
@@ -322,6 +347,7 @@ window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  postfx?.setSize(window.innerWidth, window.innerHeight);
 });
 
 // ---------------------------------------------------------------------------
@@ -396,8 +422,8 @@ const _stepPos = new THREE.Vector3();
 
 function createKnight(player) {
   const look = { ...player.look, w: weaponOf(player) };
-  const name = player === me ? null : player.name + (player.bot ? " 🤖" : "");
-  const knight = new Knight(colorHex(displayColor(player)), name, look, { seed: seedOf(player) });
+  const name = player === me ? null : player.name;
+  const knight = new Knight(colorHex(displayColor(player)), name, look, { seed: seedOf(player), bot: !!player.bot });
   knight.group.userData.playerId = player.id;
   scene.add(knight.group);
   if (player.wear) knight.applyWear(player.wear);
@@ -2907,6 +2933,7 @@ function frame() {
   updateCeremony(dt);
   updateItems(dt);
   weather.update(dt, camera.position);
+  motes.update(dt);
   if (!replaying) {
     updateBleeding(dt);
     debris.update(dt);
@@ -2918,7 +2945,8 @@ function frame() {
   recordFrame(dt);
   updateAim();
   sound.setListener(camera.position.x, camera.position.y, camera.position.z);
-  renderer.render(scene, camera);
+  if (postfx) postfx.render();
+  else renderer.render(scene, camera);
 }
 
 setPhase("start");

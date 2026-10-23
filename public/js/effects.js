@@ -15,7 +15,7 @@ const MAX_POOLS = 24;
 const MAX_PRINTS = 90;
 
 const WET = new THREE.Color(0x7c0909);   // färskt blod
-const DRY = new THREE.Color(0x45160b);   // intorkat blod (brunare, sjunker in i sanden)
+const DRY = new THREE.Color(0x3a1a0e);   // intorkat blod: mörkt brunrött, har sjunkit in i sanden
 const PRINT = new THREE.Color(0x5e4630); // fotspår (lite mörkare sand)
 const MUD_PRINT = new THREE.Color(0x2e2014); // fotspår i lera (regn): mörka och djupa
 const DIRT = new THREE.Color(0x8a6a48);  // marken (fotspåren tonar mot den)
