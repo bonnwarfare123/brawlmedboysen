@@ -1,4 +1,4 @@
-# Brawlmedboysen – v0.15
+# Brawlmedboysen – v0.15.1
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 

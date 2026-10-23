@@ -633,6 +633,7 @@ export function buildArena() {
   // Lägereld mellan tälten med rök, och folk som går omkring på marknaden
   const camp = makeCampfire();
   camp.group.position.set(-23, 0, 12.5);
+  camp.group.userData.noMerge = true;
   group.add(camp.group);
   const walkers = [
     [[-17, 6], [-24, 9], [-27, 16], [-21, 18], [-16, 13]],

@@ -899,6 +899,7 @@ export function makeVendor(kind, path, start, speed = 0.012) {
   }
   f.mouth.userData.keep = true; // munnen rör sig när försäljaren ropar
   mergeFigure(f.group);
+  f.group.userData.noMerge = true; // rör sig: får inte bakas ihop med den stillastående arenan
   let t = start;
   let pause = 0;
   let walk = 0;
