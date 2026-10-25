@@ -129,14 +129,47 @@ export class Cloth {
   update(dt, pins, colliders, parentInverse, ground = 0.02, plane = null) {
     if (this.frozen) return;
     if (!this.started) this.reset(pins);
-    const { cols, pos, prev, inv, cons } = this;
+    const { cols, rows, pos, prev, inv, cons } = this;
     const n = this.inv.length;
-    const steps = 2;
-    const h = Math.min(dt, 1 / 30) / steps;
+    // Fler små steg när bilden tar lång tid, så tyget inte hoppar när det laggar
+    const step = Math.min(dt, 1 / 20);
+    const steps = Math.max(1, Math.min(5, Math.ceil(step * 150)));
+    const h = step / steps;
     const g = GRAVITY * h * h;
+    // Dämpningen gäller per 1/60 sekund, oavsett hur många små steg vi tar (annars blir tyget som sirap)
+    const damp = Math.pow(this.damping, h * 60);
     // Om kroppen teleporterats (ny runda): börja om
     const jump = Math.hypot(pos[0] - pins[0][0], pos[1] - pins[0][1], pos[2] - pins[0][2]);
     if (jump > 1) this.reset(pins);
+    // Ryck (knuff, fall, knockback): flytta med hela tyget i stället för att slunga iväg det
+    const MAX_MOVE = 0.12;
+    let mx = 0;
+    let my = 0;
+    let mz = 0;
+    for (let c = 0; c < cols; c++) {
+      mx += pins[c][0] - pos[c * 3];
+      my += pins[c][1] - pos[c * 3 + 1];
+      mz += pins[c][2] - pos[c * 3 + 2];
+    }
+    mx /= cols;
+    my /= cols;
+    mz /= cols;
+    const moved = Math.hypot(mx, my, mz);
+    if (moved > MAX_MOVE) {
+      const k = 1 - MAX_MOVE / moved;
+      for (let i = cols * 3; i < pos.length; i += 3) {
+        pos[i] += mx * k;
+        pos[i + 1] += my * k;
+        pos[i + 2] += mz * k;
+        prev[i] += mx * k;
+        prev[i + 1] += my * k;
+        prev[i + 2] += mz * k;
+      }
+    }
+    // Tyget får inte hamna ovanför fästet (axlarna): där dras det ner och bakåt igen
+    let cap = -Infinity;
+    for (let c = 0; c < cols; c++) cap = Math.max(cap, pins[c][1]);
+    cap -= 0.03;
 
     for (let step = 0; step < steps; step++) {
       for (let k = 0; k < n; k++) {
@@ -151,9 +184,17 @@ export class Cloth {
           pos[i + 2] = p[2];
           continue;
         }
-        const vx = (pos[i] - prev[i]) * this.damping;
-        const vy = (pos[i + 1] - prev[i + 1]) * this.damping;
-        const vz = (pos[i + 2] - prev[i + 2]) * this.damping;
+        let vx = (pos[i] - prev[i]) * damp;
+        let vy = (pos[i + 1] - prev[i + 1]) * damp;
+        let vz = (pos[i + 2] - prev[i + 2]) * damp;
+        // Luftmotstånd: ju fortare, desto mer bromsar luften (så tyget inte slungas upp).
+        // Uppåt bromsas hårt, men fallet nedåt bromsas nästan inte, så tyget faller ner igen
+        // i stället för att stå rakt ut bakom ryggen när man springer.
+        const sp = Math.sqrt(vx * vx + vy * vy + vz * vz) / h;
+        const drag = 1 / (1 + 0.012 * sp * h * 60);
+        vx *= drag;
+        vz *= drag;
+        if (vy > 0) vy *= drag * drag;
         prev[i] = pos[i];
         prev[i + 1] = pos[i + 1];
         prev[i + 2] = pos[i + 2];
@@ -184,13 +225,37 @@ export class Cloth {
         for (let k = cols; k < n; k++) {
           const i = k * 3;
           collide(pos, i, colliders, ground);
-          if (plane) {
+          const above = pos[i + 1] - cap;
+          if (above > 0) {
+            // Ovanför axlarna: mjukt ner och bakåt (ingen vägg att luta sig mot där uppe)
+            pos[i + 1] -= above * 0.6;
+            if (plane) {
+              pos[i] -= plane.nx * above * 0.3;
+              pos[i + 2] -= plane.nz * above * 0.3;
+            }
+          } else if (plane) {
+            // Väggen bakom ryggen gäller bara nedanför axlarna
             const over = plane.nx * pos[i] + plane.nz * pos[i + 2] - plane.d;
             if (over > 0) {
               pos[i] -= plane.nx * over;
               pos[i + 2] -= plane.nz * over;
             }
           }
+        }
+      }
+    }
+    // Säkerhetskoll: har nederkanten fastnat högt (i nivå med axlarna) en stund? Släpp den.
+    let bottom = 0;
+    for (let c = 0; c < cols; c++) bottom += pos[((rows - 1) * cols + c) * 3 + 1];
+    bottom /= cols;
+    this.stuck = bottom > cap - this.dy * 2 ? (this.stuck || 0) + dt : 0;
+    if (this.stuck > 0.5) {
+      this.stuck = 0;
+      for (let i = cols * 3; i < pos.length; i += 3) prev[i + 1] = pos[i + 1] + 0.02; // börjar falla
+      for (let r = 1; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const i = (r * cols + c) * 3;
+          if (pos[i + 1] > cap - r * this.dy * 0.5) pos[i + 1] = cap - r * this.dy * 0.5;
         }
       }
     }
@@ -203,8 +268,7 @@ export class Cloth {
     const { pos } = this;
     for (let i = 0; i < pos.length; i += 3) transform(e, pos[i], pos[i + 1], pos[i + 2], out, i);
     this.positionAttr.needsUpdate = true;
-    this.mesh.geometry.computeVertexNormals();
-    this.mesh.geometry.computeBoundingSphere?.();
+    this.mesh.geometry.computeVertexNormals(); // (ingen gränssfär behövs: tyget ritas alltid)
   }
 
   // Sluta röra sig och följ med en kroppsdel (t.ex. när riddaren dör och blir ragdoll)

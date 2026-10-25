@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.18";
+export const VERSION = "0.20";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -12,7 +12,7 @@ export const COMBAT = {
   thrust: { damage: 20, windup: 0.26, cooldown: 1.5, reach: 2.8, arc: 22 }, // stöt: lång men smal, egen längre väntetid
   // Spark: ingen skada, men knuffar bort och får motståndaren att vingla (bryter laddning och parering).
   // knockdown = chans att den sparkade ramlar omkull (alltid om den laddar ett tungt slag eller sparkas bakifrån)
-  kick: { windup: 0.18, cooldown: 1.5, reach: 1.8, arc: 55, push: 9, stagger: 0.8, knockdown: 0.35 },
+  kick: { windup: 0.18, cooldown: 2.0, reach: 1.8, arc: 55, push: 9, stagger: 0.8, knockdown: 0.35 },
   // Omkullslagen: ligger på marken så här länge och tar extra skada under tiden
   down: { time: 1.1, damage: 1.3 },
   // Rullning (C + Mellanslag): går inte att träffa mellan iStart och iEnd sekunder in i rullningen
@@ -22,10 +22,10 @@ export const COMBAT = {
   // Utan ben sitter man på marken och blöder så här mycket liv per sekund
   leglessBleed: 3,
   // Kasta vapnet (G): flyger rakt fram, skadan = snabbt slag x vapnets skada x damage
-  throw: { speed: 17, range: 13, radius: 0.55, damage: 0.9, stagger: 0.5, windup: 0.22 },
+  throw: { speed: 16, range: 9.5, radius: 0.36, damage: 0.9, stagger: 0.5, windup: 0.3, parryBonus: 1.3, shieldStagger: 0.35, shieldFacing: 0.866, shieldDamage: 0.34 },
   // Ta tag i någon (R): reach/arc = hur nära och rakt framför, hold = längsta greppet,
   // escape = antal knapptryck för att slita sig loss, shove = knuffen, punch = slag medan man håller fast
-  grab: { reach: 1.5, arc: 50, cooldown: 2.5, hold: 2.8, escape: 7, shove: 13, punch: 10, punchCooldown: 0.55, moveFactor: 0.45 },
+  grab: { reach: 1.5, arc: 50, cooldown: 2.5, hold: 2.8, escape: 7, downCooldown: 1.5, upGrace: 1.0, shove: 13, punch: 10, punchCooldown: 0.55, moveFactor: 0.45 },
   emoteCooldown: 1.5,
   // window = hur länge en parering skyddar, lag = extra tid för fördröjningen på nätet
   parry: { window: 0.45, lag: 0.08, cooldown: 0.8, stagger: 0.9 },
@@ -71,7 +71,7 @@ export const WEAPON_SPECS = [
   { key: "spear", damage: 0.85, speed: 0.95, recover: 0.95, reach: 0.7, arc: 0.7, sever: 0.6, thrust: 1.45, thrustReach: 1.3, thrustCd: 0.84, twoHanded: true },
   { key: "warhammer", damage: 0.95, speed: 1.05, recover: 1.05, reach: 0, arc: 0.9, sever: 0, thrust: 0.6, helmetKnock: 0.6, hitStagger: 0.35, blunt: true },
   { key: "maul", damage: 1.6, speed: 1.55, recover: 1.7, reach: 0.5, arc: 0.9, sever: 0, thrust: 0.6, twoHanded: true, helmetKnock: 0.4, hitStagger: 0.5, knockdown: true, blunt: true },
-  { key: "dagger", damage: 0.6, speed: 0.7, recover: 0.65, reach: -0.5, arc: 1, sever: 0.5, thrust: 1.67, grabReach: 2.2, grabPunch: 16, grabCd: 1.8 },
+  { key: "dagger", noShield: true, damage: 0.6, speed: 0.7, recover: 0.65, reach: -0.5, arc: 1, sever: 0.5, thrust: 1.67, grabReach: 2.2, grabPunch: 16, grabCd: 1.8 },
 ];
 
 // Utan vapen (vapenarmen avhuggen eller vapnet tappat): knytnävar

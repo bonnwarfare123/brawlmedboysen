@@ -787,13 +787,17 @@ export class Knight {
     this.weapon = weapon;
     this.sword = weapon; // gammalt namn
 
-    // Sköld (inte med tvåhandsvapen)
+    // Sköld (inte med tvåhandsvapen). Med dolken: ett knogjärn i vänster hand i stället
     const shield = this.twoHanded ? new THREE.Group() : this.buildShield(look.s, m, colorHex);
     shield.position.set(0.03, -0.115, 0);
     shield.rotation.x = 1.6;
     shield.userData.equipment = true;
+    shield.visible = !wspec.noShield;
     this.seg.handL.add(shield);
     this.shield = shield;
+    this.knuckle = this.buildKnuckle(m);
+    this.knuckle.visible = !!wspec.noShield;
+    this.seg.handL.add(this.knuckle);
 
     // Slå ihop småbitarna i varje kroppsdel (färre ritanrop = högre FPS)
     for (const seg of Object.values(this.seg)) this.mergeChildren(seg);
@@ -820,9 +824,22 @@ export class Knight {
       }
     });
 
+    this.trimShadows();
+
     this.name = name;
     this.colorHex = colorHex;
     if (name) this.createLabel();
+  }
+
+  // Pyttesmå delar (ögon, ögonlock, nitar) kastar inga skuggor: syns inte, men kostar ett extra ritanrop var
+  trimShadows(root = this.group) {
+    root.updateMatrixWorld(true);
+    root.traverse((o) => {
+      if (!o.isMesh || !o.castShadow || !o.geometry || o.userData.equipment) return;
+      if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+      const s = o.getWorldScale(_v);
+      if (o.geometry.boundingSphere.radius * Math.max(s.x, s.y, s.z) < 0.03) o.castShadow = false;
+    });
   }
 
   // ---------- Bål och höfter ----------
@@ -1422,6 +1439,30 @@ export class Knight {
     H(new THREE.CylinderGeometry(0.009 * k, 0.009 * k, 0.07 * k, 8), mat, [0, -0.066 * k, -0.018 * k], [1, 1, 1], [0, 0, Math.PI / 2]); // knogar
     H(new THREE.CapsuleGeometry(0.012 * k, 0.026 * k, 3, 8), mat, [0.032 * s * k, -0.048 * k, 0.02 * k], [1, 1, 1], [0.55, 0, -0.45 * s]); // tumme
     H(new THREE.CylinderGeometry(0.034 * k, 0.038 * k, 0.03 * k, 12, 1, true), mat, [0, -0.005, 0], [1.05, 1, 0.8]); // handled
+  }
+
+  // Knogjärn (till dolken): en järnbåge över fingrarna med fyra knoppar, ringar runt fingrarna
+  // och ett lindat handtag i handflatan
+  buildKnuckle(m) {
+    const g = new THREE.Group();
+    g.userData.equipment = true;
+    const seg = this.seg.handL;
+    const iron = m.iron;
+    const wrap = this.mat(0x4a3220, 0.95, 0);
+    const add = (geo, mat, pos, scale, rot) => {
+      const mesh = this.shape(geo, mat, this.sc(seg, pos), scale, rot);
+      mesh.castShadow = true;
+      g.add(mesh);
+    };
+    add(new THREE.BoxGeometry(0.088, 0.014, 0.03), iron, [0, -0.104, 0.016]);              // slagytan
+    for (let i = 0; i < 4; i++) {
+      const x = -0.029 + i * 0.0193;
+      add(new THREE.SphereGeometry(0.0085, 8, 6), iron, [x, -0.113, 0.016], [1, 0.8, 1]);   // knoppar
+      add(new THREE.TorusGeometry(0.0165, 0.0035, 5, 12), iron, [x, -0.088, 0.012], [1, 1, 1], [0, Math.PI / 2, 0]); // ringar
+    }
+    add(new THREE.CylinderGeometry(0.009, 0.009, 0.082, 8), wrap, [0, -0.064, 0.034], [1, 1, 1], [0, 0, Math.PI / 2]); // handtag
+    for (const sx of [1, -1]) add(new THREE.BoxGeometry(0.006, 0.05, 0.012), iron, [0.043 * sx, -0.082, 0.026], [1, 1, 1], [0.35, 0, 0]); // sidorna
+    return g;
   }
 
   // Handske i plåt: handrygg, fyra fingrar runt greppet och en tumme
@@ -2291,10 +2332,10 @@ export class Knight {
         cols.push(c);
       });
       // Planet som tyget inte får passera: genom kroppsdelens mitt, vinkelrätt mot dess framåtriktning
+      // Riktningen tas från hela riddaren (inte överkroppen), så den inte vänder mitt i en rullning eller bugning
       const e = this.seg[s.freezeTo].matrixWorld.elements;
-      const fl = Math.hypot(e[8], e[10]) || 1;
-      const fx = e[8] / fl;
-      const fz = e[10] / fl;
+      const fx = Math.sin(yaw);
+      const fz = Math.cos(yaw);
       const along = fx * e[12] + fz * e[14];
       if (s.side < 0) Object.assign(s.plane, { nx: fx, nz: fz, d: along - s.offset });
       else Object.assign(s.plane, { nx: -fx, nz: -fz, d: -along - s.offset });
@@ -2596,10 +2637,12 @@ export class Knight {
     this.swordBlood = 0;
     this.bladeBloodMat.opacity = 0;
     this.addWeaponBlood(kind);
-    this.shield.visible = !this.twoHanded;
+    this.shield.visible = !this.twoHanded && !spec.noShield;
+    if (this.knuckle) this.knuckle.visible = !!spec.noShield;
     weapon.traverse((o) => {
       if (o.isMesh) o.castShadow = o.receiveShadow = true;
     });
+    this.trimShadows(weapon);
     this.attack = null;
     this.charging = false;
   }
@@ -3660,7 +3703,13 @@ export class Knight {
 
     // ----- Ansiktet, tyget och kedjan -----
     this.updateFace(dt);
-    this.updateSoft(dt);
+    // Långt bort från kameran räknas tyget bara varannan bild (syns inte, sparar tid)
+    this._softDt = (this._softDt || 0) + dt;
+    this._softFrame = (this._softFrame || 0) + 1;
+    if (!this.farAway || this._softFrame % 2 === 0) {
+      this.updateSoft(this._softDt);
+      this._softDt = 0;
+    }
 
     // ----- Röd blinkning vid träff -----
     if (this.flashT > 0) this.flashT = Math.max(0, this.flashT - dt);

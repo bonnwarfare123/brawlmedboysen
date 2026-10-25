@@ -1055,38 +1055,99 @@ function puffTexture() {
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
+// Alla tussar i ett moln ritas på en gång (ett enda ritanrop per moln i stället för ett per tuss).
+// Varje tuss är en fyrkant som vänder sig mot kameran i vertex-shadern, precis som en sprite.
+const CLOUD_VERT = /* glsl */ `
+  attribute vec2 corner;
+  attribute vec2 shade; // x = ljushet (ovansida/undersida), y = genomskinlighet
+  varying vec2 vUv;
+  varying vec2 vShade;
+  void main() {
+    vUv = corner + 0.5;
+    vShade = shade;
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vec2 scl = vec2(length(modelMatrix[0].xyz), length(modelMatrix[1].xyz));
+    mv.xy += corner * size * scl;
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+const CLOUD_FRAG = /* glsl */ `
+  uniform sampler2D map;
+  uniform vec3 color;
+  varying vec2 vUv;
+  varying vec2 vShade;
+  void main() {
+    vec4 t = texture2D(map, vUv);
+    gl_FragColor = vec4(t.rgb * color * vShade.x, t.a * vShade.y);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+  }
+`;
 function ensureCloudMats() {
   if (cloudMats) return cloudMats;
   const map = puffTexture();
-  const mk = (hex, opacity) => new THREE.SpriteMaterial({ map, color: hex, transparent: true, opacity, depthWrite: false, fog: false });
-  cloudMats = { top: mk(0xffffff, 0.95), mid: mk(0xeef0f4, 0.9), bottom: mk(0xc6cbd4, 0.9) };
+  const material = new THREE.ShaderMaterial({
+    vertexShader: CLOUD_VERT.replace("corner * size", "corner * puffSize").replace("attribute vec2 corner;", "attribute vec2 corner;\n  attribute vec2 puffSize;"),
+    fragmentShader: CLOUD_FRAG,
+    uniforms: { map: { value: map }, color: { value: new THREE.Color(0xffffff) } },
+    transparent: true,
+    depthWrite: false,
+    fog: false,
+  });
+  cloudMats = { material, shades: { top: [1, 0.95], mid: [0.92, 0.9], bottom: [0.76, 0.9] } };
   cloudMaterial = {
     color: {
       set(hex) {
-        const c = new THREE.Color(hex);
-        cloudMats.top.color.copy(c);
-        cloudMats.mid.color.copy(c).multiplyScalar(0.92);
-        cloudMats.bottom.color.copy(c).multiplyScalar(0.76);
+        material.uniforms.color.value.set(hex);
         return this;
       },
     },
   };
   return cloudMats;
 }
+
+// Bygger en ritning av tussar: list = [{ x, y, z, w, h, shade }]
+function cloudGeometry(list) {
+  const n = list.length;
+  const pos = new Float32Array(n * 12);
+  const corner = new Float32Array(n * 8);
+  const size = new Float32Array(n * 8);
+  const shade = new Float32Array(n * 8);
+  const index = [];
+  const C = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]];
+  list.forEach((p, i) => {
+    for (let k = 0; k < 4; k++) {
+      const v = i * 4 + k;
+      pos.set([p.x, p.y, p.z], v * 3);
+      corner.set(C[k], v * 2);
+      size.set([p.w, p.h], v * 2);
+      shade.set(p.shade, v * 2);
+    }
+    const o = i * 4;
+    index.push(o, o + 1, o + 2, o, o + 2, o + 3);
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("corner", new THREE.BufferAttribute(corner, 2));
+  geo.setAttribute("puffSize", new THREE.BufferAttribute(size, 2));
+  geo.setAttribute("shade", new THREE.BufferAttribute(shade, 2));
+  geo.setIndex(index);
+  return geo;
+}
+
 // kind: "heap" (bulligt stackmoln), "streak" (tunt slöjmoln högt upp), "deck" (lågt, grått täcke)
 function makeCloud(rand, kind = rand() < 0.75 ? "heap" : "streak") {
   const mats = ensureCloudMats();
+  const S = mats.shades;
   const g = new THREE.Group();
   g.userData.noMerge = true;
+  const bottoms = [];
+  const tops = [];
   if (kind === "streak") {
     const n = 6 + Math.floor(rand() * 5);
     for (let i = 0; i < n; i++) {
-      const s = new THREE.Sprite(mats.top);
-      s.material = mats.mid;
       const w = 18 + rand() * 22;
-      s.scale.set(w, w * 0.22, 1);
-      s.position.set((i - n / 2) * 9 + rand() * 6, rand() * 2, rand() * 6);
-      g.add(s);
+      tops.push({ x: (i - n / 2) * 9 + rand() * 6, y: rand() * 2, z: rand() * 6, w, h: w * 0.22, shade: S.mid });
     }
   } else {
     const width = kind === "deck" ? 60 : 22 + rand() * 18;
@@ -1097,17 +1158,16 @@ function makeCloud(rand, kind = rand() < 0.75 ? "heap" : "streak") {
       const hump = Math.cos(u * Math.PI) * (kind === "deck" ? 3 : 7);
       const y = rand() * hump;
       const size = (kind === "deck" ? 18 : 9) + rand() * 9 + hump * 0.8;
-      // undersidan (mörkare) och ovansidan (ljusare)
-      const bottom = new THREE.Sprite(mats.bottom);
-      bottom.scale.set(size * 1.3, size * 0.7, 1);
-      bottom.position.set(x, y - size * 0.18, rand() * 6 - 3);
-      g.add(bottom);
-      const top = new THREE.Sprite(rand() < 0.5 ? mats.top : mats.mid);
-      top.scale.set(size, size * 0.8, 1);
-      top.position.set(x + (rand() - 0.5) * 3, y + size * 0.12, rand() * 6 - 3);
-      g.add(top);
+      // undersidan (mörkare, ritas först) och ovansidan (ljusare, ovanpå)
+      bottoms.push({ x, y: y - size * 0.18, z: rand() * 6 - 3, w: size * 1.3, h: size * 0.7, shade: S.bottom });
+      const shadeTop = rand() < 0.5 ? S.top : S.mid;
+      tops.push({ x: x + (rand() - 0.5) * 3, y: y + size * 0.12, z: rand() * 6 - 3, w: size, h: size * 0.8, shade: shadeTop });
     }
   }
+  const puffs = new THREE.Mesh(cloudGeometry([...bottoms, ...tops]), mats.material);
+  puffs.frustumCulled = false;
+  puffs.castShadow = puffs.receiveShadow = false;
+  g.add(puffs);
   g.userData.speed = 0.6 + rand() * 0.8;
   driftClouds.push(g);
   return g;

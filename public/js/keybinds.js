@@ -26,6 +26,7 @@ export const ACTIONS = [
   { id: "sound", name: "Ljud av/på", keys: ["KeyM"] },
   { id: "music", name: "Musik av/på", keys: ["KeyN"] },
   { id: "quality", name: "Grafikläge", keys: ["F2"] },
+  { id: "stats", name: "Visa prestanda (ritanrop, ms)", keys: ["F3"] },
 ];
 
 // Knappar som webbläsaren inte släpper till spelet

@@ -198,6 +198,7 @@ function resetForRound(player) {
   player.helmetOff = false;
   player.cw = player.look.w;
   player.downUntil = 0;
+  player.upAt = 0;
   player.rollStart = -100;
   player.nextRoll = 0;
   player.crouch = false;
@@ -1212,6 +1213,7 @@ export class GameRoom extends DurableObject {
     player.nextQuick = t + cds.quick;
     player.nextHeavy = t + cds.heavy;
     player.nextThrust = Math.max(player.nextThrust, t + cds.thrust);
+    player.swingUntil = t + spec.windup + 0.3; // mitt i slaget: skölden är inte uppe
 
     // Vad siktade spelaren på? { id: motståndare, seg: kroppsdel }
     const aimInfo = aim && typeof aim.id === "string" && typeof aim.seg === "string" && AIM_JOINT[aim.seg]
@@ -1371,9 +1373,14 @@ export class GameRoom extends DurableObject {
   handleKick(ws, player) {
     const t = now();
     if (!this.canFight(player) || this.busy(player, t) || player.legless) return;
-    if (player.holding) return this.releaseGrab(player, "down");
     if (t < player.nextKick - TOLERANCE) return;
+    if (player.holding) {
+      // Kasta omkull: egen väntetid, så man inte kan låsa fast någon (ta tag, kasta, ta tag ...)
+      player.nextKick = t + COMBAT.grab.downCooldown;
+      return this.releaseGrab(player, "down");
+    }
     player.nextKick = t + COMBAT.kick.cooldown;
+    player.swingUntil = t + COMBAT.kick.windup + 0.3;
     player.chargeStart = null;
     this.broadcast({ t: "kick", id: player.id }, ws);
     this.later(COMBAT.kick.windup, this.phaseToken, () => {
@@ -1416,6 +1423,7 @@ export class GameRoom extends DurableObject {
     const len = Math.hypot(finite(dir[0]), finite(dir[1])) || 1;
     player.rollStart = t;
     player.nextRoll = t + COMBAT.roll.cooldown;
+    if (t < player.downUntil) player.upAt = t; // rullade upp från marken: kort skydd mot att bli tagen
     player.downUntil = 0;
     player.staggerUntil = Math.min(player.staggerUntil, t);
     player.chargeStart = null;
@@ -1426,6 +1434,9 @@ export class GameRoom extends DurableObject {
   // ----- Kasta vapnet (G) -----
   // Vapnet flyger rakt fram. Servern räknar ut direkt vem det träffar (den första i vägen) och var det landar,
   // skickar det till alla (så alla kan visa flygturen) och gör skadan när vapnet kommer fram.
+  // ----- Kasta vapnet -----
+  // Vapnet flyger på riktigt: servern flyttar det en bit i taget och kollar vem som står i vägen
+  // JUST DÅ. Kliver man åt sidan i tid missar det. Man kan parera det eller ta emot det med skölden.
   handleThrow(ws, player) {
     const t = now();
     if (!this.canFight(player) || this.busy(player, t) || player.holding || player.cw === FISTS) return;
@@ -1445,72 +1456,138 @@ export class GameRoom extends DurableObject {
         break;
       }
     }
-    // Första riddaren i vägen
-    let hit = null;
-    let hitDist = range;
-    for (const target of this.players.values()) {
-      if (target === player || target.dead) continue;
-      if (this.mode === "team" && target.team === player.team) continue;
-      const dx = target.p[0] - player.p[0];
-      const dz = target.p[2] - player.p[2];
-      const along = dx * fx + dz * fz;
-      const side = Math.abs(dx * fz - dz * fx);
-      if (along < 0.3 || along > hitDist || side > T.radius) continue;
-      hit = target;
-      hitDist = along;
-    }
-    const land = hit
-      ? [round2(hit.p[0] - fx * 0.4), 0, round2(hit.p[2] - fz * 0.4)]
-      : [round2(start[0] + fx * range), 0, round2(start[2] + fz * range)];
-    const time = round2(T.windup + Math.max(0.15, (hit ? hitDist : range) / T.speed));
-    const item = { id: "i" + randomId().slice(0, 4), w, p: land, r: round2(player.r + (Math.random() - 0.5)) };
+    const item = { id: "i" + randomId().slice(0, 4), w, p: [0, 0, 0], r: round2(player.r + (Math.random() - 0.5)) };
     player.cw = FISTS;
     player.chargeStart = null;
     player.nextQuick = Math.max(player.nextQuick, t + T.windup + 0.2);
-    this.broadcast({ t: "throw", id: player.id, w, from: start.map(round2), to: land, time, hit: hit ? hit.id : null, item });
-    const token = this.phaseToken;
-    this.later(time, token, () => {
+    this.broadcast({ t: "throw", id: player.id, w, from: start.map(round2), dir: [round2(fx), round2(fz)], range: round2(range), speed: T.speed, item });
+    const shot = { owner: player.id, team: player.team, w, item, x: start[0], z: start[2], fx, fz, dist: 0, range, token: this.phaseToken };
+    this.later(T.windup, shot.token, () => this.flyThrow(shot));
+  }
+
+  // Höjden på det kastade vapnet: rakt först, sedan faller det sista biten
+  static throwHeight(f) {
+    return f < 0.7 ? 1.45 : 1.45 * (1 - ((f - 0.7) / 0.3) ** 2);
+  }
+
+  flyThrow(shot) {
+    const T = COMBAT.throw;
+    const STEP = 1 / 30;
+    const t = now();
+    const from = shot.dist;
+    const to = Math.min(shot.range, from + T.speed * STEP);
+    // Vem står i vägen mellan förra och nya punkten (där de står nu)?
+    let hit = null;
+    let hitAlong = Infinity;
+    for (const target of this.players.values()) {
+      if (target.id === shot.owner || target.dead || this.phase !== "round") continue;
+      if (this.mode === "team" && target.team === shot.team) continue;
+      const dx = target.p[0] - (shot.x + shot.fx * from);
+      const dz = target.p[2] - (shot.z + shot.fz * from);
+      const along = dx * shot.fx + dz * shot.fz;
+      if (along < -T.radius || along > to - from + T.radius) continue;
+      const side = Math.abs(dx * shot.fz - dz * shot.fx);
+      if (side > T.radius) continue;
+      // Höjd: flyger över den som hukar eller ligger ner
+      const y = GameRoom.throwHeight(Math.min(1, (from + Math.max(0, along)) / Math.max(0.01, shot.range)));
+      const top = t < target.downUntil || target.legless ? 0.6 : target.crouch ? 1.2 : 1.95;
+      if (y > top || y < 0.2) continue;
+      if (invulnerable(target, t)) continue; // mitt i en rullning: flyger förbi
+      if (along < hitAlong) {
+        hit = target;
+        hitAlong = along;
+      }
+    }
+    if (hit) {
+      this.endThrow(shot, hit, from + Math.max(0, hitAlong));
+      return;
+    }
+    shot.dist = to;
+    if (to >= shot.range - 1e-6) {
+      this.endThrow(shot, null, to);
+      return;
+    }
+    this.later(STEP, shot.token, () => this.flyThrow(shot));
+  }
+
+  // Kastet är klart: träff, parerat, i skölden eller i sanden
+  endThrow(shot, hit, dist) {
+    const T = COMBAT.throw;
+    const t = now();
+    const item = shot.item;
+    const w = shot.w;
+    const end = (how, at) => {
+      item.p = [round2(at[0]), 0, round2(at[1])];
       this.items.set(item.id, item);
-      if (!hit || !this.players.has(hit.id) || hit.dead || invulnerable(hit, now())) return;
-      const ws2 = weaponSpec(w);
-      const damage = Math.round(COMBAT.quick.damage * ws2.damage * T.damage);
-      const attacker = this.players.get(player.id);
-      hit.hp = Math.max(0, hit.hp - damage);
-      hit.lastAttacker = player.id;
-      if (attacker) {
-        attacker.stats.dmg += damage;
-        attacker.stats.throwHit += 1;
-      }
-      const dead = hit.hp === 0;
-      const sev = chooseSever(hit, "q", dead, null, Math.random, damage, ws2.sever);
-      if (sev) {
-        hit.severed.push(sev);
-        if (attacker) attacker.stats.sev += 1;
-      }
-      let drop = null;
-      if ((dead || (sev && WEAPON_ARM.includes(sev))) && hit.cw !== FISTS) drop = this.dropWeapon(hit);
-      if (hit.holding) this.releaseGrab(hit, "hit");
-      let ll = 0;
-      if (!dead && sev && !hit.legless && isLegless(hit)) {
-        hit.legless = true;
-        hit.crouch = false;
-        ll = 1;
-        this.bleed(hit, token);
-      }
-      if (!dead) {
-        hit.staggerUntil = Math.max(hit.staggerUntil, now() + T.stagger);
-        hit.chargeStart = null;
-      } else {
-        hit.dead = true;
-        hit.chargeStart = null;
-        if (attacker) attacker.kills += 1;
-      }
-      this.broadcast({
-        t: "hit", id: hit.id, by: player.id, k: "x", hp: hit.hp, dead, kills: attacker ? attacker.kills : 0,
-        sev, seg: null, hk: 0, drop, st: dead ? 0 : 1, kd: 0, ll,
-      });
-      this.checkRoundEnd();
+      this.broadcast({ t: "throwEnd", item: item.id, how, p: item.p, id: hit ? hit.id : null, by: shot.owner });
+    };
+    if (!hit) {
+      end("land", [shot.x + shot.fx * dist, shot.z + shot.fz * dist]);
+      return;
+    }
+    const attacker = this.players.get(shot.owner);
+    // Vänd mot vapnet?
+    const tx = Math.sin(hit.r);
+    const tz = Math.cos(hit.r);
+    const facing = -(tx * shot.fx + tz * shot.fz);
+    const down = t < hit.downUntil;
+    // Parering: lite större fönster än mot slag, eftersom man ser kastet komma
+    const sinceParry = t - hit.lastParry;
+    const window = COMBAT.parry.window * (weaponSpec(hit.cw).twoHanded ? 0.8 : 1) * T.parryBonus + COMBAT.parry.lag;
+    if (!down && !hit.heldBy && sinceParry >= 0 && sinceParry <= window && facing > 0.2) {
+      hit.nextParry = t;
+      hit.stats.parry += 1;
+      // Vapnet studsar åt sidan och ramlar ner
+      const sideways = Math.random() < 0.5 ? 1 : -1;
+      end("parry", [hit.p[0] - shot.fx * 0.9 + shot.fz * sideways * 0.9, hit.p[2] - shot.fz * 0.9 - shot.fx * sideways * 0.9]);
+      return;
+    }
+    // Skölden tar emot kast, men bara rakt framifrån (inom cirka 30 grader) och bara när den är uppe:
+    // inte mitt i ett slag eller en spark, inte när man laddar ett tungt slag och inte när man brottas.
+    // Skölden tar två tredjedelar av smällen. (Dolken har ett knogjärn i stället: inget skydd mot kast.)
+    const hs = weaponSpec(hit.cw);
+    const hasShield = hit.cw !== FISTS && !hs.twoHanded && !hs.noShield && jointAvailable(hit, "wristL");
+    const shieldUp = !down && !hit.holding && !hit.heldBy && hit.chargeStart === null && t >= (hit.swingUntil || 0);
+    const blocked = hasShield && shieldUp && facing > T.shieldFacing;
+    if (blocked) end("shield", [hit.p[0] - shot.fx * 0.7, hit.p[2] - shot.fz * 0.7]);
+    else end("hit", [hit.p[0] - shot.fx * 0.4, hit.p[2] - shot.fz * 0.4]);
+    const ws2 = weaponSpec(w);
+    const damage = Math.round(COMBAT.quick.damage * ws2.damage * T.damage * (blocked ? T.shieldDamage : 1));
+    hit.hp = Math.max(0, hit.hp - damage);
+    hit.lastAttacker = shot.owner;
+    if (attacker) {
+      attacker.stats.dmg += damage;
+      if (!blocked) attacker.stats.throwHit += 1;
+    }
+    const dead = hit.hp === 0;
+    const sev = blocked && !dead ? null : chooseSever(hit, "q", dead, null, Math.random, damage, ws2.sever);
+    if (sev) {
+      hit.severed.push(sev);
+      if (attacker) attacker.stats.sev += 1;
+    }
+    let drop = null;
+    if ((dead || (sev && WEAPON_ARM.includes(sev))) && hit.cw !== FISTS) drop = this.dropWeapon(hit);
+    if (hit.holding) this.releaseGrab(hit, "hit");
+    let ll = 0;
+    if (!dead && sev && !hit.legless && isLegless(hit)) {
+      hit.legless = true;
+      hit.crouch = false;
+      ll = 1;
+      this.bleed(hit, shot.token);
+    }
+    if (!dead) {
+      hit.staggerUntil = Math.max(hit.staggerUntil, t + (blocked ? T.shieldStagger : T.stagger));
+      hit.chargeStart = null;
+    } else {
+      hit.dead = true;
+      hit.chargeStart = null;
+      if (attacker) attacker.kills += 1;
+    }
+    this.broadcast({
+      t: "hit", id: hit.id, by: shot.owner, k: "x", hp: hit.hp, dead, kills: attacker ? attacker.kills : 0,
+      sev, seg: null, hk: 0, drop, st: dead ? 0 : 1, kd: 0, ll, sh: blocked ? 1 : 0,
     });
+    this.checkRoundEnd();
   }
 
   // ----- Brottning: ta tag i någon (R) -----
@@ -1529,6 +1606,8 @@ export class GameRoom extends DurableObject {
     let target = null;
     let best = Infinity;
     for (const p of this.inCone(player, pws.grabReach ?? G.reach, G.arc)) {
+      // Den som ligger ner (eller nyss rest sig) går inte att ta tag i
+      if (t < Math.max(p.downUntil || 0, p.upAt || 0) + G.upGrace) continue;
       const d = Math.hypot(p.p[0] - player.p[0], p.p[2] - player.p[2]);
       if (d < best) {
         best = d;
@@ -1725,7 +1804,10 @@ export class GameRoom extends DurableObject {
         const r = Math.random();
         if (r < 0.5) this.grabPunch(bot, t);
         else if (r < 0.75) this.releaseGrab(bot, "shove");
-        else this.releaseGrab(bot, "down");
+        else if (t >= bot.nextKick) {
+          bot.nextKick = t + COMBAT.grab.downCooldown;
+          this.releaseGrab(bot, "down");
+        } else this.releaseGrab(bot, "shove");
       }
       return;
     }
