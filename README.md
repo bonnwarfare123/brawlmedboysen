@@ -1,10 +1,10 @@
-# Brawlmedboysen – v0.16
+# Brawlmedboysen – v0.17
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
-**Spelsätt** (lobbyledaren väljer, även dag eller kväll, sol, regn eller dimma och upp till 3 träningsmotståndare som servern styr; alla trycker på redo-knappen så man ser när alla är redo): **Alla mot alla** (först till 5 rundor), **Lag** (Röda mot Blå, välj lag själv eller slumpa, inga skador på lagkamrater) och **Turnering** (1 mot 1 med utslagsträd, bäst av 3 per duell, fripass om det inte går jämnt ut).
+**Spelsätt** (lobbyledaren väljer, även bana – Tornerplatsen eller Borggården i vinter –, dag eller kväll, sol, regn eller dimma och upp till 3 träningsmotståndare som servern styr; alla trycker på redo-knappen så man ser när alla är redo): **Alla mot alla** (först till 5 rundor), **Lag** (Röda mot Blå, välj lag själv eller slumpa, inga skador på lagkamrater) och **Turnering** (1 mot 1 med utslagsträd, bäst av 3 per duell, fripass om det inte går jämnt ut).
 
-**Riddarna:** 7 utstyrslar (bland annat en gycklare med bjällror och en fattig vandrande riddare i rostig, lappad rustning), 7 hjälmar med riktiga hjälmprydnader (vingar, plym, kam), 5 sköldar, 10 vapen: svärd, yxa, slagkedja, spjut och stridshammare med sköld, samt tvåhandssvärd, stridsyxa, hillebard, slägga och en jättelik zweihänder utan sköld. Tvåhandsvapnen är långsammare men når längre och slår hårdare. Hammare krossar i stället för att hugga av, slår av hjälmar och får fienden att vingla; släggan kan fälla den. Vapnen får hack i eggen under matchen och kan bytas mellan rundorna (mushjulet eller Z/X), valfri tygmantel som fladdrar, vapenrock i tyg, bucklor, repor, smuts och blod som byggs på under matchen, hjälmar som kan flyga av, ansikten med näsa, kindben, ögonlock och ögonbryn som rör sig, stön och skrik. Namnskyltarna krymper så de inte går in i varandra, och datorstyrda riddare har en BOT-skylt.
+**Riddarna:** verklighetstrogna proportioner (lite olika långa och breda), formgjutna ansikten med olika drag (stor eller bruten näsa, ärr, lapp för ögat, saknad tand, skäggstubb) och uttryck (sammanbiten när man laddar, flämtar med lite liv, flinar när man vinner, ögonen följer motståndaren), 7 utstyrslar (bland annat en gycklare med bjällror och en fattig vandrande riddare i rostig, lappad rustning), 7 hjälmar med riktiga hjälmprydnader (vingar, plym, kam), 5 sköldar, 11 vapen: svärd, yxa, slagkedja, stridshammare och dolk med sköld (dolken är blixtsnabb, tar tag i folk på längre håll och hugger medan man brottas), samt spjut, tvåhandssvärd, stridsyxa, hillebard, slägga och en jättelik zweihänder utan sköld. Tvåhandsvapnen är långsammare men når längre och slår hårdare. Hammare krossar i stället för att hugga av, slår av hjälmar och får fienden att vingla; släggan kan fälla den. Vapnen får hack i eggen under matchen och kan bytas mellan rundorna (mushjulet eller Z/X), valfri tygmantel som fladdrar, vapenrock i tyg, bucklor, repor, smuts och blod som byggs på under matchen, hjälmar som kan flyga av, ansikten med näsa, kindben, ögonlock och ögonbryn som rör sig, stön och skrik. Namnskyltarna krymper så de inte går in i varandra, och datorstyrda riddare har en BOT-skylt.
 
 **Strid:** varje vapen har egna rörelser (snabba slag växlar mellan hugg och bakhandshugg, tunga slag och stötar med hela kroppen), snabbt slag, tungt slag, stöt (ett riktigt utfallssteg med egen, längre väntetid), spark som kan fälla motståndaren, kasta vapnet, ta tag i någon och brottas (knuffa, kasta omkull eller slå), huka, rulla (går inte att träffa mitt i rullningen), tappade vapen som kan plockas upp, sittande utan ben, parering, hån-gester, skada per kroppsdel och avhuggna lemmar, ragdolls med leder som bara böjer sig åt rätt håll, blod som stänker, sprutar, torkar och bildar pölar. Servern avgör alla träffar.
 
@@ -14,9 +14,15 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
 **Topplista:** en gemensam lista för alla rum som visas i lobbyn (matchvinster, dråp och matcher), med ditt eget kort (placering, bästa vinstsvit, avhuggna lemmar, vilket vapen du vinner mest med). Ditt namn är ditt: en hemlig nyckel i webbläsaren gör att ingen annan kan ta det. Byter du dator använder du din återställningskod (lobbyn → "Visa min kod", och på startskärmen "Har du en återställningskod?"). Matcher räknas bara när minst två riktiga spelare är med.
 
+**Borggården:** en borg i vinter med snötäckta torn och tinnar, publik uppe på murarna, smedja, ställningar och eldkorgar. När matchen börjar dras fällgallret upp och riddarna marscherar ut genom porten medan härolden ropar ut deras namn (tryck Mellanslag om alla vill hoppa över). Regn blir snöfall och dimma blir snöstorm, och man ser andedräkten i kylan.
+
+**Startplatser** slumpas om varje runda, så man hamnar bredvid olika spelare.
+
 **Efter matchen:** först visas matchens sista dråp i repris från en annan vinkel. Sedan reser sig en prispall ur sanden, de tre bästa ställer sig på den och firar, resten applåderar framför, och utmärkelser delas ut (Slaktaren, Muren, Klumpigast, Kastaren, Brottaren …).
 
 ## Styrning
+
+Alla knappar kan bytas: tryck **⌨️ Tangenter** i lobbyn eller i menyn när musen är släppt (Esc). Här är standardknapparna:
 
 - **Klicka** i spelet för att styra kameran med musen
 - **Vänster mus:** klicka = snabbt slag, håll in och släpp = tungt slag
@@ -40,6 +46,8 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 | `public/js/main.js` | Startskärm, styrning, kamera, spel-loop |
 | `public/js/arena.js` | Bygger arenan av enkla former (barriär, läktare, kungaloge, plankstorn, eldkorgar, träningsdocka, prispall) |
 | `server/index.js` (Leaderboard) | Den gemensamma topplistan (ett eget Durable Object som heter BOARD i `wrangler.jsonc`) |
+| `public/js/castle.js` | Borggården (vinterbanan) med porten som öppnas i introt |
+| `public/js/keybinds.js` | Knappar som går att byta (sparas i webbläsaren) |
 | `public/js/postfx.js` | Glöd och färgton (efterbehandling av bilden, bara på hög grafik) |
 | `public/js/crowd.js` | Publiken, kungaparet, vakterna och härolden |
 | `public/js/cloth.js` | Fysik för tyg (mantel, vapenrock) och kedjan på slagkedjan |

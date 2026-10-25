@@ -87,11 +87,17 @@
       <button class="small weather-btn" data-weather="rain">🌧️ Regn</button>
       <button class="small weather-btn" data-weather="fog">🌫️ Dimma</button>
     </div>
+    <label>Bana</label>
+    <div class="mode-row">
+      <button class="small map-btn" data-map="arena">🏟️ Tornerplatsen</button>
+      <button class="small map-btn" data-map="castle">🏰 Borggården</button>
+    </div>
     <div id="bot-row" class="look-row bot-row">
       <span>Träningsmotståndare</span>
       <button id="bot-remove" class="small">−</button><b id="bot-count">Inga</b><button id="bot-add" class="small">+</button>
     </div>
     <p class="rules">Tips: tryck 1, 2 eller 3 för att buga, håna eller dansa</p>
+    <button class="small keys-open" type="button">⌨️ Tangenter</button>
     <button id="ready-button" class="ready-btn">Jag är redo</button>
     <button id="start-button" class="primary" hidden>Starta matchen</button>
     <p id="lobby-wait" class="subtitle"></p>
@@ -168,14 +174,11 @@
     <div id="weapon-bar" class="panel" hidden>
       <div class="weapon-row"><button class="small" data-wswap="-1">◀</button><b id="weapon-name"></b><button class="small" data-wswap="1">▶</button></div>
       <div id="weapon-desc"></div>
-      <div class="weapon-hint">Byt vapen med mushjulet (eller Z / X) · <span id="weapon-when"></span></div>
+      <div class="weapon-hint">Byt vapen med <span id="weapon-keys">mushjulet (eller Z / X)</span> · <span id="weapon-when"></span></div>
     </div>
     <div id="spectate" class="status-banner" hidden>Matchen pågår – du är med från nästa runda</div>
 
-    <div class="panel bottom-left help">
-      <b>Vänster mus</b> slag (håll = tungt) · <b>Höger mus</b> parera · <b>Q</b> stöt · <b>F</b> spark · <b>E</b> ta upp vapen · <b>G</b> kasta vapnet · <b>R</b> ta tag i någon · <b>1–3</b> gester<br>
-      <b>WASD</b> gå · <b>Shift</b> spring · <b>Mellanslag</b> hoppa · <b>Ctrl</b> (eller <b>C</b>) huka · <b>Ctrl + Mellanslag</b> rulla · <b>Esc</b> släpp musen · <b>F2</b> grafik · <b>M</b> ljud · <b>N</b> musik
-    </div>
+    <div class="panel bottom-left help" id="help-text"></div>
 
     <!-- Liv och väntetider -->
     <div id="combat-hud">
@@ -210,6 +213,20 @@
     <input id="music-volume" type="range" min="0" max="100" step="1">
     <label for="sfx-volume">🔊 Effekter</label>
     <input id="sfx-volume" type="range" min="0" max="100" step="1">
+    <button class="small keys-open" type="button" style="grid-column: 1 / -1">⌨️ Tangenter</button>
+  </div>
+
+  <!-- Byt knappar -->
+  <div id="keys-panel" class="overlay" hidden>
+    <div class="card keys-card">
+      <h2>⌨️ Tangenter</h2>
+      <p class="rules">Klicka på en ruta och tryck sedan den tangent eller musknapp du vill ha (Esc avbryter). Högerklicka på en ruta för att tömma den. Används knappen redan byter de två plats.</p>
+      <table id="keys-table"><tbody></tbody></table>
+      <div class="keys-buttons">
+        <button id="keys-reset" class="small" type="button">Återställ allt</button>
+        <button id="keys-close" class="primary" type="button">Klar</button>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="js/main.js"></script>

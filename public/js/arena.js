@@ -2406,3 +2406,15 @@ function makeBanner(color, withCross) {
   }
   return banner;
 }
+
+// ---------- Delas med andra banor (castle.js) ----------
+export function resetFlags() {
+  wavingFlags = [];
+  return wavingFlags;
+}
+export const getCloudMaterial = () => cloudMaterial;
+export {
+  PALETTE, mat, mesh, box, ellipsePoint, seededRandom, makeBrazier, makePodium, makeQuintain, mergeStatic,
+  makeCloud, makeStand, makeRoyalBox, makeBarrels, makeCrates, makeWeaponRack, makeFlag, waveFlag, makeBanner,
+  heraldBanner, makeHeraldicShield, makeBaskets, makePots, makeDog, makeBirds,
+};

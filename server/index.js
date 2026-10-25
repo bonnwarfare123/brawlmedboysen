@@ -20,6 +20,7 @@ import {
   MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, MATCH, ARENA_RX, ARENA_RZ,
   JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS, AIM_JOINT, ARMORS, HELMETS, SHIELDS,
   WEAPONS, CAPES, MODES, attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, MAX_BOTS, BOT_NAMES, WEATHERS, AWARDS,
+  MAPS, INTRO_SECONDS,
 } from "../public/js/shared.js";
 
 export default {
@@ -120,8 +121,8 @@ function round2(n) {
 }
 
 // Startplatser i en ring runt mitten, alla tittar inåt
-function spawnPoint(index, count) {
-  const angle = (index / Math.max(count, 2)) * Math.PI * 2;
+function spawnPoint(index, count, offset = 0) {
+  const angle = offset + (index / Math.max(count, 2)) * Math.PI * 2;
   const p = [round2(Math.sin(angle) * 6), 0, round2(Math.cos(angle) * 6)];
   const r = round2(angle + Math.PI);
   return { p, r };
@@ -291,6 +292,7 @@ export class GameRoom extends DurableObject {
     this.duel = null;    // pågående duell: { ri, mi }
     this.time = "day";   // dag eller kväll
     this.weather = "sun"; // sol, regn eller dimma
+    this.map = "arena";   // bana: tornerplatsen eller borggården
     this.items = new Map(); // tappade vapen på marken: id → { id, w, p }
 
     // Om rummet "sov" (hibernation) och vaknar igen: återskapa spelarlistan
@@ -306,7 +308,8 @@ export class GameRoom extends DurableObject {
     // (annars glömde servern vem som var ledare och startknappen slutade fungera efter en match).
     if (this.ctx.storage && this.ctx.blockConcurrencyWhile) {
       this.ctx.blockConcurrencyWhile(async () => {
-        const saved = await this.ctx.storage.get(["host", "mode", "time", "bots", "weather"]);
+        const saved = await this.ctx.storage.get(["host", "mode", "time", "bots", "weather", "map"]);
+        if (MAPS.includes(saved.get("map"))) this.map = saved.get("map");
         if (WEATHERS.includes(saved.get("weather"))) this.weather = saved.get("weather");
         const host = saved.get("host");
         const mode = saved.get("mode");
@@ -461,6 +464,12 @@ export class GameRoom extends DurableObject {
       case "weather":
         this.handleWeather(player, msg.v);
         break;
+      case "map":
+        this.handleMap(player, msg.v);
+        break;
+      case "skip":
+        this.handleSkipIntro(player);
+        break;
       case "ready":
         this.handleReady(player, msg.on === 1);
         break;
@@ -556,6 +565,7 @@ export class GameRoom extends DurableObject {
       bracket: this.bracket,
       time: this.time,
       weather: this.weather,
+      map: this.map,
       items: [...this.items.values()],
     });
     this.broadcast({ t: "join", player: publicPlayer(player) }, ws);
@@ -642,6 +652,49 @@ export class GameRoom extends DurableObject {
     this.weather = value;
     this.remember("weather", value);
     this.broadcast({ t: "weather", v: value });
+  }
+
+  handleMap(player, value) {
+    if (player.id !== this.hostId || this.phase !== "lobby" || !MAPS.includes(value)) return;
+    this.map = value;
+    this.remember("map", value);
+    this.broadcast({ t: "map", v: value });
+  }
+
+  // ----- Intro (Borggården): riddarna marscherar ut genom porten innan första rundan -----
+  startIntro(then) {
+    const token = this.setPhase("intro");
+    this.introSkips = new Set();
+    this.introThen = then;
+    const list = [...this.players.values()];
+    // Startplatserna bestäms redan nu, så att riddarna går dit de sedan börjar rundan
+    if (this.mode !== "tourney") {
+      this.placeFighters(list, null);
+      this.presetPlaced = new Set(list.map((p) => p.id));
+    }
+    this.broadcast({
+      t: "intro", seconds: INTRO_SECONDS,
+      order: list.map((p) => p.id),
+      spots: Object.fromEntries(list.map((p) => [p.id, { p: p.p, r: p.r }])),
+    });
+    this.later(INTRO_SECONDS, token, () => this.finishIntro());
+  }
+
+  finishIntro() {
+    if (this.phase !== "intro") return;
+    const then = this.introThen;
+    this.introThen = null;
+    if (this.players.size < MATCH.minPlayers) return this.toLobby();
+    then?.();
+  }
+
+  // Alla riktiga spelare trycker Mellanslag: hoppa över introt
+  handleSkipIntro(player) {
+    if (this.phase !== "intro" || player.bot) return;
+    this.introSkips.add(player.id);
+    const humans = this.humans();
+    this.broadcast({ t: "skipVote", n: this.introSkips.size, of: humans.length });
+    if (humans.every((p) => this.introSkips.has(p.id))) this.finishIntro();
   }
 
   // Redo-knappen i lobbyn: alla ser vilka som är redo
@@ -785,9 +838,11 @@ export class GameRoom extends DurableObject {
     if (this.mode === "tourney") {
       this.bracket = buildBracket([...this.players.keys()]);
       this.bracketNames = Object.fromEntries([...this.players.values()].map((p) => [p.id, { name: p.name, color: p.color }]));
+      if (this.map === "castle") return this.startIntro(() => this.showBracket());
       this.showBracket();
       return;
     }
+    if (this.map === "castle") return this.startIntro(() => this.startCountdown());
     this.startCountdown();
   }
 
@@ -813,15 +868,11 @@ export class GameRoom extends DurableObject {
     const all = [...this.players.values()];
     const list = fighters ? all.filter((p) => fighters.includes(p.id)) : all;
     const spectators = all.filter((p) => !list.includes(p));
-    if (this.mode === "team") {
-      for (const team of [0, 1]) {
-        const members = list.filter((p) => p.team === team);
-        members.forEach((p, i) => Object.assign(p, teamSpawn(team, i, members.length)));
-      }
-    } else if (fighters) {
-      list.forEach((p, i) => Object.assign(p, { p: [0, 0, i === 0 ? -5 : 5], r: i === 0 ? 0 : round2(Math.PI) }));
+    if (this.presetPlaced && !fighters && list.every((p) => this.presetPlaced.has(p.id))) {
+      this.presetPlaced = null; // introt har redan bestämt startplatserna
     } else {
-      list.forEach((p, i) => Object.assign(p, spawnPoint(i, list.length)));
+      this.presetPlaced = null;
+      this.placeFighters(list, fighters);
     }
     list.forEach((p) => resetForRound(p));
     this.items.clear();
@@ -842,6 +893,52 @@ export class GameRoom extends DurableObject {
       this.broadcast({ t: "round", round: this.round });
       if (this.bots().length) this.botTick(roundToken);
     });
+  }
+
+  // Startplatser: slumpade varje runda (så man inte alltid står bredvid samma person)
+  placeFighters(list, fighters) {
+    if (this.mode === "team") {
+      const flip = Math.random() < 0.5; // vilken sida lagen börjar på
+      for (const team of [0, 1]) {
+        const members = shuffle(list.filter((p) => p.team === team));
+        members.forEach((p, i) => Object.assign(p, teamSpawn(flip ? 1 - team : team, i, members.length)));
+      }
+    } else if (fighters) {
+      const order = Math.random() < 0.5 ? list : [...list].reverse();
+      order.forEach((p, i) => Object.assign(p, { p: [0, 0, i === 0 ? -5 : 5], r: i === 0 ? 0 : round2(Math.PI) }));
+    } else {
+      const order = this.spawnOrder(list);
+      const offset = Math.random() * Math.PI * 2; // ringen vrids också
+      order.forEach((p, i) => Object.assign(p, spawnPoint(i, order.length, offset)));
+    }
+  }
+
+  // Blanda ordningen i ringen så att så få som möjligt får samma granne som förra rundan
+  spawnOrder(list) {
+    const pairs = (order) => {
+      const set = new Set();
+      if (order.length < 3) return set;
+      order.forEach((p, i) => {
+        const q = order[(i + 1) % order.length];
+        set.add([p.id, q.id].sort().join(":"));
+      });
+      return set;
+    };
+    const last = this.lastNeighbors || new Set();
+    let best = null;
+    let bestScore = Infinity;
+    for (let tries = 0; tries < 12; tries++) {
+      const order = shuffle(list);
+      let score = 0;
+      for (const pair of pairs(order)) if (last.has(pair)) score += 1;
+      if (score < bestScore) {
+        best = order;
+        bestScore = score;
+        if (score === 0) break;
+      }
+    }
+    this.lastNeighbors = pairs(best);
+    return best;
   }
 
   // Anropas när någon dör eller lämnar: är det bara en kvar vinner den rundan
@@ -1424,12 +1521,14 @@ export class GameRoom extends DurableObject {
     if (player.holding) return this.releaseGrab(player, "shove"); // R igen: knuffa iväg
     if (player.heldBy) return this.handleStruggle(player);
     if (this.busy(player, t) || player.legless || t < player.nextGrab - TOLERANCE) return;
-    player.nextGrab = t + COMBAT.grab.cooldown;
+    // Med dolken når man längre och kan ta tag oftare
+    const pws = weaponSpec(player.cw);
+    player.nextGrab = t + (pws.grabCd ?? COMBAT.grab.cooldown);
     // Närmaste riddare precis framför
     const G = COMBAT.grab;
     let target = null;
     let best = Infinity;
-    for (const p of this.inCone(player, G.reach, G.arc)) {
+    for (const p of this.inCone(player, pws.grabReach ?? G.reach, G.arc)) {
       const d = Math.hypot(p.p[0] - player.p[0], p.p[2] - player.p[2]);
       if (d < best) {
         best = d;
@@ -1484,7 +1583,7 @@ export class GameRoom extends DurableObject {
     const target = this.players.get(player.holding);
     if (!target || target.dead) return this.releaseGrab(player, "timeout");
     player.nextQuick = t + COMBAT.grab.punchCooldown;
-    const damage = COMBAT.grab.punch;
+    const damage = weaponSpec(player.cw).grabPunch ?? COMBAT.grab.punch; // dolken hugger i stället för att slå
     player.stats.dmg += Math.min(target.hp, damage);
     target.hp = Math.max(0, target.hp - damage);
     target.lastAttacker = player.id;

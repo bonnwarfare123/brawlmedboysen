@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.16";
+export const VERSION = "0.17";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -51,7 +51,7 @@ export const ARMORS = ["Plåtrustning", "Ringbrynja", "Läderrustning", "Praktru
 export const HELMETS = ["Tunnhjälm", "Visirhjälm", "Järnhatt", "Hornhjälm", "Plymhjälm", "Kastrull", "Halmhatt"];
 export const SHIELDS = ["Rund", "Droppformad", "Riddarsköld", "Bucklare", "Pavis"];
 export const WEAPONS = [
-  "Svärd", "Yxa", "Slagkedja", "Tvåhandssvärd", "Stridsyxa", "Hillebard", "Zweihänder", "Spjut", "Stridshammare", "Slägga",
+  "Svärd", "Yxa", "Slagkedja", "Tvåhandssvärd", "Stridsyxa", "Hillebard", "Zweihänder", "Spjut", "Stridshammare", "Slägga", "Dolk",
 ];
 
 // VAPNENS EGENSKAPER (gånger grundvärdena i COMBAT ovan; 1 = som svärdet)
@@ -68,9 +68,10 @@ export const WEAPON_SPECS = [
   { key: "daneaxe", damage: 1.55, speed: 1.4, recover: 1.45, reach: 0.4, arc: 1, sever: 1.8, thrust: 0.8, twoHanded: true },
   { key: "halberd", damage: 1.2, speed: 1.3, recover: 1.35, reach: 1.0, arc: 0.8, sever: 1.3, thrust: 1.5, thrustReach: 1.2, minRange: 1.0, twoHanded: true },
   { key: "zweihander", damage: 1.9, speed: 1.6, recover: 1.8, reach: 1.1, arc: 0.7, sever: 2.2, thrust: 1.3, twoHanded: true, whiffStagger: 0.9 },
-  { key: "spear", damage: 0.85, speed: 0.95, recover: 0.95, reach: 0.7, arc: 0.7, sever: 0.6, thrust: 1.45, thrustReach: 1.3, thrustCd: 0.84 },
+  { key: "spear", damage: 0.85, speed: 0.95, recover: 0.95, reach: 0.7, arc: 0.7, sever: 0.6, thrust: 1.45, thrustReach: 1.3, thrustCd: 0.84, twoHanded: true },
   { key: "warhammer", damage: 0.95, speed: 1.05, recover: 1.05, reach: 0, arc: 0.9, sever: 0, thrust: 0.6, helmetKnock: 0.6, hitStagger: 0.35, blunt: true },
   { key: "maul", damage: 1.6, speed: 1.55, recover: 1.7, reach: 0.5, arc: 0.9, sever: 0, thrust: 0.6, twoHanded: true, helmetKnock: 0.4, hitStagger: 0.5, knockdown: true, blunt: true },
+  { key: "dagger", damage: 0.6, speed: 0.7, recover: 0.65, reach: -0.5, arc: 1, sever: 0.5, thrust: 1.67, grabReach: 2.2, grabPunch: 16, grabCd: 1.8 },
 ];
 
 // Utan vapen (vapenarmen avhuggen eller vapnet tappat): knytnävar
@@ -112,6 +113,11 @@ export const TIME_NAMES = { day: "Dag", evening: "Kväll" };
 
 // Väder (lobbyledaren väljer)
 export const WEATHERS = ["sun", "rain", "fog"];
+
+// Banor (lobbyledaren väljer). Borggården har ett intro när matchen börjar.
+export const MAPS = ["arena", "castle"];
+export const MAP_NAMES = { arena: "Tornerplatsen", castle: "Borggården" };
+export const INTRO_SECONDS = 10;
 
 // Utmärkelser efter matchen: vem hade mest av vad?
 export const AWARDS = [

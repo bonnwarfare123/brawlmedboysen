@@ -23,15 +23,70 @@ export class Weather {
     this.rain.frustumCulled = false;
     this.rain.visible = false;
     scene.add(this.rain);
+    this.scene = scene;
     this.kind = "sun";
   }
 
-  set(kind) {
+  // snow = true i borggården: snöflingor i stället för regn (och snöstorm i stället för dimma)
+  set(kind, snow = false) {
     this.kind = kind;
-    this.rain.visible = kind === "rain";
+    this.snowing = snow && (kind === "rain" || kind === "fog");
+    this.storm = snow && kind === "fog";
+    this.rain.visible = kind === "rain" && !snow;
+    if (this.snowing && !this.snow) this.makeSnow();
+    if (this.snow) this.snow.visible = this.snowing;
+  }
+
+  makeSnow() {
+    const N = 1800;
+    this.flakes = new Float32Array(N * 4);
+    for (let i = 0; i < N; i++) {
+      this.flakes[i * 4] = (Math.random() - 0.5) * BOX.x;
+      this.flakes[i * 4 + 1] = Math.random() * BOX.y;
+      this.flakes[i * 4 + 2] = (Math.random() - 0.5) * BOX.z;
+      this.flakes[i * 4 + 3] = Math.random() * 10;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(N * 3), 3));
+    this.snow = new THREE.Points(geo, new THREE.PointsMaterial({ map: glowTexture(), color: 0xffffff, size: 0.09, transparent: true, opacity: 0.9, depthWrite: false }));
+    this.snow.frustumCulled = false;
+    this.scene.add(this.snow);
+    this.snowTime = 0;
+  }
+
+  updateSnow(dt, center) {
+    this.snowTime += dt;
+    const f = this.flakes;
+    const pos = this.snow.geometry.attributes.position.array;
+    const n = pos.length / 3;
+    const wind = this.storm ? 4.5 : 0.8;
+    const fall = this.storm ? 2.6 : 1.3;
+    const t = this.snowTime;
+    for (let i = 0; i < n; i++) {
+      const ph = f[i * 4 + 3];
+      let x = f[i * 4] + (wind + Math.sin(t * 0.8 + ph) * 0.6) * dt;
+      let y = f[i * 4 + 1] - fall * (0.7 + (ph % 1) * 0.6) * dt;
+      let z = f[i * 4 + 2] + Math.cos(t * 0.6 + ph * 1.3) * 0.5 * dt;
+      if (y < 0) {
+        y += BOX.y;
+        x = (Math.random() - 0.5) * BOX.x;
+        z = (Math.random() - 0.5) * BOX.z;
+      }
+      if (x > BOX.x / 2) x -= BOX.x;
+      if (z > BOX.z / 2) z -= BOX.z;
+      if (z < -BOX.z / 2) z += BOX.z;
+      f[i * 4] = x;
+      f[i * 4 + 1] = y;
+      f[i * 4 + 2] = z;
+      pos[i * 3] = center.x + x + Math.sin(t * 2 + ph * 7) * 0.05;
+      pos[i * 3 + 1] = y;
+      pos[i * 3 + 2] = center.z + z;
+    }
+    this.snow.geometry.attributes.position.needsUpdate = true;
   }
 
   update(dt, center) {
+    if (this.snowing) return this.updateSnow(dt, center);
     if (this.kind !== "rain") return;
     const d = this.drops;
     const pos = this.rain.geometry.attributes.position.array;

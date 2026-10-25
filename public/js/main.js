@@ -5,8 +5,10 @@ import { CONFIG } from "./config.js";
 import {
   COLORS, ARENA_RX, ARENA_RZ, ROOM_CODE_RE, VERSION, COMBAT, MATCH, ARMORS, HELMETS, SHIELDS, WEAPONS, CAPES, MODE_NAMES, TEAMS,
   attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, TIME_NAMES, MAX_BOTS, WEATHERS, AWARDS,
+  MAPS, MAP_NAMES, INTRO_SECONDS,
 } from "./shared.js";
 import { buildArena, makeSky } from "./arena.js";
+import { buildCastleArena } from "./castle.js";
 import { Knight, setEnvironment } from "./knight.js";
 import { Effects } from "./effects.js";
 import { Debris } from "./ragdoll.js";
@@ -14,6 +16,7 @@ import { Sound } from "./sound.js";
 import { Net } from "./net.js";
 import { Weather, Motes } from "./weather.js";
 import { PostFX } from "./postfx.js";
+import { Keybinds, ACTIONS, keyName, FORBIDDEN } from "./keybinds.js";
 
 // ---------------------------------------------------------------------------
 // Hjälpfunktioner
@@ -121,8 +124,22 @@ function environmentFor(evening) {
 }
 setEnvironment(environmentFor(false));
 
-const arena = buildArena();
+// Banan: tornerplatsen byggs direkt, borggården först när någon väljer den
+let arena = buildArena();
 scene.add(arena.group);
+const arenas = { arena };
+let mapKind = "arena";
+function applyMap(kind) {
+  kind = MAPS.includes(kind) ? kind : "arena";
+  if (kind === mapKind) return;
+  if (!arenas[kind]) arenas[kind] = kind === "castle" ? buildCastleArena() : buildArena();
+  scene.remove(arena.group);
+  arena = arenas[kind];
+  scene.add(arena.group);
+  mapKind = kind;
+  arena.setQuality?.(lowQuality);
+  applyWeather(weatherKind);
+}
 
 // Dag eller kväll (lobbyledaren väljer). På kvällen står solen lågt och är orange,
 // himlen är mörkare och eldkorgarna lyser upp arenan.
@@ -144,11 +161,20 @@ function applyTime(value) {
 // Sol, regn eller dimma
 function applyWeather(value) {
   weatherKind = WEATHERS.includes(value) ? value : "sun";
-  weather.set(weatherKind);
-  arena.setWet(weatherKind === "rain");
-  effects.wet = weatherKind === "rain";
-  sound.setRain(weatherKind === "rain");
+  const winter = mapKind === "castle"; // i borggården blir regn till snö och dimma till snöstorm
+  weather.set(weatherKind, winter);
+  arena.setWet(weatherKind === "rain" || (winter && weatherKind === "fog"));
+  effects.wet = weatherKind === "rain" && !winter;
+  sound.setRain(weatherKind === "rain" && !winter);
+  sound.setWind(winter ? (weatherKind === "fog" ? 1.2 : weatherKind === "rain" ? 0.6 : 0.25) : 0);
   applyAtmosphere();
+  renderWeatherLabels();
+}
+// Väderknapparna heter annorlunda i borggården
+function renderWeatherLabels() {
+  const winter = mapKind === "castle";
+  const names = winter ? { sun: "☀️ Klart", rain: "❄️ Snö", fog: "🌨️ Snöstorm" } : { sun: "🌤️ Sol", rain: "🌧️ Regn", fog: "🌫️ Dimma" };
+  document.querySelectorAll(".weather-btn").forEach((b) => (b.textContent = names[b.dataset.weather]));
 }
 // Ljus, himmel och dimma räknas ut från både tid på dygnet och väder
 function applyAtmosphere() {
@@ -158,13 +184,16 @@ function applyAtmosphere() {
   let fogColor = evening ? 0x6a5a70 : SKY;
   if (rain) fogColor = evening ? 0x4a4a58 : 0x8a949e;
   if (fog) fogColor = evening ? 0x5a5662 : 0xb8bec4;
+  const winter = mapKind === "castle";
+  if (winter && rain) fogColor = evening ? 0x5c5a68 : 0xc4ccd6; // snöfall
+  if (winter && fog) fogColor = evening ? 0x6a6874 : 0xd4dae2;  // snöstorm
   scene.background.set(fogColor);
   scene.fog.color.set(fogColor);
   scene.fog.near = fog ? 4 : rain ? 25 : evening ? 45 : 70;
   scene.fog.far = fog ? 42 : rain ? 110 : evening ? 180 : 230;
   const dim = rain ? 0.5 : fog ? 0.65 : 1; // molnigt: solen syns knappt
   skyLight.color.set(evening ? 0x8a8ac8 : 0xbfd8ff);
-  skyLight.groundColor.set(evening ? 0x5a3a28 : 0x806040);
+  skyLight.groundColor.set(winter ? (evening ? 0x6a6070 : 0xb8c0cc) : evening ? 0x5a3a28 : 0x806040); // snön lyser upp underifrån
   skyLight.intensity = (evening ? 0.7 : 1.25) * (rain || fog ? 1.15 : 1);
   sun.color.set(evening ? 0xff9a55 : rain || fog ? 0xdde4ea : 0xffe8c8);
   sun.intensity = (evening ? 1.6 : 2.7) * dim;
@@ -175,7 +204,7 @@ function applyAtmosphere() {
   arena.setTime(evening);
   arena.setOvercast?.(rain || fog);
   motes.set(weatherKind, evening);
-  postfx?.setGrade(rain ? "rain" : fog ? "fog" : evening ? "evening" : "day");
+  postfx?.setGrade(rain ? (winter ? "fog" : "rain") : fog ? "fog" : evening ? "evening" : winter ? "winter" : "day");
 }
 
 const effects = new Effects(scene);
@@ -275,7 +304,7 @@ function playerById(id) {
 }
 
 // Ljud för vapnen: 0 = klinga, 1 = yxblad (djupare sus), 2 = kedja, 3 = trubbigt (hammare, knytnäve)
-const SWING_SOUND = [0, 1, 2, 0, 1, 1, 0, 0, 1, 1];
+const SWING_SOUND = [0, 1, 2, 0, 1, 1, 0, 0, 1, 1, 0];
 const HIT_SOUND = [0, 1, 2, 0, 1, 1, 0, 0, 3, 3];
 function swingSound(player) {
   const w = weaponOf(player);
@@ -436,7 +465,9 @@ $("copy-code").addEventListener("click", () => {
   }).catch(() => {});
 });
 
+let boardTopName = null; // den som leder topplistan (får extra jubel i introt)
 function renderBoard(msg) {
+  boardTopName = msg.top?.[0]?.name?.toLowerCase() ?? null;
   const tbody = $("board-table").querySelector("tbody");
   tbody.innerHTML = "";
   const meRow = msg.me;
@@ -859,6 +890,7 @@ const net = new Net({
     round = msg.round;
     applyTime(msg.time);
     applyWeather(msg.weather);
+    applyMap(msg.map);
 
     sound.startMusic(msg.phase !== "lobby");
     history.replaceState(null, "", `?rum=${roomCode}`);
@@ -993,6 +1025,32 @@ const net = new Net({
     renderLobby();
   },
 
+  // Lobbyledaren valde bana
+  map(msg) {
+    applyMap(msg.v);
+    renderLobby();
+  },
+
+  // Borggården: riddarna marscherar ut genom porten innan första rundan
+  intro(msg) {
+    setPhase("intro");
+    $("match-lobby").hidden = true;
+    $("scoreboard").hidden = true;
+    $("bracket").hidden = true;
+    $("death").hidden = true;
+    $("spectate").hidden = true;
+    if (document.pointerLockElement) document.exitPointerLock();
+    intro = { start: seconds(), dur: msg.seconds, order: msg.order, spots: msg.spots, announced: new Set(), skipped: false };
+    sound.setBattleMusic(true);
+    arena.cheer(0.8);
+    callout(`Välkomna till ${MAP_NAMES[mapKind]}!`, 1800);
+  },
+
+  skipVote(msg) {
+    if (phase !== "intro") return;
+    callout(`Hoppa över: ${msg.n} av ${msg.of} har tryckt`, 1200);
+  },
+
   // Någon tryckte på redo-knappen
   ready(msg) {
     const p = playerById(msg.id);
@@ -1041,7 +1099,7 @@ const net = new Net({
     if (target === me) {
       stopCharging(false);
       me.vel.set(0, 0, 0);
-      callout(`${holder.name} har tagit tag i dig! Tryck R snabbt för att slita dig loss`, 1800);
+      callout(`${holder.name} har tagit tag i dig! Tryck ${K("grab")} snabbt för att slita dig loss`, 1800);
     }
     if (holder === me) callout("Vänsterklick: slå · R: knuffa iväg · F: kasta omkull", 2000);
   },
@@ -1081,7 +1139,7 @@ const net = new Net({
       if (target === me) {
         knockMeDown();
         shake = 0.3;
-        callout("Kastad omkull! (Ctrl + Mellanslag rullar undan)", 1300);
+        callout(`Kastad omkull! (${K("roll")} rullar undan)`, 1300);
       }
     } else if (msg.how === "escape") {
       if (holder) holder.knight.playStagger();
@@ -1152,13 +1210,17 @@ const net = new Net({
       if (msg.down) knockMeDown();
       stopCharging(false);
       shake = msg.down ? 0.3 : 0.15;
-      callout(msg.down ? "Du ramlade! (Ctrl + Mellanslag rullar undan)" : "Sparkad!", msg.down ? 1300 : 900);
+      callout(msg.down ? `Du ramlade! (${K("roll")} rullar undan)` : "Sparkad!", msg.down ? 1300 : 900);
     }
   },
 
   // ----- Rundor -----
 
   countdown(msg) {
+    if (intro) {
+      intro = null;
+      arena.closeGate?.();
+    }
     setPhase("countdown");
     sound.setBattleMusic(true);
     round = msg.round;
@@ -1667,6 +1729,127 @@ function voiceOf(player) {
   return { v: h / 997, rasp: h2 / 991, muffle: !!(k && k.closedHelmet && !k.helmetOff && !player.helmetOff) };
 }
 
+// ----- Introt i borggården -----
+let intro = null;
+const _ip = new THREE.Vector3();
+const _iq = new THREE.Vector3();
+function introPath(id, index) {
+  const [gateIn, gateOut, lowGate] = arena.gatePath || [new THREE.Vector3(0, 0, -20), new THREE.Vector3(0, 0, -15), new THREE.Vector3(0, 0, -9)];
+  const out = gateIn.clone().normalize();
+  const queue = gateIn.clone().addScaledVector(out, 1 + index * 1.1); // de väntar på rad innanför porten
+  const spot = intro.spots?.[id];
+  const end = spot ? new THREE.Vector3(spot.p[0], 0, spot.p[2]) : new THREE.Vector3((index - 2) * 1.5, 0, -2);
+  return { pts: [queue, gateIn, gateOut, lowGate, end], yaw: spot ? spot.r : 0 };
+}
+function pointOnPath(pts, dist, out, dirOut) {
+  for (let i = 0; i < pts.length - 1; i++) {
+    const len = pts[i].distanceTo(pts[i + 1]);
+    if (dist <= len || i === pts.length - 2) {
+      const f = Math.min(1, len > 0 ? dist / len : 1);
+      out.lerpVectors(pts[i], pts[i + 1], f);
+      dirOut.subVectors(pts[i + 1], pts[i]).normalize();
+      return f >= 1 && i === pts.length - 2;
+    }
+    dist -= len;
+  }
+  return true;
+}
+function updateIntro(dt) {
+  if (!intro) {
+    orbitCamera(18, 9, 0.00008, 0.5); // kom in mitt i introt: titta på borggården
+    return;
+  }
+  const e = seconds() - intro.start;
+  if (e > 1.4 && e < intro.dur - 1.3) arena.openGate?.();
+  else if (e >= intro.dur - 1.3) arena.closeGate?.();
+  const players = intro.order.map((id) => playerById(id)).filter(Boolean);
+  const SPEED = 2.3;
+  let follow = null;
+  players.forEach((p, i) => {
+    const knight = p.knight;
+    if (!knight) return;
+    const { pts, yaw } = introPath(p.id, i);
+    const startT = 2.4 + i * 0.9;
+    const walked = Math.max(0, e - startT) * SPEED;
+    const done = pointOnPath(pts, walked, _ip, _iq);
+    knight.group.position.copy(_ip);
+    const targetYaw = done ? yaw : Math.atan2(_iq.x, _iq.z);
+    knight.group.rotation.y = angleLerp(knight.group.rotation.y, targetYaw, 1 - Math.exp(-dt * 8));
+    const moving = walked > 0 && !done;
+    knight.animate(dt, { speed: moving ? SPEED : 0, forward: moving ? SPEED : 0, side: 0, airborne: false });
+    if (p === me) me.pos.copy(_ip);
+    // Härolden ropar ut namnet när riddaren kliver ut genom porten
+    const passed = walked > pts[0].distanceTo(pts[1]) + 0.6;
+    if (passed && !intro.announced.has(p.id)) {
+      intro.announced.add(p.id);
+      const leader = boardTopName && p.name.toLowerCase() === boardTopName;
+      callout(leader ? `👑 ${p.name}! 👑` : `${p.name}!`, 1100);
+      arena.cheer(leader ? 1.3 : 0.7);
+      sound.crowd?.(leader ? 1.2 : 0.8);
+      if (i === 0) arena.heraldBlow?.();
+    }
+    if (walked > 0 && !done) follow = knight.group.position;
+  });
+  // Kameran: svep över borggården, sedan vid porten och följer riddarna, till sist en överblick
+  if (e < 2.4) {
+    const a = -0.9 + e * 0.32;
+    camera.position.set(Math.sin(a) * 24, 13 - e * 1.5, Math.cos(a) * 22);
+    camera.lookAt(0, 1, -4);
+  } else if (follow && e < intro.dur - 1.8) {
+    const g = (arena.gatePath || [])[2] || new THREE.Vector3(0, 0, -9);
+    _iq.set(g.x * 0.4 + 2.2, 2.4, g.z + 5.5);
+    camera.position.lerp(_iq, 1 - Math.exp(-dt * 2));
+    camera.lookAt(follow.x, 1.4, follow.z);
+  } else {
+    _iq.set(0, 9, 15);
+    camera.position.lerp(_iq, 1 - Math.exp(-dt * 1.2));
+    camera.lookAt(0, 1, -1);
+  }
+}
+
+// I borggården syns andedräkten som små moln i kylan
+function updateBreath(dt) {
+  if (mapKind !== "castle" || phase === "start") return;
+  for (const p of allPlayers()) {
+    if (p.dead || !p.knight || p.knight.group.parent !== scene) continue;
+    p.breathT = (p.breathT ?? Math.random() * 2) - dt;
+    if (p.breathT > 0) continue;
+    const tired = p.hp !== undefined && p.hp < 35;
+    p.breathT = tired ? 0.9 : 2 + Math.random() * 0.8;
+    const head = p.knight.seg.head;
+    head.updateWorldMatrix(true, false);
+    _ip.set(0, 0.09, 0.16).applyMatrix4(head.matrixWorld);
+    effects.spawnPuff(_ip, 0xf4f6fa, tired ? 0.4 : 0.28, 0.08, 1.1, 0.15, 0.12);
+  }
+}
+
+// Riddarna tittar på närmaste motståndare (irisen i ögonen följer)
+const _gaze = new Map();
+function updateGaze() {
+  const list = allPlayers().filter((p) => p.knight && !p.dead);
+  for (const p of list) {
+    const a = positionOf(p);
+    let best = null;
+    let bd = Infinity;
+    for (const q of list) {
+      if (q === p) continue;
+      const b = positionOf(q);
+      const d = (a.x - b.x) ** 2 + (a.z - b.z) ** 2;
+      if (d < bd) {
+        bd = d;
+        best = b;
+      }
+    }
+    if (!best) {
+      p.knight.gazeTarget = null;
+      continue;
+    }
+    const v = _gaze.get(p.id) || new THREE.Vector3();
+    _gaze.set(p.id, v);
+    p.knight.gazeTarget = v.set(best.x, (best.y || 0) + 1.6, best.z);
+  }
+}
+
 // Flämtar när man har lite liv kvar
 function updatePanting(dt) {
   if (phase !== "round") return;
@@ -1800,7 +1983,7 @@ function updateItems(dt) {
   nearItem = near;
   const hint = $("pickup-hint");
   if (near) {
-    hint.textContent = `E – ${weaponOf(me) === FISTS ? "ta upp" : "byt till"} ${WEAPONS[near.w] ?? "vapen"}`;
+    hint.textContent = `${K("pickup")} – ${weaponOf(me) === FISTS ? "ta upp" : "byt till"} ${WEAPONS[near.w] ?? "vapen"}`;
     hint.hidden = false;
   } else {
     hint.hidden = true;
@@ -1848,10 +2031,10 @@ function tryRoll() {
   const dir = new THREE.Vector3();
   forward.set(Math.sin(camYaw), 0, Math.cos(camYaw));
   right.set(-Math.cos(camYaw), 0, Math.sin(camYaw));
-  if (keys.has("KeyW") || keys.has("ArrowUp")) dir.add(forward);
-  if (keys.has("KeyS") || keys.has("ArrowDown")) dir.sub(forward);
-  if (keys.has("KeyD") || keys.has("ArrowRight")) dir.add(right);
-  if (keys.has("KeyA") || keys.has("ArrowLeft")) dir.sub(right);
+  if (binds.held("forward", keys)) dir.add(forward);
+  if (binds.held("back", keys)) dir.sub(forward);
+  if (binds.held("right", keys)) dir.add(right);
+  if (binds.held("left", keys)) dir.sub(right);
   if (dir.lengthSq() < 0.01) dir.copy(forward);
   dir.normalize();
   me.rollStart = t;
@@ -1914,14 +2097,17 @@ const WEAPON_INFO = [
   "Tvåhandsvapen. Väldigt hårt, hugger av allt.",
   "Tvåhandsvapen. Längst räckvidd, svag på nära håll.",
   "Tvåhandsvapen. Enormt! Missar du ett tungt slag snurrar du runt.",
-  "Med sköld. Bästa stöten och lång räckvidd, svaga hugg.",
+  "Tvåhandsvapen. Bästa stöten och lång räckvidd, svaga hugg.",
   "Med sköld. Slår av hjälmar och får fienden att vingla.",
   "Tvåhandsvapen. Långsam. Tunga slag fäller fienden. Krossar i stället för att hugga.",
+  "Med sköld. Blixtsnabb men kort. Tar tag på längre håll och hugger medan du brottas.",
 ];
 
 document.addEventListener("wheel", (e) => {
-  if (!canSwapWeapon()) return;
-  changeWeapon(e.deltaY > 0 ? 1 : -1);
+  if (rebinding) return;
+  const code = e.deltaY > 0 ? "WheelDown" : "WheelUp";
+  if (binds.is("nextWeapon", code)) changeWeapon(1);
+  else if (binds.is("prevWeapon", code)) changeWeapon(-1);
 }, { passive: true });
 document.querySelectorAll("[data-wswap]").forEach((b) => b.addEventListener("click", () => changeWeapon(Number(b.dataset.wswap))));
 
@@ -1967,7 +2153,7 @@ function renderLobby() {
     b.disabled = !isHost;
   });
   $("mode-info").textContent = MODE_INFO[mode]();
-  $("lobby-rules").textContent = "Rustning, hjälm och mantel är bara utseende. Vapnen är olika – tvåhandsvapen har ingen sköld. G kastar vapnet, R tar tag i någon.";
+  $("lobby-rules").textContent = `Rustning, hjälm och mantel är bara utseende. Vapnen är olika – tvåhandsvapen har ingen sköld. ${K("throw")} kastar vapnet, ${K("grab")} tar tag i någon.`;
   // Dag eller kväll, och träningsmotståndare (bara lobbyledaren väljer)
   document.querySelectorAll(".time-btn").forEach((b) => {
     b.classList.toggle("active", b.dataset.time === timeOfDay);
@@ -1975,6 +2161,10 @@ function renderLobby() {
   });
   document.querySelectorAll(".weather-btn").forEach((b) => {
     b.classList.toggle("active", b.dataset.weather === weatherKind);
+    b.disabled = !isHost;
+  });
+  document.querySelectorAll(".map-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.map === mapKind);
     b.disabled = !isHost;
   });
   $("ready-button").textContent = me.ready ? "✅ Redo! (tryck för att ångra)" : "Jag är redo";
@@ -2087,6 +2277,12 @@ document.querySelectorAll(".weather-btn").forEach((button) => {
   button.addEventListener("click", () => {
     if (!me || phase !== "lobby" || me.id !== hostId) return;
     net.send({ t: "weather", v: button.dataset.weather });
+  });
+});
+document.querySelectorAll(".map-btn").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (!me || phase !== "lobby" || me.id !== hostId) return;
+    net.send({ t: "map", v: button.dataset.map });
   });
 });
 $("ready-button").addEventListener("click", () => {
@@ -2298,47 +2494,181 @@ $("lobby-copy-link").addEventListener("click", (e) => copyInviteLink(e.currentTa
 // Styrning: tangentbord och mus
 // ---------------------------------------------------------------------------
 
-const keys = new Set();
+const keys = new Set(); // nedtryckta knappar (tangenter och Mouse0–4)
+const binds = new Keybinds();
+
+// ----- Rutan där man byter knappar -----
+let rebinding = null; // { action, slot, at } medan man väntar på en ny knapp
+function renderKeysPanel() {
+  const tbody = $("keys-table").querySelector("tbody");
+  tbody.innerHTML = "";
+  for (const a of ACTIONS) {
+    const tr = document.createElement("tr");
+    const name = document.createElement("td");
+    name.textContent = a.name;
+    tr.appendChild(name);
+    for (const slot of [0, 1]) {
+      const td = document.createElement("td");
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "small";
+      const code = binds.keys(a.id)[slot];
+      const waiting = rebinding && rebinding.action === a.id && rebinding.slot === slot;
+      b.textContent = waiting ? "Tryck en knapp…" : code ? keyName(code) : a.id === "roll" && slot === 0 ? "(Huka + Hoppa)" : "–";
+      if (waiting) b.classList.add("waiting");
+      if (!code && !waiting) b.classList.add("empty");
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        rebinding = { action: a.id, slot: Math.min(slot, binds.keys(a.id).length), at: performance.now() };
+        renderKeysPanel();
+      });
+      b.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        if (binds.keys(a.id)[slot]) binds.clear(a.id, slot);
+        rebinding = null;
+        renderKeysPanel();
+      });
+      td.appendChild(b);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+}
+function finishRebind(code) {
+  if (!rebinding) return;
+  if (performance.now() - rebinding.at < 150) return; // samma klick som startade
+  if (code !== "Escape" && !FORBIDDEN.has(code)) binds.assign(rebinding.action, rebinding.slot, code);
+  rebinding = null;
+  renderKeysPanel();
+}
 window.addEventListener("keydown", (e) => {
-  if (document.activeElement === nameInput) return;
-  if (keyboardLocked && (e.ctrlKey || e.code.startsWith("Control"))) e.preventDefault(); // inga genvägar (Ctrl+W m.fl.) mitt i striden
-  keys.add(e.code);
+  if (!rebinding) return;
+  e.preventDefault();
+  e.stopPropagation();
+  finishRebind(e.code);
+}, true);
+window.addEventListener("mousedown", (e) => {
+  if (!rebinding) return;
+  if (e.button === 0 && e.target.closest && e.target.closest("#keys-table button") && performance.now() - rebinding.at < 150) return;
+  e.preventDefault();
+  e.stopPropagation();
+  finishRebind("Mouse" + e.button);
+}, true);
+window.addEventListener("wheel", (e) => {
+  if (!rebinding) return;
+  finishRebind(e.deltaY > 0 ? "WheelDown" : "WheelUp");
+}, { capture: true, passive: true });
+document.querySelectorAll(".keys-open").forEach((b) => b.addEventListener("click", () => {
+  if (document.pointerLockElement) document.exitPointerLock();
+  rebinding = null;
+  renderKeysPanel();
+  $("keys-panel").hidden = false;
+}));
+$("keys-close").addEventListener("click", () => {
+  rebinding = null;
+  $("keys-panel").hidden = true;
+});
+$("keys-reset").addEventListener("click", () => {
+  binds.reset();
+  rebinding = null;
+  renderKeysPanel();
+});
+
+// Hjälptexten längst ner och tipsen visar de knappar man själv valt
+const K = (action) => binds.label(action);
+function renderHelp() {
+  const b = (t) => `<b>${t}</b>`;
+  const move = ["forward", "left", "back", "right"].map((a) => binds.label(a)).join("");
+  const moveTxt = move.length === 4 ? move : ["forward", "left", "back", "right"].map((a) => binds.label(a)).join(" ");
+  $("help-text").innerHTML =
+    `${b(K("attack"))} slag (håll = tungt) · ${b(K("parry"))} parera · ${b(binds.label("thrust", true))} stöt · ${b(K("kick"))} spark · ` +
+    `${b(K("pickup"))} ta upp vapen · ${b(K("throw"))} kasta vapnet · ${b(K("grab"))} ta tag i någon · ${b([1, 2, 3].map((n) => K("emote" + n)).join(" "))} gester<br>` +
+    `${b(moveTxt)} gå · ${b(K("run"))} spring · ${b(K("jump"))} hoppa · ${b(binds.label("crouch", true))} huka · ${b(K("roll"))} rulla · ` +
+    `${b("Esc")} släpp musen · ${b(K("quality"))} grafik · ${b(K("sound"))} ljud · ${b(K("music"))} musik`;
+  $("weapon-keys").textContent = `${binds.label("prevWeapon", true)} och ${binds.label("nextWeapon", true)}`;
+}
+binds.onChange(renderHelp);
+renderHelp();
+
+// En knapp trycktes ner (tangent eller musknapp). Gör det som knappen är inställd på.
+function pressCode(code, e, repeat = false) {
+  const acts = binds.actionsFor(code);
+  if (!acts.length) return;
   if (!me) return;
-  if (e.code === "Space") {
-    e.preventDefault();
-    // Ctrl (eller C) + Mellanslag = rulla, annars hoppa
-    if (!e.repeat) {
+  const has = (a) => acts.includes(a);
+  if (has("jump") && phase === "intro") {
+    e?.preventDefault?.();
+    if (!repeat && intro && !intro.skipped) {
+      intro.skipped = true;
+      net.send({ t: "skip" });
+    }
+    return;
+  }
+  if (has("jump")) {
+    e?.preventDefault?.();
+    // Huka + Hoppa = rulla, annars hoppa
+    if (!repeat) {
       if (me.heldBy) net.send({ t: "struggle" }); // fasthållen: sliter för att komma loss
       else if (crouchHeld() || isDown()) tryRoll();
       else tryJump();
     }
   }
-  if (e.code === "F2" && !e.repeat) {
-    e.preventDefault();
+  if (has("quality") && !repeat) {
+    e?.preventDefault?.();
     lowQuality = !lowQuality;
     applyQuality();
   }
-  if (e.repeat) return;
-  if (e.code === "KeyQ" && locked()) tryAttack("t");
-  if (e.code === "KeyF" && locked()) tryKick();
-  if (e.code === "KeyE") tryPickup();
-  if (e.code === "KeyG" && locked()) tryThrow();
-  if (e.code === "KeyR" && locked()) tryGrab();
-  if (e.code === "KeyZ") changeWeapon(-1);
-  if (e.code === "KeyX") changeWeapon(1);
-  if (e.code === "Digit1" || e.code === "Digit2" || e.code === "Digit3") tryEmote(Number(e.code.slice(5)));
-  if (e.code === "KeyM" && !e.repeat) {
+  if (repeat) return;
+  if (has("attack") && locked()) {
+    mouseDown = true;
+    mouseDownAt = seconds();
+    attackCode = code;
+  }
+  if (has("parry") && locked()) tryParry();
+  if (has("roll")) {
+    if (me.heldBy) net.send({ t: "struggle" });
+    else tryRoll();
+  }
+  if (has("thrust") && locked()) {
+    e?.preventDefault?.();
+    tryAttack("t");
+  }
+  if (has("kick") && locked()) tryKick();
+  if (has("pickup")) tryPickup();
+  if (has("throw") && locked()) tryThrow();
+  if (has("grab") && locked()) tryGrab();
+  if (has("prevWeapon")) changeWeapon(-1);
+  if (has("nextWeapon")) changeWeapon(1);
+  for (const n of [1, 2, 3]) if (has("emote" + n)) tryEmote(n);
+  if (has("sound")) {
     sound.unlock();
     sound.setMuted(!sound.muted);
     applySound();
   }
-  if (e.code === "KeyN" && !e.repeat) {
+  if (has("music")) {
     sound.unlock();
     sound.setMusic(!sound.musicOn);
     applySound();
   }
+}
+
+// En knapp släpptes: bara slaget bryr sig (håll inne = tungt slag)
+function releaseCode(code) {
+  if (code === attackCode) releaseAttack();
+}
+
+window.addEventListener("keydown", (e) => {
+  if (rebinding) return;
+  if (document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+  if (keyboardLocked && (e.ctrlKey || e.code.startsWith("Control"))) e.preventDefault(); // inga genvägar (Ctrl+W m.fl.) mitt i striden
+  if (binds.actionsFor(e.code).length && (e.code === "Space" || e.code === "Tab" || e.code.startsWith("Arrow"))) e.preventDefault();
+  keys.add(e.code);
+  pressCode(e.code, e, e.repeat);
 });
-window.addEventListener("keyup", (e) => keys.delete(e.code));
+window.addEventListener("keyup", (e) => {
+  keys.delete(e.code);
+  releaseCode(e.code);
+});
 window.addEventListener("blur", () => {
   keys.clear();
   if (charging) stopCharging(true);
@@ -2361,14 +2691,15 @@ canvas.addEventListener("click", () => {
 // ---------------------------------------------------------------------------
 
 let keyboardLocked = false;
-const LOCK_KEYS = ["ControlLeft", "ControlRight", "KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE", "KeyF", "KeyC", "Space", "KeyR", "KeyT", "KeyN", "Tab"];
+// Alla knappar som spelet använder låses i helskärm, plus Ctrl och Tab (så att Ctrl+W m.fl. inte stänger fliken)
+const lockKeys = () => [...new Set(["ControlLeft", "ControlRight", "Tab", "KeyW", ...binds.keyboardCodes()])];
 
 async function enterFullscreen() {
   if (!CONFIG.fullscreen || !document.documentElement.requestFullscreen) return;
   try {
     if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: "hide" });
     if (navigator.keyboard?.lock) {
-      await navigator.keyboard.lock(LOCK_KEYS);
+      await navigator.keyboard.lock(lockKeys());
       keyboardLocked = true;
     }
   } catch {
@@ -2389,13 +2720,14 @@ document.addEventListener("fullscreenchange", () => {
 
 let ctrlHintShown = false;
 function crouchHeld() {
-  if (keys.has("KeyC")) return true;
-  const ctrl = keys.has("ControlLeft") || keys.has("ControlRight");
-  if (!ctrl) return false;
+  const isCtrl = (k) => k.startsWith("Control");
+  if (binds.held("crouch", keys, (k) => !isCtrl(k))) return true;
+  if (!binds.held("crouch", keys, isCtrl)) return false;
   if (keyboardLocked) return true;
   if (!ctrlHintShown && phase === "round") {
     ctrlHintShown = true;
-    callout("Ctrl hukar bara i helskärm (Chrome/Edge). Använd C!", 2200);
+    const other = binds.keys("crouch").find((k) => !isCtrl(k));
+    callout(`Ctrl hukar bara i helskärm (Chrome/Edge).${other ? ` Använd ${keyName(other)}!` : ""}`, 2200);
   }
   return false;
 }
@@ -2425,21 +2757,24 @@ function canAct() {
 }
 
 document.addEventListener("mousedown", (e) => {
-  if (!locked() || !me) return;
-  if (e.button === 0) {
-    mouseDown = true;
-    mouseDownAt = seconds();
-  } else if (e.button === 1) {
-    e.preventDefault();
-    tryAttack("t"); // mittenknappen = stöt
-  } else if (e.button === 2) {
-    tryParry();
-  }
+  if (rebinding || !locked() || !me) return;
+  if (e.button === 1) e.preventDefault();
+  const code = "Mouse" + e.button;
+  keys.add(code);
+  pressCode(code, e);
 });
 
 document.addEventListener("mouseup", (e) => {
-  if (e.button !== 0 || !mouseDown) return;
+  const code = "Mouse" + e.button;
+  keys.delete(code);
+  releaseCode(code);
+});
+
+let attackCode = null; // knappen som håller i slaget just nu
+function releaseAttack() {
+  if (!mouseDown) return;
   mouseDown = false;
+  attackCode = null;
   if (!me) return;
 
   if (charging) {
@@ -2454,7 +2789,7 @@ document.addEventListener("mouseup", (e) => {
   } else {
     tryAttack("q");
   }
-});
+}
 
 // Anropas varje bildruta: håller man inne tillräckligt länge börjar laddningen
 function updateCharging() {
@@ -2586,7 +2921,7 @@ function tryGrab() {
     return;
   }
   if (!canAct() || me.legless || seconds() < nextGrabTry) return;
-  nextGrabTry = seconds() + COMBAT.grab.cooldown;
+  nextGrabTry = seconds() + (weaponSpec(weaponOf(me)).grabCd ?? COMBAT.grab.cooldown);
   stopCharging(true);
   me.knight.setGrab("reach");
   sendStateNow();
@@ -2685,14 +3020,14 @@ function updateMe(dt) {
   me.knight.setCrouch(me.crouch);
   move.set(0, 0, 0);
   if (canMove) {
-    if (keys.has("KeyW") || keys.has("ArrowUp")) move.add(forward);
-    if (keys.has("KeyS") || keys.has("ArrowDown")) move.sub(forward);
-    if (keys.has("KeyD") || keys.has("ArrowRight")) move.add(right);
-    if (keys.has("KeyA") || keys.has("ArrowLeft")) move.sub(right);
+    if (binds.held("forward", keys)) move.add(forward);
+    if (binds.held("back", keys)) move.sub(forward);
+    if (binds.held("right", keys)) move.add(right);
+    if (binds.held("left", keys)) move.sub(right);
   }
 
   const moving = move.lengthSq() > 0;
-  const running = moving && !charging && !me.crouch && (keys.has("ShiftLeft") || keys.has("ShiftRight"));
+  const running = moving && !charging && !me.crouch && binds.held("run", keys);
   wantedVel.set(0, 0, 0);
   if (moving) {
     let speed = running ? CONFIG.runSpeed : CONFIG.walkSpeed;
@@ -3070,7 +3405,8 @@ function frame() {
   }
 
   const replaying = replay && seconds() >= replay.startedAt;
-  if (!replaying) {
+  if (phase === "intro") updateIntro(dt);
+  else if (!replaying) {
     if (me) {
       updateCharging();
       updateMe(dt);
@@ -3090,9 +3426,11 @@ function frame() {
   }
   effects.update(dt);
   updatePanting(dt);
+  updateGaze();
   updateFightCenter(dt);
   arena.update(dt, smoothCenter);
-  if (!updateReplay()) updateCamera(dt);
+  updateBreath(dt);
+  if (!updateReplay() && phase !== "intro") updateCamera(dt);
   recordFrame(dt);
   updateAim();
   sound.setListener(camera.position.x, camera.position.y, camera.position.z);

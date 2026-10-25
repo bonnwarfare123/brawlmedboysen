@@ -556,3 +556,24 @@ body:not([data-phase="lobby"]) #board { display: none; }
 #restore summary { cursor: pointer; color: #6b4a2b; }
 .name-note { margin: 2px 0 8px; font-size: 12px; }
 @media (max-width: 900px) { .board-card { display: none; } }
+
+/* ---------- v0.17: tangenter ---------- */
+.keys-open { width: 100%; margin-top: 8px; }
+.keys-card { max-width: 520px; width: calc(100% - 32px); max-height: calc(100vh - 40px); overflow-y: auto; }
+#keys-panel { z-index: 30; }
+#keys-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+#keys-table td { padding: 3px 4px; border-top: 1px solid rgba(107, 74, 43, 0.15); }
+#keys-table td:first-child { width: 46%; }
+#keys-table button { width: 100%; margin: 0; padding: 4px 6px; font-size: 13px; min-height: 28px; }
+#keys-table button.waiting { background: #d9a521; color: #2a1a0a; animation: rec-blink 0.8s infinite; }
+#keys-table button.empty { opacity: 0.55; font-style: italic; }
+.keys-buttons { display: flex; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.keys-buttons .primary { width: auto; padding: 8px 22px; margin: 0; }
+
+/* ---------- v0.17: introt i borggården ---------- */
+body[data-phase="intro"] #combat-hud,
+body[data-phase="intro"] .help,
+body[data-phase="intro"] #crosshair,
+body[data-phase="intro"] #click-hint,
+body[data-phase="intro"] #weapon-bar,
+body[data-phase="intro"] #pickup-hint { display: none; }

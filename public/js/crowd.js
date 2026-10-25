@@ -253,7 +253,8 @@ function buildShapes() {
 // spots: [{ pos: Vector3 (sitsens mitt i världen), yaw: vinkel (åt vilket håll personen tittar), row, step }]
 // ---------------------------------------------------------------------------
 export class Crowd {
-  constructor(spots, seed = 5) {
+  constructor(spots, seed = 5, opts = {}) {
+    const winter = !!opts.winter; // vinterkläder: huvor, mössor och mantlar
     this.group = new THREE.Group();
     this.group.userData.noMerge = true;
     const rand = seededRandom(seed);
@@ -277,6 +278,7 @@ export class Crowd {
       if (type === "woman") hat = hatRoll < 0.4 ? "wimple" : hatRoll < 0.52 ? "hood" : hatRoll < 0.68 ? "coif" : hatRoll < 0.82 ? "wreath" : null;
       if (type === "lady") hat = hatRoll < 0.6 ? "hennin" : "wimple";
       if (type === "noble") hat = hatRoll < 0.5 ? "beret" : hatRoll < 0.8 ? "chaperon" : "brim";
+      if (winter && type !== "lady" && type !== "noble" && hatRoll < 0.65) hat = hatRoll < 0.4 ? "hood" : type === "woman" ? "wimple" : "cap"; // varmt på huvudet
       const styleRoll = rand();
       let style = styleRoll < 0.22 ? "clap" : styleRoll < 0.36 ? "kerchief" : styleRoll < 0.48 ? "mug" : styleRoll < 0.6 ? "fist" : styleRoll < 0.68 ? "wave"
         : styleRoll < 0.76 ? "eat" : styleRoll < 0.84 ? "point" : styleRoll < 0.92 ? "slap" : "hatwave";
@@ -289,7 +291,7 @@ export class Crowd {
         clothes, hose: female ? clothes : pick(HOSE), skin: pick(SKINS),
         hairColor: type === "elder" ? pick([0x8c8a86, 0xd8d4cc, 0xbdb8b0]) : pick(HAIRS),
         apron: type === "woman" && rand() < 0.4,
-        cloak: (type === "noble" || type === "lady") && rand() < 0.6,
+        cloak: (type === "noble" || type === "lady") ? rand() < 0.6 || winter : winter && type !== "child" && rand() < 0.75,
         cloakColor: pick([0x2a1a3a, 0x3a1a1a, 0x1a2a3a, 0x8a6a2a]),
         hunch: type === "elder" ? 0.22 : 0,
         snackAt: rand() * 6,           // när personen tar en tugga eller en klunk

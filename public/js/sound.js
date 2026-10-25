@@ -115,6 +115,7 @@ export class Sound {
         for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
         this.loadFiles();
         if (this.rainOn) this.setRain(true); // regnet valdes innan ljudet låstes upp
+        if (this.windLevel) this.setWind(this.windLevel);
       }
       if (this.ctx.state === "suspended") this.ctx.resume();
     } catch {
@@ -877,6 +878,48 @@ export class Sound {
       g.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.8);
       src.stop(this.ctx.currentTime + 0.9);
       this.rainNode = null;
+    }
+  }
+
+  // Vind (snö i borggården): brus som tjuter och sveper, starkare i snöstorm
+  setWind(level) {
+    this.windLevel = level;
+    if (!this.ctx) return;
+    if (level > 0 && !this.windNode) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = 500;
+      bp.Q.value = 1.4;
+      // Vinden sveper: filtret och styrkan rör sig långsamt
+      const lfo = this.ctx.createOscillator();
+      lfo.frequency.value = 0.13;
+      const lfoGain = this.ctx.createGain();
+      lfoGain.gain.value = 260;
+      lfo.connect(lfoGain);
+      lfoGain.connect(bp.frequency);
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, this.ctx.currentTime);
+      src.connect(bp);
+      bp.connect(g);
+      g.connect(this.sfx);
+      src.start();
+      lfo.start();
+      this.windNode = { src, g, lfo };
+    }
+    if (this.windNode) {
+      const { src, g, lfo } = this.windNode;
+      const target = Math.max(0.0001, level * 0.07);
+      g.gain.cancelScheduledValues(this.ctx.currentTime);
+      g.gain.setValueAtTime(Math.max(0.0001, g.gain.value), this.ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(target, this.ctx.currentTime + 1.2);
+      if (level <= 0) {
+        src.stop(this.ctx.currentTime + 1.3);
+        lfo.stop(this.ctx.currentTime + 1.3);
+        this.windNode = null;
+      }
     }
   }
 
