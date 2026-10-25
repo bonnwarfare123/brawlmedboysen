@@ -48,7 +48,7 @@ export class Weather {
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(N * 3), 3));
-    this.snow = new THREE.Points(geo, new THREE.PointsMaterial({ map: glowTexture(), color: 0xffffff, size: 0.09, transparent: true, opacity: 0.9, depthWrite: false }));
+    this.snow = new THREE.Points(geo, new THREE.PointsMaterial({ map: glowTexture(), color: 0xffffff, size: 0.05, transparent: true, opacity: 0.85, depthWrite: false }));
     this.snow.frustumCulled = false;
     this.scene.add(this.snow);
     this.snowTime = 0;
@@ -78,8 +78,10 @@ export class Weather {
       f[i * 4] = x;
       f[i * 4 + 1] = y;
       f[i * 4 + 2] = z;
+      // Flingor alldeles intill kameran blir stora suddiga bollar: göm dem
+      const near = x * x + z * z < 2.6 && Math.abs(y - center.y) < 1.6;
       pos[i * 3] = center.x + x + Math.sin(t * 2 + ph * 7) * 0.05;
-      pos[i * 3 + 1] = y;
+      pos[i * 3 + 1] = near ? -50 : y;
       pos[i * 3 + 2] = center.z + z;
     }
     this.snow.geometry.attributes.position.needsUpdate = true;

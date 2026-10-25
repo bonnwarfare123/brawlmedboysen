@@ -204,7 +204,7 @@ function applyAtmosphere() {
   arena.setTime(evening);
   arena.setOvercast?.(rain || fog);
   motes.set(weatherKind, evening);
-  postfx?.setGrade(rain ? (winter ? "fog" : "rain") : fog ? "fog" : evening ? "evening" : winter ? "winter" : "day");
+  postfx?.setGrade(rain ? (winter ? "snow" : "rain") : fog ? "fog" : evening ? "evening" : winter ? "winter" : "day");
 }
 
 const effects = new Effects(scene);

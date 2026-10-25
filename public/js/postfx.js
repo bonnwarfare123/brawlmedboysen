@@ -86,6 +86,7 @@ const GRADES = {
   day: { saturation: 1.1, contrast: 1.05, tint: [1.02, 1.0, 0.965], lift: [0.0, 0.004, 0.012], vignette: 0.24, bloom: 0.3, threshold: 1.2 },
   evening: { saturation: 1.06, contrast: 1.07, tint: [1.07, 0.98, 0.9], lift: [0.02, 0.006, 0.03], vignette: 0.34, bloom: 0.6, threshold: 0.9 },
   rain: { saturation: 0.82, contrast: 1.04, tint: [0.95, 0.985, 1.03], lift: [0.012, 0.018, 0.03], vignette: 0.3, bloom: 0.3, threshold: 1.0 },
+  snow: { saturation: 0.96, contrast: 1.09, tint: [0.97, 0.99, 1.04], lift: [0.01, 0.014, 0.024], vignette: 0.3, bloom: 0.42, threshold: 1.0 },
   winter: { saturation: 1.0, contrast: 1.05, tint: [0.97, 0.995, 1.04], lift: [0.008, 0.012, 0.025], vignette: 0.24, bloom: 0.32, threshold: 1.15 },
   fog: { saturation: 0.86, contrast: 0.97, tint: [0.99, 1.0, 1.02], lift: [0.03, 0.03, 0.035], vignette: 0.2, bloom: 0.4, threshold: 1.0 },
 };

@@ -577,3 +577,7 @@ body[data-phase="intro"] #crosshair,
 body[data-phase="intro"] #click-hint,
 body[data-phase="intro"] #weapon-bar,
 body[data-phase="intro"] #pickup-hint { display: none; }
+
+/* ---------- v0.18 ---------- */
+.mode-row.map-row { grid-template-columns: 1fr 1fr; }
+.mode-row button.small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

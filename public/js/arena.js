@@ -417,6 +417,21 @@ export function buildArena() {
     cloud.position.set(Math.sin(t) * r, 45 + cloudRand() * 25, Math.cos(t) * r);
     group.add(cloud);
   }
+  // Ett lågt, grått molntäcke som syns när det är mulet (regn, snö, dimma)
+  const deck = new THREE.Group();
+  deck.visible = false;
+  deck.userData.noMerge = true;
+  {
+    const dr = seededRandom(4242);
+    for (let i = 0; i < 12; i++) {
+      const t = (i / 12) * Math.PI * 2 + dr() * 0.4;
+      const r = 60 + dr() * 80;
+      const c = makeCloud(dr, "deck");
+      c.position.set(Math.sin(t) * r, 30 + dr() * 10, Math.cos(t) * r);
+      deck.add(c);
+    }
+  }
+  group.add(deck);
   const castle = makeCastle();
   castle.position.set(-25, 2, -125);
   castle.rotation.y = 0.3;
@@ -713,6 +728,7 @@ export function buildArena() {
   const update = (dt, focusPoint = null) => {
     time += dt;
     windTime.value = time;
+    updateClouds(dt);
     excitement = Math.max(0, excitement - dt * 0.35);
     if (focusPoint) focus.lerp(focusPoint, Math.min(1, dt * 2));
     crowd.setFocus(focus);
@@ -759,6 +775,7 @@ export function buildArena() {
     // Mulet (regn och dimma): grå himmel och mörka moln
     setOvercast(on) {
       this.overcast = on;
+      deck.visible = on;
       if (on) {
         sky.material.uniforms.top.value.set(this.evening ? 0x2c2e3a : 0x6c7782);
         sky.material.uniforms.horizon.value.set(this.evening ? 0x55505a : 0xa9b1b8);
@@ -1008,21 +1025,99 @@ export function makeSky(evening = false) {
   return sky;
 }
 
-let cloudMaterial = null;
-function makeCloud(rand) {
-  const g = new THREE.Group();
-  // Ett gemensamt material, så alla moln slås ihop till en enda ritning
-  if (!cloudMaterial) cloudMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: true, fog: false });
-  const material = cloudMaterial;
-  const parts = 3 + Math.floor(rand() * 3);
-  for (let i = 0; i < parts; i++) {
-    const puff = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), material);
-    puff.scale.set(6 + rand() * 6, 3 + rand() * 2, 5 + rand() * 4);
-    puff.position.set(i * 7 - parts * 3.5 + rand() * 3, rand() * 2, rand() * 4);
-    puff.castShadow = false;
-    g.add(puff);
+// ---------- Moln ----------
+// Mjuka moln av många luddiga "tussar" (bilder som alltid vänder sig mot kameran). Ljus ovansida,
+// lite mörkare undersida, och de driver sakta med vinden.
+let cloudMaterial = null; // { color: { set(hex) } } – sätter färgen på både ovansidan och undersidan
+let cloudMats = null;
+const driftClouds = [];
+function puffTexture() {
+  const size = 128;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d");
+  const rand = seededRandom(5150);
+  // flera mjuka klickar ihop: luddig kant, tätare mitt
+  for (let i = 0; i < 14; i++) {
+    const a = rand() * Math.PI * 2;
+    const d = rand() * size * 0.18;
+    const x = size / 2 + Math.cos(a) * d;
+    const y = size / 2 + Math.sin(a) * d * 0.8;
+    const r = size * (0.18 + rand() * 0.16);
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, "rgba(255,255,255,0.5)");
+    g.addColorStop(0.55, "rgba(255,255,255,0.28)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
   }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+function ensureCloudMats() {
+  if (cloudMats) return cloudMats;
+  const map = puffTexture();
+  const mk = (hex, opacity) => new THREE.SpriteMaterial({ map, color: hex, transparent: true, opacity, depthWrite: false, fog: false });
+  cloudMats = { top: mk(0xffffff, 0.95), mid: mk(0xeef0f4, 0.9), bottom: mk(0xc6cbd4, 0.9) };
+  cloudMaterial = {
+    color: {
+      set(hex) {
+        const c = new THREE.Color(hex);
+        cloudMats.top.color.copy(c);
+        cloudMats.mid.color.copy(c).multiplyScalar(0.92);
+        cloudMats.bottom.color.copy(c).multiplyScalar(0.76);
+        return this;
+      },
+    },
+  };
+  return cloudMats;
+}
+// kind: "heap" (bulligt stackmoln), "streak" (tunt slöjmoln högt upp), "deck" (lågt, grått täcke)
+function makeCloud(rand, kind = rand() < 0.75 ? "heap" : "streak") {
+  const mats = ensureCloudMats();
+  const g = new THREE.Group();
+  g.userData.noMerge = true;
+  if (kind === "streak") {
+    const n = 6 + Math.floor(rand() * 5);
+    for (let i = 0; i < n; i++) {
+      const s = new THREE.Sprite(mats.top);
+      s.material = mats.mid;
+      const w = 18 + rand() * 22;
+      s.scale.set(w, w * 0.22, 1);
+      s.position.set((i - n / 2) * 9 + rand() * 6, rand() * 2, rand() * 6);
+      g.add(s);
+    }
+  } else {
+    const width = kind === "deck" ? 60 : 22 + rand() * 18;
+    const n = kind === "deck" ? 22 : 12 + Math.floor(rand() * 8);
+    for (let i = 0; i < n; i++) {
+      const u = rand() - 0.5;
+      const x = u * width;
+      const hump = Math.cos(u * Math.PI) * (kind === "deck" ? 3 : 7);
+      const y = rand() * hump;
+      const size = (kind === "deck" ? 18 : 9) + rand() * 9 + hump * 0.8;
+      // undersidan (mörkare) och ovansidan (ljusare)
+      const bottom = new THREE.Sprite(mats.bottom);
+      bottom.scale.set(size * 1.3, size * 0.7, 1);
+      bottom.position.set(x, y - size * 0.18, rand() * 6 - 3);
+      g.add(bottom);
+      const top = new THREE.Sprite(rand() < 0.5 ? mats.top : mats.mid);
+      top.scale.set(size, size * 0.8, 1);
+      top.position.set(x + (rand() - 0.5) * 3, y + size * 0.12, rand() * 6 - 3);
+      g.add(top);
+    }
+  }
+  g.userData.speed = 0.6 + rand() * 0.8;
+  driftClouds.push(g);
   return g;
+}
+// Molnen driver med vinden och kommer tillbaka på andra sidan
+export function updateClouds(dt) {
+  for (const c of driftClouds) {
+    c.position.x += c.userData.speed * dt;
+    if (c.position.x > 230) c.position.x -= 460;
+  }
 }
 
 // En borg på en kulle långt bort (blir dimmig av avståndet)
@@ -2416,5 +2511,5 @@ export const getCloudMaterial = () => cloudMaterial;
 export {
   PALETTE, mat, mesh, box, ellipsePoint, seededRandom, makeBrazier, makePodium, makeQuintain, mergeStatic,
   makeCloud, makeStand, makeRoyalBox, makeBarrels, makeCrates, makeWeaponRack, makeFlag, waveFlag, makeBanner,
-  heraldBanner, makeHeraldicShield, makeBaskets, makePots, makeDog, makeBirds,
+  heraldBanner, makeHeraldicShield, makeBaskets, makePots, makeDog, makeBirds, radialPatch, sandScatter,
 };

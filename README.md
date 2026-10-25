@@ -1,4 +1,4 @@
-# Brawlmedboysen – v0.17
+# Brawlmedboysen – v0.18
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
@@ -10,11 +10,11 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
 **Arenan:** tornerbarriär av plankor med järnband, lera nedtill, hängande tygdraperier och vapensköldar, upptrampad lerig sand där blodet sjunker in, eldkorgar med eld och rök, träningsdocka som snurrar när man slår på den, torn byggda av riktiga plankor (med stege, fönsterluckor och tinnar), krattad sand med småsten och halmstrån, läktare med plankbänkar, snidade räcken, tak med fransar och ståplats längst bak, levande publik (axlar, armbågar, kläder med veck, smala och runda, tydligare ansikten) med barn, gamla med käpp, damer och adelsmän (reser sig, jublar, klappar, pekar, dricker, äter, dunkar grannen i ryggen och viftar med hatten), försäljare som går runt, folk som går på marknaden, en lägereld med gryta och rök vid tälten, tätare gräs med blommor, damm som svävar i luften, hundar, fåglar och flugor runt elden, kungapar som visar tummen upp eller ner, vakter och en härold med trumpet.
 
-**Grafik:** på hög grafik (F2) får ljusa saker ett mjukt glöd-sken, och färgtonen anpassas efter dag, kväll, regn och dimma (varmare på kvällen, gråare i regn, mörka hörn). På låg grafik stängs glöd, skuggor och dammet av.
+**Grafik:** på hög grafik (F2) får ljusa saker ett mjukt glöd-sken, och färgtonen anpassas efter dag, kväll, regn och dimma (varmare på kvällen, gråare i regn, mörka hörn). Mjuka, fluffiga moln driver sakta över himlen på båda banorna (och blir ett grått molntäcke när det regnar eller snöar). På låg grafik stängs glöd, skuggor och dammet av.
 
 **Topplista:** en gemensam lista för alla rum som visas i lobbyn (matchvinster, dråp och matcher), med ditt eget kort (placering, bästa vinstsvit, avhuggna lemmar, vilket vapen du vinner mest med). Ditt namn är ditt: en hemlig nyckel i webbläsaren gör att ingen annan kan ta det. Byter du dator använder du din återställningskod (lobbyn → "Visa min kod", och på startskärmen "Har du en återställningskod?"). Matcher räknas bara när minst två riktiga spelare är med.
 
-**Borggården:** en borg i vinter med snötäckta torn och tinnar, publik uppe på murarna, smedja, ställningar och eldkorgar. När matchen börjar dras fällgallret upp och riddarna marscherar ut genom porten medan härolden ropar ut deras namn (tryck Mellanslag om alla vill hoppa över). Regn blir snöfall och dimma blir snöstorm, och man ser andedräkten i kylan.
+**Borggården:** en borg i vinter med skarpa stenmurar (sockel, strävpelare, istappar och facklor), snötäckta torn med spåntak, egna små läktare för publiken (bara några få står uppe på murarna), en djup portgång med fackla och vindbrygga, smedja, ställningar med räcken och eldkorgar. Marken är lika detaljerad som på Tornerplatsen: upptrampad lera med snöslask, frusna pölar och småsten. När matchen börjar dras fällgallret upp och riddarna marscherar ut genom porten medan härolden ropar ut deras namn (tryck Mellanslag om alla vill hoppa över). Regn blir snöfall och dimma blir snöstorm, och man ser andedräkten i kylan.
 
 **Startplatser** slumpas om varje runda, så man hamnar bredvid olika spelare.
 
