@@ -348,10 +348,11 @@ function displayColor(player) {
   return mode === "team" && (player.team === 0 || player.team === 1) ? TEAMS[player.team].color : player.color;
 }
 
-// Ett tal räknat från spelarens id (samma hos alla spelare): ger varje riddare sitt eget ansikte
+// Ett tal räknat från spelarens namn (samma hos alla spelare): ger varje riddare sitt eget ansikte,
+// och samma ansikte varje gång man spelar med samma namn
 function seedOf(player) {
   let h = 7;
-  for (const ch of player.id || "x") h = (h * 31 + ch.charCodeAt(0)) % 1000003;
+  for (const ch of (player.name || "").toLowerCase().trim() || player.id || "x") h = (h * 31 + ch.charCodeAt(0)) % 1000003;
   return h;
 }
 
@@ -1736,7 +1737,15 @@ const net = new Net({
       arena.royalReact(Math.random() < 0.7); // kungen visar tummen upp (eller ner)
       // Kroppen blir en ragdoll; en osynlig ny riddare står kvar tills nästa runda
       const force = msg.k === "h" ? 4 : bleeding ? 0.5 : 2.5;
-      const corpse = knight.die([dir.x * force, bleeding ? 0.5 : 2, dir.z * force], scene, RAGDOLL_BOUNDS);
+      // Hur kroppen faller beror på vad som hände (se Knight.deathDrive)
+      const legSev = /^(ankle|knee|hip)([LR])$/.exec(msg.sev || "");
+      const style = msg.sev === "neck" ? "decap"
+        : legSev ? "leg"
+        : bleeding ? "slump"
+        : msg.k === "t" ? "gut"
+        : msg.k === "h" || weaponSpec(weaponOf(attacker)).knockdown ? "heavy"
+        : "stumble";
+      const corpse = knight.die([dir.x * force, bleeding ? 0.5 : 2, dir.z * force], scene, RAGDOLL_BOUNDS, style, { side: legSev ? legSev[2] : null });
       debris.add(corpse);
       poolLater(corpse, msg.sev === "neck" || msg.sev === "waist" ? 1.5 : 1.1);
       victim.corpse = corpse;

@@ -267,7 +267,43 @@ export class Ragdoll {
       }
     }
 
+    // Startläget för varje punkt (används av "musklerna" i drive, se nedan)
+    this.pose0 = this.points.map((p) => [p.x, p.y, p.z]);
     this.sync();
+  }
+
+  // Muskler under de första sekunderna: kroppsdelar dras mot en målpose (startläget + en förskjutning).
+  // drive = { until: sekunder, at(t) => { hold: { del: styrka 0–1 per steg, "*": standard }, shift: { del: [dx, dy, dz], "*": ... } } }
+  // Så kan en kropp stå kvar en stund, vingla, gå ner på knä och sedan falla (styrkan går mot noll).
+  setDrive(drive) {
+    this.drive = drive;
+  }
+
+  applyDrive() {
+    const d = this.drive;
+    const t = this.simAge || 0;
+    if (!d || t > d.until) return;
+    const now = d.at(t);
+    const zero = [0, 0, 0];
+    for (const body of this.bodies) {
+      const s = now.hold[body.name] ?? now.hold["*"] ?? 0;
+      if (s <= 0) continue;
+      const sh = now.shift[body.name] ?? now.shift["*"] ?? zero;
+      for (const idx of body.indices) {
+        const p = this.points[idx];
+        const p0 = this.pose0[idx];
+        const dx = (p0[0] + sh[0] - p.x) * s;
+        const dy = (p0[1] + sh[1] - p.y) * s;
+        const dz = (p0[2] + sh[2] - p.z) * s;
+        p.x += dx;
+        p.y += dy;
+        p.z += dz;
+        // musklerna bromsar också (annars studsar delarna runt målet)
+        p.px += (p.x - p.px) * s * 0.6;
+        p.py += (p.y - p.py) * s * 0.6;
+        p.pz += (p.z - p.pz) * s * 0.6;
+      }
+    }
   }
 
   distance(a, b) {
@@ -332,7 +368,9 @@ export class Ragdoll {
     }
 
     const age = this.simAge || 0;
-    const tension = age < TENSION_TIME ? 0.25 * (1 - age / TENSION_TIME) : 0;
+    const driven = this.drive && age <= this.drive.until;
+    const tension = driven ? 0.04 : age < TENSION_TIME ? 0.25 * (1 - age / TENSION_TIME) : 0;
+    if (driven) this.applyDrive();
     const P = this.points;
     for (let it = 0; it < ITERATIONS; it++) {
       for (const c of this.constraints) this.pull(P[c.a], P[c.b], c.len, 1);

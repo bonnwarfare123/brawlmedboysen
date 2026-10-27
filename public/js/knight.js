@@ -26,15 +26,13 @@ import { COMBAT, JOINT_SEGMENT, LEG_JOINTS, weaponSpec, FISTS } from "./shared.j
 import { Ragdoll } from "./ragdoll.js";
 import { FootPlanner, solveLeg, solveArm, gaitStride } from "./ik.js";
 import { Cloth, Chain } from "./cloth.js";
+import { rollFeatures, sculptHead as sculptFace, faceTexture, buildHair, beardShell, BEARD_REGION, BEARD_THICK, noseGeometry as wedgeNose } from "./face.js";
 import {
   chainmailTexture, leatherTexture, quiltTexture, wrapTexture, strawTexture, metalWearTexture, heraldryTexture,
   linenTexture, daggedTexture, splatterTexture, forgedTexture, woodGrainTexture, plateTexture, rustyPlateTexture,
 } from "./textures.js";
 
 const BLOOD = 0x6a0808;
-const SKIN = [0xf2cfaa, 0xe6b890, 0xd09a6c, 0xa86e48, 0x7a4c2e];
-const HAIR = [0x23170e, 0x4a3018, 0x7a4e26, 0xc8a050, 0x9a3c18, 0x8c8a86];
-const EYES = [0x3a2a1a, 0x4a6a8a, 0x5a6a3a, 0x2a2a2a];
 const DIRT = new THREE.Color(0x5a4630);
 
 // Omgivning som blank metall speglar (sätts av spelet, se setEnvironment)
@@ -92,10 +90,17 @@ function radiusAt(profile, f) {
 // biceps fram och en triceps bak, och underarmen blir platt mot handleden.
 // [del av längden där bulan är störst, hur bred bulan är, fram (+z), bak (-z), sidled (x)]
 const MUSCLE = new Map([
-  [PROFILE.thigh, [[0.3, 0.35, 0.16, 0.08, 0.02], [0.85, 0.15, 0.06, -0.04, 0.0]]],
-  [PROFILE.shin, [[0.3, 0.28, -0.06, 0.32, 0.03], [0.9, 0.2, 0.0, -0.05, -0.08]]],
-  [PROFILE.upperArm, [[0.15, 0.22, 0.08, 0.06, 0.12], [0.5, 0.3, 0.14, 0.12, -0.02]]],
-  [PROFILE.forearm, [[0.25, 0.3, 0.06, 0.1, 0.12], [0.85, 0.2, -0.12, -0.12, 0.1]]],
+  [PROFILE.thigh, [[0.3, 0.35, 0.2, 0.1, 0.02], [0.62, 0.18, 0.08, 0.0, 0.05], [0.88, 0.14, 0.04, -0.08, 0.0]]],
+  [PROFILE.shin, [[0.28, 0.24, -0.08, 0.42, 0.05], [0.9, 0.2, 0.0, -0.08, -0.1]]],
+  [PROFILE.upperArm, [[0.12, 0.2, 0.1, 0.08, 0.16], [0.5, 0.28, 0.2, 0.14, -0.04]]],
+  [PROFILE.forearm, [[0.22, 0.28, 0.08, 0.14, 0.16], [0.85, 0.2, -0.14, -0.14, 0.12]]],
+]);
+// Genomskärningen är oval, inte rund: [bredd (x), djup (z)] uppe och nere vid lemmens ändar
+const OVAL = new Map([
+  [PROFILE.thigh, [[1.0, 1.08], [0.92, 1.04]]],
+  [PROFILE.shin, [[0.92, 1.06], [0.9, 0.98]]],
+  [PROFILE.upperArm, [[1.0, 1.0], [1.06, 0.88]]],
+  [PROFILE.forearm, [[1.0, 0.96], [1.16, 0.74]]], // platt mot handleden
 ]);
 function shapeMuscles(geo, profile, length, extra) {
   const bumps = MUSCLE.get(profile);
@@ -106,7 +111,12 @@ function shapeMuscles(geo, profile, length, extra) {
     const r = Math.hypot(x, z);
     if (r < 0.002) continue;
     const f = -y / length;
+    const oval = OVAL.get(profile);
     let fz = 1, fx = 1;
+    if (oval) {
+      fx = oval[0][0] + (oval[1][0] - oval[0][0]) * f;
+      fz = oval[0][1] + (oval[1][1] - oval[0][1]) * f;
+    }
     for (const [c, w, front, back, side] of bumps) {
       const k = Math.exp(-(((f - c) / w) ** 2));
       fz += (z > 0 ? front : back) * k * Math.abs(z / r);
@@ -126,7 +136,7 @@ function latheAlong(profile, length, from = 0, to = 1, extra = 0, closed = true,
 }
 function latheAlongRound(profile, length, from = 0, to = 1, extra = 0, closed = true, flare = 0) {
   const pts = [];
-  const steps = 12;
+  const steps = 16;
   if (closed) pts.push(new THREE.Vector2(0.0001, -to * length));
   for (let i = steps; i >= 0; i--) {
     const f = from + ((to - from) * i) / steps;
@@ -135,70 +145,9 @@ function latheAlongRound(profile, length, from = 0, to = 1, extra = 0, closed = 
     pts.push(new THREE.Vector2(r, -f * length));
   }
   if (closed) pts.push(new THREE.Vector2(0.0001, -from * length));
-  return new THREE.LatheGeometry(pts, 16);
+  return new THREE.LatheGeometry(pts, 20);
 }
 
-// ---------- Huvudet ----------
-// Ett klot som formas om till ett huvud: smalare käke, framskjuten haka, ögonhålor, pannben och kindben.
-function sculptHead(f) {
-  const geo = new THREE.SphereGeometry(1, 36, 28);
-  const pos = geo.attributes.position;
-  const d = new THREE.Vector3();
-  const bump = (cx, cy, cz, radius, amount) => {
-    const dist = Math.hypot(d.x - cx, d.y - cy, d.z - cz);
-    return dist < radius ? amount * (1 - dist / radius) ** 2 : 0;
-  };
-  for (let i = 0; i < pos.count; i++) {
-    d.fromBufferAttribute(pos, i);
-    let r = 1;
-    for (const s of [1, -1]) {
-      r -= bump(0.36 * s, 0.12, 0.92, 0.3, 0.075);   // ögonhålor
-      r += bump(0.32 * s, 0.3, 0.9, 0.24, 0.04);     // pannben
-      r += bump(0.62 * s, -0.08, 0.74, 0.3, 0.045);  // kindben
-      r -= bump(0.86 * s, 0.25, 0.35, 0.3, 0.03);    // tinningar
-      r -= bump(0.55 * s, -0.42, 0.65, 0.25, 0.025); // under kindbenen
-    }
-    r += bump(0, -0.8, 0.58, 0.3, 0.05 + f.chin * 0.07); // haka
-    r += bump(0, 0.1, 0.99, 0.18, 0.02);               // näsrot
-    let x = d.x * r;
-    let y = d.y * r;
-    let z = d.z * r;
-    // Käken smalnar av nedåt och skjuter fram lite
-    const low = Math.min(1, Math.max(0, (-0.12 - d.y) / 0.8));
-    x *= 1 - f.jaw * low * low;
-    if (z > 0) z *= 1 + 0.32 * low;
-    if (z < -0.3) z *= 1.03; // bakhuvudet
-    pos.setXYZ(i, x * 0.09, y * 0.1, z * 0.095);
-  }
-  geo.translate(0, 0.135, 0.004);
-  geo.computeVertexNormals();
-  return geo;
-}
-// Skäggstubb: ett tunt skal över käken och hakan, gjort av huvudets egen form
-function stubbleShell(skull) {
-  const src = skull.index ? skull : null;
-  if (!src) return null;
-  const pos = skull.attributes.position;
-  const keep = (i) => {
-    const y = pos.getY(i);
-    const z = pos.getZ(i);
-    return y < 0.084 && z > -0.02;
-  };
-  const idx = [];
-  const ind = src.index?.array;
-  if (!ind || !skull.attributes.normal) return null;
-  for (let t = 0; t < ind.length; t += 3) {
-    if (keep(ind[t]) && keep(ind[t + 1]) && keep(ind[t + 2])) idx.push(ind[t], ind[t + 1], ind[t + 2]);
-  }
-  if (!idx.length) return null;
-  const geo = skull.clone();
-  geo.setIndex(idx);
-  // lite utanför huden
-  const p = geo.attributes.position;
-  const n = geo.attributes.normal;
-  for (let i = 0; i < p.count; i++) p.setXYZ(i, p.getX(i) + n.getX(i) * 0.0012, p.getY(i) + n.getY(i) * 0.0012, p.getZ(i) + n.getZ(i) * 0.0012);
-  return geo;
-}
 // Näsa: sidoprofilen (rygg, spets, undersida) dras ut till en näsa med rundade kanter
 function noseGeometry(size) {
   const k = size;
@@ -228,11 +177,22 @@ function noseGeometry(size) {
 // och en antydan till midja. geo = en kapsel runt y = 0 med halva höjden "half".
 function sculptTorso(geo, half) {
   const pos = geo.attributes.position;
+  const g = (f, c, w) => Math.exp(-(((f - c) / w) ** 2));
   for (let i = 0; i < pos.count; i++) {
     const f = (pos.getY(i) + half) / (2 * half); // 0 nederst, 1 överst
-    const pit = Math.exp(-(((f - 0.7) / 0.13) ** 2)) * 0.13;
-    const waist = Math.exp(-(((f - 0.3) / 0.16) ** 2)) * 0.05;
-    pos.setX(i, pos.getX(i) * (1 - pit - waist));
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const r = Math.hypot(x, z) || 1;
+    const front = Math.max(0, z / r);
+    const back = Math.max(0, -z / r);
+    const pit = g(f, 0.7, 0.13) * 0.13;
+    const waist = g(f, 0.3, 0.16) * 0.06;
+    const lats = g(f, 0.58, 0.12) * 0.04;                  // ryggmusklerna gör överkroppen till ett V
+    const traps = Math.max(0, f - 0.86) * 1.1;              // sluttande axlar upp mot halsen
+    pos.setX(i, x * (1 - pit - waist + lats - traps * 0.5));
+    // Bröst framtill, skulderblad baktill, lite mage
+    const zf = 1 + front * (g(f, 0.7, 0.12) * 0.13 + g(f, 0.25, 0.12) * 0.05) + back * (g(f, 0.72, 0.12) * 0.08 - g(f, 0.32, 0.12) * 0.05);
+    pos.setZ(i, z * zf);
   }
   geo.computeVertexNormals();
   return geo;
@@ -475,6 +435,14 @@ const KICK_KEYS = [
   [0.48, 0.0, 0.2, 0.0],
 ];
 const EMOTE_LENGTH = { 1: 1.8, 2: 2.0, 3: 3.2 };
+// Fjädrar i lederna: [styvhet jämfört med målet, dämpning (1 = ingen översving, lägre = sviktar mer)]
+const SPRING = {
+  torso: [1.0, 0.82],
+  head: [0.85, 0.62],
+  upperArm: [1.0, 0.72],
+  forearm: [0.88, 0.62],
+  hand: [0.78, 0.55],
+};
 
 function sampleKeys(keys, t) {
   if (t <= keys[0][0]) return keys[0].slice(1);
@@ -621,25 +589,11 @@ export class Knight {
     const gilded = style === "gilded";
     this.isMetal = isPlate || style === "hedge";
 
-    // Ansiktsdrag slumpas fram ur ett frö (spelarens id), så alla ser samma ansikte
+    // Ansiktsdrag slumpas fram ur ett frö (spelarens namn), så alla ser samma ansikte (se face.js)
     const rand = seededRandom(opts.seed ?? colorHex + 7);
-    const features = {
-      skin: SKIN[Math.floor(rand() * SKIN.length)],
-      hair: HAIR[Math.floor(rand() * HAIR.length)],
-      eyes: EYES[Math.floor(rand() * EYES.length)],
-      hairStyle: Math.floor(rand() * 4), // 0 kort, 1 långt, 2 flint, 3 pottfrisyr
-      beard: Math.floor(rand() * 4),     // 0 inget, 1 mustasch, 2 helskägg, 3 pipskägg
-      // Ansiktets form och kännetecken
-      jaw: 0.14 + rand() * 0.2,          // smalare eller bredare käke
-      chin: rand(),                      // hur mycket hakan sticker ut
-      nose: 0.85 + rand() * 0.45,        // näsans storlek
-      broken: rand() < 0.15,             // bruten (sned) näsa
-      scar: rand() < 0.14,               // ärr över ögat
-      patch: rand() < 0.05,              // lapp för ögat
-      gap: rand() < 0.18,                // en tand saknas
-      stubble: rand() < 0.55,            // skäggstubb
-      brow: rand(),                      // kraftiga eller tunna ögonbryn
-    };
+    const features = rollFeatures(rand);
+    this.features = features;
+    this.faceRand = seededRandom((opts.seed ?? colorHex) * 7 + 3);
 
     // ---------- Material ----------
     const m = {};
@@ -666,8 +620,9 @@ export class Knight {
     m.rope = this.mat(0xa08850, 0.95, 0);
     m.skin = this.mat(features.skin, 0.72, 0);
     m.lips = this.mat(new THREE.Color(features.skin).multiplyScalar(0.72).getHex(), 0.6, 0);
-    m.hair = this.mat(features.hair, 0.9, 0);
+    m.hair = this.mat(features.hair, 0.9, 0, { flatShading: true });
     m.eyeWhite = this.mat(0xf4f0e8, 0.3, 0);
+    m.glint = new THREE.MeshBasicMaterial({ color: 0xffffff }); // vit glimt i ögat
     m.iris = this.mat(features.eyes, 0.25, 0);
     m.mouth = this.mat(0x2a0e0c, 0.8, 0);
     m.teeth = this.mat(0xeee6d0, 0.5, 0);
@@ -722,6 +677,7 @@ export class Knight {
 
     this.buildTorso(pelvis, torso, style, m, isPlate, gilded, limbMat, look);
     this.buildHead(head, m, features);
+    this.colorHexFor = colorHex;
     this.helmet = new THREE.Group();
     this.helmet.userData.helmet = true;
     head.add(this.helmet);
@@ -805,9 +761,9 @@ export class Knight {
     this.mergeChildren(shield);
     this.mergeChildren(this.helmet);
     if (this.plume) this.mergeChildren(this.plume);
-    this.mergeChildren(this.hairGroup);
     this.closedHelmet = style !== "jester" && [0, 1, 4].includes(look.h);
-    this.hairGroup.visible = !this.closedHelmet;
+    this.headgear = style === "jester" ? "hat" : this.closedHelmet ? "closed" : [7, 8].includes(look.h) ? "hood" : look.h === 10 ? "none" : "hat";
+    this.updateHairVisibility();
 
     // Blod på vapnet (syns mer ju fler man träffat)
     this.bladeBloodMat = new THREE.MeshStandardMaterial({ color: BLOOD, roughness: 0.3, transparent: true, opacity: 0, depthWrite: false });
@@ -1174,63 +1130,81 @@ export class Knight {
 
   buildHead(head, m, f) {
     const H = (...a) => head.add(this.shape(...a));
-    const skinCol = new THREE.Color(m.skin.color);
-    m.blush = this.mat(skinCol.clone().lerp(new THREE.Color(0xd06a5a), 0.22).getHex(), 0.7, 0);
-    m.stubble = this.mat(skinCol.clone().multiplyScalar(0.72).lerp(new THREE.Color(f.hair), 0.25).getHex(), 0.95, 0);
-    m.scarMat = this.mat(skinCol.clone().lerp(new THREE.Color(0xf0c0b8), 0.5).getHex(), 0.5, 0);
+    const rand = this.faceRand;
+    const skinCol = new THREE.Color(f.skin);
+    // Ansiktet: platta ytor (kantig, handgjord stil) och en målad hud (stubb, fräknar, ärr, krigsmålning)
+    m.face = this.mat(0xffffff, 0.74, 0, { map: faceTexture(f, rand), flatShading: true });
+    m.faceSolid = this.mat(f.skin, 0.74, 0, { flatShading: true });
+    m.lips = this.mat(skinCol.clone().multiplyScalar(0.74).lerp(new THREE.Color(0xa04a40), 0.25).getHex(), 0.6, 0, { flatShading: true });
+    m.brow = this.mat(new THREE.Color(f.hair).multiplyScalar(0.8).getHex(), 0.9, 0, { flatShading: true });
+    m.bandage = this.mat(0xe8dcc4, 0.9, 0, { flatShading: true });
 
-    H(new THREE.CylinderGeometry(0.046, 0.054, 0.12, 12), m.skin, [0, 0.01, 0]); // hals
-    H(new THREE.SphereGeometry(0.03, 8, 6), m.skin, [0, 0.03, 0.03], [1.1, 1, 0.7]); // struphuvud
-    // Formgjutet huvud: ett enda mjukt huvud med käke, haka, kindben, pannben och ögonhålor
-    const skull = sculptHead(f);
-    H(skull, m.skin);
-    if (f.stubble && f.beard !== 2) {
-      const st = stubbleShell(skull);
-      if (st) H(st, m.stubble);
-    }
+    H(new THREE.CylinderGeometry(0.047, 0.056, 0.12, 8), m.faceSolid, [0, 0.01, 0]); // hals
+    H(new THREE.SphereGeometry(0.028, 6, 5), m.faceSolid, [0, 0.03, 0.03], [1.1, 1, 0.7]); // struphuvud
+    const skull = sculptFace(f);
+    H(skull, m.face);
     for (const s of [1, -1]) {
-      H(new THREE.SphereGeometry(0.022, 10, 8), m.skin, [0.089 * s, 0.13, -0.004], [0.45, 1, 0.75]); // öron
-      H(new THREE.TorusGeometry(0.011, 0.004, 5, 10), m.skin, [0.093 * s, 0.13, -0.002], [0.5, 1.4, 1], [0, Math.PI / 2, 0]); // örats kant
-      H(new THREE.SphereGeometry(0.017, 10, 8), m.blush, [0.043 * s, 0.112, 0.074], [1.25, 0.85, 0.45]); // rosiga kinder (nästan inne i huden)
+      H(new THREE.SphereGeometry(0.024, 7, 5), m.faceSolid, [0.088 * s, 0.13, -0.004], [0.42, 1, 0.72]); // öron
+      H(new THREE.TorusGeometry(0.012, 0.0045, 4, 7), m.faceSolid, [0.092 * s, 0.13, -0.002], [0.5, 1.4, 1], [0, Math.PI / 2, 0]); // örats kant
     }
-    // Näsa: en riktig näsprofil (rygg, spets och näsvingar). Kan vara stor, liten eller bruten.
-    const nose = noseGeometry(f.nose);
-    H(nose, m.skin, [f.broken ? 0.003 : 0, 0, 0.083], [1, 1, 1], [0, 0, f.broken ? 0.13 : 0]);
-    for (const s of [1, -1]) {
-      H(new THREE.SphereGeometry(0.0095, 8, 6), m.skin, [0.011 * s, 0.103, 0.098 + 0.004 * f.nose], [1, 0.8, 0.9]);      // näsvingar
-      H(new THREE.SphereGeometry(0.0035, 5, 4), m.mouth, [0.0075 * s, 0.099, 0.103 + 0.004 * f.nose]);                   // näsborrar
+    // Näsa: rak, kantig näsrygg (stor, liten eller sned)
+    H(wedgeNose(f.nose, f.broken), m.faceSolid);
+    for (const s of [1, -1]) H(new THREE.SphereGeometry(0.0034, 4, 3), m.mouth, [0.0075 * s, 0.0985, 0.0985 + 0.006 * f.nose]); // näsborrar
+    if (f.bandage) {
+      // Plåster i kors över näsryggen
+      H(new THREE.BoxGeometry(0.036, 0.011, 0.004), m.bandage, [0, 0.133, 0.107 + 0.004 * f.nose], [1, 1, 1], [-0.35, 0, 0.35]);
+      H(new THREE.BoxGeometry(0.036, 0.011, 0.004), m.bandage, [0, 0.133, 0.108 + 0.004 * f.nose], [1, 1, 1], [-0.35, 0, -0.35]);
     }
-    // Läppar: överläppen sitter fast, underläppen följer käken när munnen öppnas
-    H(new THREE.CapsuleGeometry(0.0058, 0.026, 3, 8), m.lips, [0, 0.0945, 0.0935], [1, 1, 0.8], [0, 0, Math.PI / 2]);
-    if (f.scar) H(new THREE.BoxGeometry(0.0035, 0.055, 0.003), m.scarMat, [0.045, 0.152, 0.093], [1, 1, 1], [-0.25, 0.3, 0.35]); // ärr över vänster öga
+    // Överläpp (sitter fast); underläppen följer käken när munnen öppnas
+    H(new THREE.CapsuleGeometry(0.0058, 0.03, 2, 6), m.lips, [0, 0.0945, 0.0935], [1, 1, 0.8], [0, 0, Math.PI / 2]);
 
-    // Hår och skägg i en egen grupp: göms under stängda hjälmar (så inget sticker ut) och syns om hjälmen åker av
+    // Hår: kalotten (syns under öppna hattar), tofsar och lugg (bara utan huvudbonad) och långt hår.
+    // Skägg för sig: göms under stängda hjälmar, huvor och sjalar.
     const hairGroup = new THREE.Group();
     head.add(hairGroup);
     this.hairGroup = hairGroup;
-    const HR = (...a) => hairGroup.add(this.shape(...a));
-    if (f.hairStyle !== 2) HR(new THREE.SphereGeometry(0.094, 16, 8, 0, Math.PI * 2, 0, 1.45), m.hair, [0, 0.142, -0.004], [1.03, 1.12, 1.08]);
-    if (f.hairStyle === 1) {
-      HR(new THREE.BoxGeometry(0.15, 0.13, 0.05), m.hair, [0, 0.1, -0.072], [1, 1, 1], [0.15, 0, 0]); // långt hår i nacken
-      for (const s of [1, -1]) HR(new THREE.BoxGeometry(0.025, 0.1, 0.06), m.hair, [0.088 * s, 0.1, -0.02]);
-    } else if (f.hairStyle === 2) {
-      HR(new THREE.TorusGeometry(0.084, 0.014, 6, 16, Math.PI * 1.3), m.hair, [0, 0.125, 0.0], [1.05, 1, 1.08], [Math.PI / 2, 0, -Math.PI * 0.15 + Math.PI]); // krans runt flinten
-    } else if (f.hairStyle === 3) {
-      HR(new THREE.CylinderGeometry(0.098, 0.1, 0.035, 16, 1, true), m.hair, [0, 0.185, 0.002], [1.03, 1, 1.09]); // pottfrisyr
+    const hair = buildHair(f, m.hair, rand);
+    this.hairParts = hair;
+    hairGroup.add(hair.cap, hair.top, hair.long);
+    if (f.headband) {
+      // Pannband med knut och två ändar i nacken (bara utan huvudbonad)
+      const band = this.mat(f.headband, 0.85, 0, { flatShading: true });
+      hair.top.add(this.shape(new THREE.TorusGeometry(0.1, 0.009, 4, 14), band, [0, 0.185, 0.0], [0.99, 1, 1.03], [Math.PI / 2 - 0.22, 0, 0]));
+      hair.top.add(this.shape(new THREE.SphereGeometry(0.014, 5, 4), band, [0, 0.165, -0.1]));
+      for (const s of [1, -1]) hair.top.add(this.shape(new THREE.BoxGeometry(0.014, 0.07, 0.004), band, [0.012 * s, 0.13, -0.106], [1, 1, 1], [0.25, 0, 0.25 * s]));
     }
-    // Skägg
-    if (f.beard === 1) {
-      for (const s of [1, -1]) HR(new THREE.CapsuleGeometry(0.0045, 0.022, 3, 6), m.hair, [0.015 * s, 0.1, 0.099], [1, 1, 1], [0, 0, Math.PI / 2 - 0.35 * s]); // mustasch
-    } else if (f.beard === 2) {
-      HR(new THREE.SphereGeometry(0.06, 14, 10), m.hair, [0, 0.062, 0.045], [1.14, 0.88, 0.88]); // helskägg
-      for (const s of [1, -1]) HR(new THREE.CapsuleGeometry(0.0045, 0.022, 3, 6), m.hair, [0.015 * s, 0.1, 0.1], [1, 1, 1], [0, 0, Math.PI / 2 - 0.3 * s]);
-    } else if (f.beard === 3) {
-      HR(new THREE.ConeGeometry(0.02, 0.05, 8), m.hair, [0, 0.045, 0.078], [1, 1, 1], [Math.PI + 0.3, 0, 0]); // pipskägg
+    const beardGroup = new THREE.Group();
+    head.add(beardGroup);
+    this.beardGroup = beardGroup;
+    const B = (...a) => beardGroup.add(this.shape(...a));
+    const mustache = (droop = 0.35, curl = false) => {
+      for (const s of [1, -1]) {
+        B(new THREE.BoxGeometry(0.03, 0.01, 0.013), m.hair, [0.016 * s, 0.0995, 0.098], [1, 1, 1], [0, -0.2 * s, -droop * s]);
+        if (curl) B(new THREE.ConeGeometry(0.006, 0.022, 4), m.hair, [0.034 * s, 0.1, 0.09], [1, 1, 1], [0, 0, -0.5 * s]); // uppåtsvängda spetsar
+      }
+    };
+    if (f.beard === 2) mustache(0.5);
+    else if (f.beard === 6) mustache(0.15, true);
+    else if (f.beard === 3 || f.beard === 4) {
+      const shell = beardShell(skull, BEARD_REGION, BEARD_THICK);
+      if (shell) B(shell, m.hair);
+      mustache(0.45);
+      if (f.beard === 4) {
+        // Långt skägg: en kil ner från hakan, en fläta med en guldring
+        B(new THREE.ConeGeometry(0.042, 0.11, 5), m.hair, [0, 0.02, 0.075], [1.15, 1, 0.75], [Math.PI - 0.35, 0, 0]);
+        for (let k = 0; k < 3; k++) B(new THREE.SphereGeometry(0.011 - k * 0.0015, 5, 4), m.hair, [0, -0.035 - k * 0.018, 0.088 + k * 0.006], [1, 1.25, 1]);
+        B(new THREE.TorusGeometry(0.0105, 0.0035, 4, 8), m.gold, [0, -0.05, 0.091], [1, 1, 1], [Math.PI / 2 - 0.3, 0, 0]);
+      }
+    } else if (f.beard === 5) {
+      const shell = beardShell(skull, (x, y, z) => y < -0.62 && Math.abs(x) < 0.32 && z > 0.2, (x, y) => 0.006 + Math.max(0, -0.7 - y) * 0.03);
+      if (shell) B(shell, m.hair);
+      B(new THREE.ConeGeometry(0.02, 0.045, 4), m.hair, [0, 0.042, 0.08], [1, 1, 0.8], [Math.PI + 0.35, 0, 0]); // pipskägg
+      mustache(0.4);
     }
-    // Lapp för ögat (sitter i hårgruppen så den följer med hjälmen av/på precis som håret)
+    // Lapp för ögat
     if (f.patch) {
-      H(new THREE.SphereGeometry(0.019, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2), m.mouth, [-0.033, 0.146, 0.088], [1, 1, 0.5], [Math.PI / 2, 0, 0]);
-      H(new THREE.TorusGeometry(0.094, 0.0028, 4, 24), m.strap ?? m.mouth, [0, 0.15, 0.004], [1, 1.04, 1.06], [0.15, 0, 0.32]);
+      H(new THREE.CylinderGeometry(0.02, 0.02, 0.006, 6), m.mouth, [-0.034, 0.147, 0.092], [1, 1, 0.85], [Math.PI / 2 - 0.1, 0, 0]);
+      H(new THREE.TorusGeometry(0.096, 0.0028, 3, 16), m.strap ?? m.mouth, [0, 0.15, 0.004], [1, 1.04, 1.06], [0.15, 0, 0.32]);
     }
 
     // Rörliga delar: ögon, ögonlock, ögonbryn, mun och underläpp
@@ -1243,47 +1217,47 @@ export class Knight {
     for (const s of [1, -1]) {
       const eye = new THREE.Group();
       eye.position.set(0.033 * s, 0.146, 0.081);
-      eye.add(this.shape(new THREE.SphereGeometry(0.0145, 12, 10), m.eyeWhite, [0, 0, 0], [1, 0.82, 0.7]));
+      eye.add(this.shape(new THREE.SphereGeometry(0.0172, 10, 8), m.eyeWhite, [0, 0, 0], [1.05, 0.84, 0.7]));
       const iris = new THREE.Group(); // irisen kan titta åt sidan
-      iris.add(this.shape(new THREE.SphereGeometry(0.0074, 10, 8), m.iris, [0, 0, 0.0085], [1, 1, 0.45]));
-      iris.add(this.shape(new THREE.SphereGeometry(0.0036, 6, 4), m.mouth, [0, 0, 0.0115]));
+      iris.add(this.shape(new THREE.SphereGeometry(0.0095, 10, 8), m.iris, [0, 0, 0.0088], [1, 1, 0.45]));
+      iris.add(this.shape(new THREE.SphereGeometry(0.0046, 6, 4), m.mouth, [0, 0, 0.0122]));
+      iris.add(this.shape(new THREE.SphereGeometry(0.002, 4, 3), m.glint, [0.003, 0.0033, 0.0136])); // glimt
       eye.add(iris);
       eye.userData.iris = iris;
       if (!(f.patch && s < 0)) face.add(eye);
       this.eyes.push(eye);
-      // Övre ögonlock (hud) som sänks när man kisar eller blinkar, och ett fast nedre ögonlock
       const lid = new THREE.Group();
       lid.position.set(0.033 * s, 0.146, 0.081);
-      lid.add(this.shape(new THREE.SphereGeometry(0.0162, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), m.skin, [0, 0, 0], [1, 0.85, 0.75]));
+      lid.add(this.shape(new THREE.SphereGeometry(0.0186, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), m.faceSolid, [0, 0, 0], [1.02, 0.86, 0.75]));
       lid.rotation.x = -0.9;
       face.add(lid);
       this.lids.push(lid);
-      face.add(this.shape(new THREE.SphereGeometry(0.0155, 10, 6, 0, Math.PI * 2, Math.PI * 0.62, Math.PI * 0.38), m.skin, [0.033 * s, 0.1455, 0.081], [1.02, 0.8, 0.78])); // nedre ögonlock
-      const bw = 0.03 + f.brow * 0.012;
-      const brow = this.shape(new THREE.CapsuleGeometry(0.0042 + f.brow * 0.002, bw, 3, 6), m.hair, [0.034 * s, 0.168, 0.09], [1, 1, 0.8], [0, 0, Math.PI / 2 + 0.15 * s]);
+      face.add(this.shape(new THREE.SphereGeometry(0.0179, 8, 4, 0, Math.PI * 2, Math.PI * 0.62, Math.PI * 0.38), m.faceSolid, [0.033 * s, 0.1455, 0.081], [1.05, 0.82, 0.78])); // nedre ögonlock
+      // Kraftiga, kantiga ögonbryn
+      const bw = 0.034 + f.brow * 0.008;
+      const brow = this.shape(new THREE.BoxGeometry(bw, 0.0085 + f.brow * 0.0045, 0.012), m.brow, [0.034 * s, 0.168, 0.092], [1, 1, 1], [0.15, -0.25 * s, 0.12 * s]);
       brow.userData.side = s;
-      brow.userData.base = Math.PI / 2;
+      brow.userData.base = 0.12 * s;
+      brow.userData.raise = f.browRaise * 0.0028 * s; // ena brynet lite högre
       face.add(brow);
       this.brows.push(brow);
     }
-    // Munnen: mörk öppning med övre tänder (kanske med en lucka) och tunga
+    // Munnen: mörk öppning med en rad övre tänder (kanske med en lucka) och tunga
     const mouth = new THREE.Group();
     mouth.position.set(0, 0.088, 0.09);
-    mouth.add(this.shape(new THREE.SphereGeometry(0.019, 10, 8), m.mouth, [0, 0, 0], [1.25, 1, 0.5]));
-    if (f.gap) {
-      mouth.add(this.shape(new THREE.BoxGeometry(0.009, 0.006, 0.006), m.teeth, [-0.008, 0.009, 0.004]));
-      mouth.add(this.shape(new THREE.BoxGeometry(0.008, 0.006, 0.006), m.teeth, [0.009, 0.009, 0.004]));
-    } else {
-      mouth.add(this.shape(new THREE.BoxGeometry(0.024, 0.006, 0.006), m.teeth, [0, 0.009, 0.004]));
+    mouth.add(this.shape(new THREE.SphereGeometry(0.02, 8, 6), m.mouth, [0, 0, 0], [1.35, 1, 0.5]));
+    for (let i = 0; i < 6; i++) {
+      if (f.gap && i === 2) continue;
+      mouth.add(this.shape(new THREE.BoxGeometry(0.0046, 0.0068, 0.006), m.teeth, [-0.0128 + i * 0.0051, 0.0088, 0.0045]));
     }
-    mouth.add(this.shape(new THREE.SphereGeometry(0.01, 8, 6), this.mat(0xa04048, 0.5, 0), [0, -0.007, 0.0], [1.3, 0.5, 1])); // tunga
+    mouth.add(this.shape(new THREE.SphereGeometry(0.01, 6, 4), this.mat(0xa04048, 0.5, 0), [0, -0.007, 0.0], [1.3, 0.5, 1])); // tunga
     face.add(mouth);
     this.mouthMesh = mouth;
-    // Underläpp och nedre tänder följer käken
+    this.smirk = f.smirk * 0.12; // snett leende
     const lower = new THREE.Group();
     lower.position.set(0, 0.0815, 0.092);
-    lower.add(this.shape(new THREE.CapsuleGeometry(0.0062, 0.022, 3, 8), m.lips, [0, 0, 0], [1, 1, 0.8], [0, 0, Math.PI / 2]));
-    lower.add(this.shape(new THREE.BoxGeometry(0.02, 0.005, 0.005), m.teeth, [0, 0.005, -0.004]));
+    lower.add(this.shape(new THREE.CapsuleGeometry(0.0064, 0.026, 2, 6), m.lips, [0, 0, 0], [1, 1, 0.8], [0, 0, Math.PI / 2]));
+    lower.add(this.shape(new THREE.BoxGeometry(0.022, 0.005, 0.005), m.teeth, [0, 0.005, -0.004]));
     face.add(lower);
     this.lowerLip = lower;
     this.lips = lower; // gammalt namn
@@ -1304,6 +1278,19 @@ export class Knight {
     this.mergeChildren(mouth);
     this.mergeChildren(lower);
     this.mergeChildren(nb);
+    for (const g of [hair.cap, hair.top, hair.long, beardGroup]) this.mergeChildren(g);
+  }
+
+  // Vad syns av håret? Utan huvudbonad: allt. Under öppna hattar: kalotten och långt hår.
+  // Under stängda hjälmar, ringbrynjehuva och sjal: inget hår och inget skägg.
+  updateHairVisibility() {
+    if (!this.hairParts) return;
+    const bare = this.helmetOff || this.headgear === "none";
+    const covered = !bare && (this.closedHelmet || this.headgear === "hood");
+    this.hairGroup.visible = !covered;
+    this.hairParts.top.visible = bare;
+    this.hairParts.long.visible = !covered;
+    this.beardGroup.visible = bare || !(this.closedHelmet || this.headgear === "hood");
   }
 
   // ---------- Lemmar per rustning ----------
@@ -1625,6 +1612,76 @@ export class Knight {
       add(new THREE.CylinderGeometry(0.26, 0.26, 0.018, 22), m.straw, [0, 0.17, 0]);
       add(new THREE.CylinderGeometry(0.1, 0.12, 0.12, 16), m.straw, [0, 0.235, 0]);
       add(new THREE.CylinderGeometry(0.121, 0.121, 0.03, 16, 1, true), m.cloth, [0, 0.195, 0]);
+    } else if (kind === 7 || kind === 8) {
+      // 7: ringbrynjehuva (ansiktet syns) – 8: sjal i spelarens färg som täcker allt utom ögonen
+      const scarf = kind === 8;
+      const mat = scarf ? this.mat(this.colorHexFor ?? 0xa82418, 0.92, 0, { flatShading: true, side: THREE.DoubleSide }) : m.chain;
+      const geo = new THREE.SphereGeometry(1, 18, 12);
+      const pos = geo.attributes.position;
+      const dirs = [];
+      const d = new THREE.Vector3();
+      const rnd = seededRandom(91);
+      for (let i = 0; i < pos.count; i++) {
+        d.fromBufferAttribute(pos, i);
+        dirs.push(d.clone());
+        let r = 1;
+        if (scarf) {
+          r += (rnd() - 0.5) * 0.07; // veck i tyget
+          if (d.y < 0.05 && d.z > 0.2) r += 0.12 * d.z; // munskyddet står ut över näsan
+        }
+        pos.setXYZ(i, d.x * 0.112 * r, d.y * 0.122 * r + 0.135, d.z * 0.118 * r + 0.004);
+      }
+      // Öppningen: hela ansiktet (huva) eller bara en springa för ögonen (sjal)
+      const open = scarf ? (v) => v.z > 0.45 && v.y > 0.0 && v.y < 0.42 && Math.abs(v.x) < 0.62 : (v) => v.z > 0.42 && v.y > -0.68 && v.y < 0.5;
+      const ind = geo.index?.array || [];
+      const idx = [];
+      for (let t = 0; t < ind.length; t += 3) {
+        if (open(dirs[ind[t]]) || open(dirs[ind[t + 1]]) || open(dirs[ind[t + 2]])) continue;
+        if (dirs[ind[t]].y < -0.85 && dirs[ind[t + 1]].y < -0.85 && dirs[ind[t + 2]].y < -0.85) continue; // öppen nertill (halsen)
+        idx.push(ind[t], ind[t + 1], ind[t + 2]);
+      }
+      if (ind.length) geo.setIndex(idx);
+      geo.computeVertexNormals();
+      add(geo, mat);
+      add(new THREE.CylinderGeometry(0.085, scarf ? 0.11 : 0.2, scarf ? 0.1 : 0.13, scarf ? 10 : 18, 1, true), mat, [0, scarf ? 0.0 : -0.01, scarf ? 0.005 : 0]); // runt halsen / ut över axlarna
+      if (scarf) {
+        add(new THREE.SphereGeometry(0.022, 5, 4), mat, [0.02, 0.17, -0.118]); // knuten i nacken
+        for (const s of [1, -1]) add(new THREE.BoxGeometry(0.03, 0.12, 0.006), mat, [0.03 + 0.02 * s, 0.11, -0.124], [1, 1, 1], [0.2, 0, 0.18 * s]);
+      } else {
+        add(new THREE.TorusGeometry(0.106, 0.006, 4, 18, Math.PI * 1.15), m.strap, [0, 0.17, 0.005], [1, 1, 1.08], [Math.PI / 2 - 0.25, 0, Math.PI * 0.92]); // läderband runt ansiktsöppningen
+      }
+    } else if (kind === 9) {
+      // Pälsmössa: tjock, lurvig pälskant och en mörk läderkulle
+      const fur = this.mat(0xb89a6c, 0.98, 0, { flatShading: true });
+      const furDark = this.mat(0x8a6c48, 0.98, 0, { flatShading: true });
+      const crown = this.mat(0x4a3020, 0.9, 0, { flatShading: true, map: leatherTexture() });
+      const rnd = seededRandom(57);
+      const band = new THREE.CylinderGeometry(0.13, 0.126, 0.085, 14, 3, true);
+      const p = band.attributes.position;
+      for (let i = 0; i < p.count; i++) {
+        const k = 1 + (rnd() - 0.5) * 0.12;
+        p.setX(i, p.getX(i) * k);
+        p.setZ(i, p.getZ(i) * k);
+        p.setY(i, p.getY(i) + (rnd() - 0.5) * 0.014);
+      }
+      band.computeVertexNormals();
+      add(band, fur, [0, 0.195, 0], [1, 1, 1.06]);
+      add(new THREE.CylinderGeometry(0.105, 0.11, 0.05, 12), crown, [0, 0.255, -0.005], [1, 1, 1.04]);
+      add(new THREE.SphereGeometry(0.105, 12, 5, 0, Math.PI * 2, 0, Math.PI / 2), crown, [0, 0.278, -0.005], [1, 0.45, 1.04]);
+      // Lurviga tofsar runt kanten (pekar ut och lite ner)
+      const q = new THREE.Quaternion();
+      for (let i = 0; i < 26; i++) {
+        const a = (i / 26) * Math.PI * 2 + rnd() * 0.2;
+        const y = 0.165 + rnd() * 0.06;
+        const geo = new THREE.ConeGeometry(0.018 + rnd() * 0.008, 0.035 + rnd() * 0.02, 4);
+        geo.translate(0, 0.012, 0);
+        const tuft = new THREE.Mesh(geo, i % 3 ? fur : furDark);
+        tuft.position.set(Math.sin(a) * 0.124, y, Math.cos(a) * 0.131);
+        tuft.quaternion.copy(q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(Math.sin(a), -0.35 + rnd() * 0.5, Math.cos(a)).normalize()));
+        helmet.add(tuft);
+      }
+    } else if (kind === 10) {
+      // Barhuvad: ingen huvudbonad (håret syns)
     } else {
       // Tunnhjälm: riktiga ögonspringor på var sin sida om ett kors i mässing, andningshål och hjälmkam
       const R = 0.122;
@@ -2761,6 +2818,11 @@ export class Knight {
   playHit(dirLocal) {
     this.hitT = 0;
     this.hitDir = dirLocal;
+    // Knuff i lederna bort från slaget: bålen, huvudet och armarna rycker till och sviktar tillbaka
+    const [hx, hz] = dirLocal;
+    this.kickJoint("torso", -hz * 5, 0, -hx * 4);
+    this.kickJoint("head", -hz * 9, (Math.random() - 0.5) * 4, -hx * 8);
+    for (const side of ["L", "R"]) this.kickJoint("upperArm" + side, (Math.random() - 0.3) * 6, 0, (side === "L" ? 1 : -1) * 3);
     this.squint = 1;
     this.shout(0.55, 0.35);
   }
@@ -2779,7 +2841,7 @@ export class Knight {
 
   // Hjälmen flyger av (tungt slag). Returnerar en ragdoll för hjälmen, eller null.
   knockHelmet(velocity, scene, bounds) {
-    if (this.helmetOff || !this.helmet.parent) return null;
+    if (this.helmetOff || !this.helmet.parent || this.headgear === "none") return null;
     this.helmetOff = true;
     this.visorOpen = 0;
     const helmet = this.helmet;
@@ -2788,7 +2850,7 @@ export class Knight {
     const tmp = new THREE.Vector3();
     const world = local.map((p) => tmp.set(p[0], p[1], p[2]).applyMatrix4(helmet.matrixWorld).toArray());
     scene.attach(helmet);
-    this.hairGroup.visible = true;
+    this.updateHairVisibility();
     helmet.traverse((obj) => {
       if (obj.isMesh) obj.material = this.calmMaterial(obj.material);
     });
@@ -2799,8 +2861,8 @@ export class Knight {
   // Utan hjälm från början (t.ex. om man kommer in mitt i en runda där hjälmen redan åkt av)
   removeHelmet() {
     this.helmetOff = true;
-    this.hairGroup.visible = true;
     this.helmet.removeFromParent();
+    this.updateHairVisibility();
   }
 
   updateFace(dt) {
@@ -2821,6 +2883,9 @@ export class Knight {
     const wide = grin ? 1.35 : clench ? 1.15 : 1;
     this.mouthMesh.scale.set((1 - this.mouthOpen * 0.15) * wide, 0.2 + this.mouthOpen * 1.5, 1);
     this.mouthMesh.position.y = 0.088 - this.mouthOpen * 0.01 + (grin ? 0.002 : 0);
+    // Snett leende: munnen lutar lite åt ena hållet (mer när man flinar)
+    this.mouthMesh.rotation.z = (this.smirk || 0) * (grin ? 1.6 : 0.6);
+    this.lowerLip.rotation.z = this.mouthMesh.rotation.z;
     this.lowerLip.position.y = 0.0815 - this.mouthOpen * 0.02;
     this.lowerLip.position.z = 0.092 - this.mouthOpen * 0.004;
     this.lowerLip.scale.x = wide;
@@ -2858,7 +2923,7 @@ export class Knight {
     if (this.dead) angry = 0;
     for (const brow of this.brows) {
       brow.rotation.z = (brow.userData.base ?? 0) + brow.userData.side * angry;
-      brow.position.y = 0.168 + (laughing ? 0.008 : -this.squint * 0.005 - Math.max(0, angry - 0.35) * 0.008 + this.mouthOpen * 0.004 + (lowHp ? 0.004 : 0));
+      brow.position.y = 0.168 + (brow.userData.raise || 0) + (laughing ? 0.008 : -this.squint * 0.005 - Math.max(0, angry - 0.35) * 0.008 + this.mouthOpen * 0.004 + (lowHp ? 0.004 : 0));
       brow.position.x = brow.userData.side * (0.034 - Math.max(0, angry - 0.35) * 0.006);
     }
     // Visiret fälls upp när man hånar (så man ser flinet)
@@ -3102,7 +3167,9 @@ export class Knight {
   }
 
   // Hela riddaren blir en ragdoll (vid död). Riddaren själv ska inte användas efter detta.
-  die(velocity, scene, bounds) {
+  // style: hur riddaren dör (se deathDrive): "decap" huvudet av, "gut" stöt i magen, "stumble" vanligt dödande slag,
+  // "heavy" tungt slag (kastas iväg), "leg" ett ben av (tippar åt det hållet), "slump" förblöder (sjunker ihop)
+  die(velocity, scene, bounds, style = null, info = {}) {
     if (this.label) this.label.removeFromParent();
     this.removeTrail();
     // Sista ansiktsuttrycket: gapande mun och slutna ögon
@@ -3113,9 +3180,142 @@ export class Knight {
     this.dead = true;
     this.updateFace(0);
     this.freezeSoft();
-    const ragdoll = this.makeRagdoll(this.subtree(this.seg.pelvis), velocity, scene, bounds, 2, true);
+    this.group.updateMatrixWorld(true);
+    const drive = style ? this.deathDrive(style, velocity, info) : null;
+    const v0 = drive ? drive.velocity : velocity;
+    const ragdoll = this.makeRagdoll(this.subtree(this.seg.pelvis), v0, scene, bounds, 2, true);
+    if (drive) ragdoll.setDrive(drive);
     this.group.removeFromParent();
     return ragdoll;
+  }
+
+  // Muskler när man dör: kroppen tar några steg, vinglar eller går ner på knä innan den blir slapp.
+  // Allt räknas i världen. velocity = slagets riktning och kraft.
+  deathDrive(style, velocity, info) {
+    const yaw = this.group.rotation.y;
+    const fwd = [Math.sin(yaw), Math.cos(yaw)];
+    const left = [Math.cos(yaw), -Math.sin(yaw)];
+    const vl = Math.hypot(velocity[0], velocity[2]) || 1;
+    const away = [velocity[0] / vl, velocity[2] / vl]; // bort från den som slog
+    const ease = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+    const lerp3 = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+    const legs = { footL: 0, footR: 0, shinL: 0, shinR: 0, thighL: 0, thighR: 0 };
+    const LEGS = Object.keys(legs);
+    const holdLegs = (foot, shin, thigh) => Object.fromEntries(LEGS.map((n) => [n, n.startsWith("foot") ? foot : n.startsWith("shin") ? shin : thigh]));
+    const all = (h) => ({ "*": h });
+    const rnd = Math.random;
+
+    if (style === "decap") {
+      // Huvudet av: kroppen står kvar en stund och vinglar, armarna sjunker, sedan viker sig knäna och den faller ihop
+      const stand = 0.7 + rnd() * 0.6;
+      const buckle = 0.55;
+      const sway = [left[0] * (rnd() < 0.5 ? 1 : -1), left[1]];
+      const fall = rnd() < 0.65 ? fwd : [-fwd[0], -fwd[1]];
+      return {
+        velocity: [0, 0, 0],
+        until: stand + buckle,
+        at: (t) => {
+          if (t < stand) {
+            const w = Math.sin(t * 4.2) * 0.06 * Math.min(1, t * 2);
+            const upper = [sway[0] * w, -0.01 * t, sway[1] * w];
+            return {
+              hold: { ...holdLegs(0.35, 0.18, 0.14), pelvis: 0.14, torso: 0.1, upperArmL: 0, upperArmR: 0, forearmL: 0, forearmR: 0, handL: 0, handR: 0 },
+              shift: { pelvis: [upper[0] * 0.4, upper[1], upper[2] * 0.4], torso: upper, "*": [0, 0, 0] },
+            };
+          }
+          const f = ease((t - stand) / buckle);
+          const drop = -0.5 * f;
+          const lean = 0.25 * f;
+          const h = 0.12 * (1 - f) + 0.02;
+          return {
+            hold: { ...holdLegs(0.3, 0.06, 0.05), pelvis: h, torso: h * 0.8 },
+            shift: {
+              pelvis: [fall[0] * 0.05, drop, fall[1] * 0.05],
+              torso: [fall[0] * lean, drop * 1.05, fall[1] * lean],
+              shinL: [fwd[0] * 0.15 * f, -0.1 * f, fwd[1] * 0.15 * f],
+              shinR: [fwd[0] * 0.15 * f, -0.1 * f, fwd[1] * 0.15 * f],
+              "*": [0, 0, 0],
+            },
+          };
+        },
+      };
+    }
+
+    if (style === "gut") {
+      // Stöt i magen: tar sig om magen, backar ett steg, går ner på knä och faller framåt
+      this.group.updateMatrixWorld(true);
+      const belly = new THREE.Vector3(0, 0.12, 0.2).applyMatrix4(this.seg.torso.matrixWorld);
+      const handTo = {};
+      for (const side of ["L", "R"]) {
+        const hand = this.seg["hand" + side];
+        if (hand.userData.detached) continue;
+        const p = new THREE.Vector3().setFromMatrixPosition(hand.matrixWorld);
+        handTo["hand" + side] = [belly.x - p.x + left[0] * (side === "L" ? 0.06 : -0.06), belly.y - p.y, belly.z - p.z + left[1] * (side === "L" ? 0.06 : -0.06)];
+      }
+      const back = 0.35;
+      const kneel = 0.75;
+      const tip = 0.35;
+      return {
+        velocity: [velocity[0] * 0.1, 0, velocity[2] * 0.1],
+        until: back + kneel + tip,
+        at: (t) => {
+          const fb = ease(t / back);
+          const step = [away[0] * 0.18 * fb, 0, away[1] * 0.18 * fb];
+          const fk = ease((t - back) / kneel);
+          const ft = ease((t - back - kneel) / tip);
+          const drop = -0.48 * fk;
+          const bow = 0.12 * fk + 0.35 * ft;
+          const torso = [step[0] + fwd[0] * bow, drop - 0.05 * ft, step[2] + fwd[1] * bow];
+          const pelvis = [step[0], drop, step[2]];
+          const hands = {};
+          for (const [k, v] of Object.entries(handTo)) hands[k] = lerp3([0, 0, 0], [v[0] + torso[0], v[1] + torso[1], v[2] + torso[2]], Math.min(1, t / 0.25));
+          const strength = 0.13 * (1 - ft) + 0.01;
+          return {
+            hold: { ...holdLegs(0.3, 0.05 * (1 - ft), 0.04 * (1 - ft)), pelvis: strength, torso: strength * 0.9, head: strength * 0.5, handL: 0.14 * (1 - ft), handR: 0.14 * (1 - ft), forearmL: 0.03, forearmR: 0.03 },
+            shift: { pelvis, torso, head: [torso[0] + fwd[0] * 0.08 * fk, torso[1], torso[2] + fwd[1] * 0.08 * fk], ...hands, shinL: [fwd[0] * 0.18 * fk, -0.12 * fk, fwd[1] * 0.18 * fk], shinR: [fwd[0] * 0.18 * fk, -0.12 * fk, fwd[1] * 0.18 * fk], "*": [0, 0, 0] },
+          };
+        },
+      };
+    }
+
+    if (style === "stumble" || style === "slump") {
+      // Vacklar ett par steg bort från slaget (eller sjunker ihop där man står) och viker sig
+      const dist = style === "slump" ? 0.05 : 0.35 + rnd() * 0.15;
+      const dur = style === "slump" ? 0.7 : 0.5;
+      return {
+        velocity: [velocity[0] * 0.35, 0.2, velocity[2] * 0.35],
+        until: dur,
+        at: (t) => {
+          const f = ease(t / dur);
+          const go = [away[0] * dist * f, -0.22 * f, away[1] * dist * f];
+          const h = 0.1 * (1 - f) + 0.02;
+          return {
+            hold: { ...holdLegs(0.22 * (1 - f * 0.7), 0.03, 0.03), pelvis: h, torso: h * 0.8 },
+            shift: { pelvis: go, torso: [go[0] * 1.3, go[1] * 1.2, go[2] * 1.3], "*": [0, 0, 0] },
+          };
+        },
+      };
+    }
+
+    if (style === "leg") {
+      // Ett ben av: tippar åt den sidan och tar emot sig med armen
+      const side = info.side === "L" ? 1 : -1;
+      return {
+        velocity: [left[0] * side * 1.8 + velocity[0] * 0.3, 0.6, left[1] * side * 1.8 + velocity[2] * 0.3],
+        until: 0.35,
+        at: (t) => {
+          const f = ease(t / 0.35);
+          const arm = side > 0 ? "upperArmL" : "upperArmR";
+          return {
+            hold: { [arm]: 0.06, ["forearm" + (side > 0 ? "L" : "R")]: 0.04 },
+            shift: { [arm]: [left[0] * side * 0.25 * f, -0.3 * f, left[1] * side * 0.25 * f], "*": [0, 0, 0] },
+          };
+        },
+      };
+    }
+
+    // "heavy": kastas iväg av slaget (lite mer kraft och uppåt)
+    return { velocity: [velocity[0] * 1.3, velocity[1] + 1, velocity[2] * 1.3], until: 0, at: () => ({ hold: {}, shift: {} }) };
   }
 
   // Mitten av en kroppsdel i världen (för blod där träffen landade)
@@ -3290,11 +3490,32 @@ export class Knight {
     const dirFwd = this.dirFwd;
     const swing = Math.sin(this.phase) * amp;
 
+    // ----- Tyngd och fart -----
+    // Acceleration framåt/bakåt och hur fort man vänder sig (för att luta in i rörelsen)
+    const yawNow = this.group.rotation.y;
+    let yawRate = this.prevYawA === undefined ? 0 : yawNow - this.prevYawA;
+    yawRate = Math.atan2(Math.sin(yawRate), Math.cos(yawRate)) / Math.max(dt, 1e-3);
+    this.prevYawA = yawNow;
+    const accF = this.prevFwd === undefined ? 0 : (motion.forward - this.prevFwd) / Math.max(dt, 1e-3);
+    this.prevFwd = motion.forward;
+    const kAcc = 1 - Math.exp(-dt * 6);
+    this.accLean = (this.accLean || 0) + (Math.max(-0.22, Math.min(0.22, accF * 0.025)) - (this.accLean || 0)) * kAcc;
+    this.turnLean = (this.turnLean || 0) + (Math.max(-0.2, Math.min(0.2, -Math.max(-4, Math.min(4, yawRate)) * speed * 0.012)) - (this.turnLean || 0)) * kAcc;
+    // Varje riddare har sin egen takt när han står still (andas, flyttar vikten, rättar till greppet)
+    this.idleSeed ??= Math.random() * 100;
+    const idleT = this.time + this.idleSeed;
+    const still = (1 - moving) * (this.attack || this.charging || this.parryT >= 0 ? 0.3 : 1);
+
     // ----- Höfterna -----
     // Lägre när man står i stridsställning (böjda knän) och när man springer, gungar i takt med stegen
     let pelvisY = lerp(0.95, 0.925 - 0.03 * run, moving) - Math.abs(Math.sin(this.phase)) * 0.025 * amp;
-    let pelvisRotY = lerp(-0.22, Math.sin(this.phase) * 0.14 * amp * dirFwd, moving); // stilla: vänster höft fram
-    let pelvisRotZ = Math.sin(this.phase) * 0.04 * amp;
+    let pelvisRotY = lerp(-0.22, Math.sin(this.phase) * 0.16 * amp * dirFwd, moving); // stilla: vänster höft fram
+    // Höften sjunker på den sida där benet svingar, och vikten flyttas över foten man står på
+    let pelvisRotZ = Math.sin(this.phase) * 0.07 * amp + this.turnLean * 0.5;
+    let pelvisX = -Math.sin(this.phase) * 0.028 * amp;
+    // Stilla: väger långsamt över från fot till fot
+    pelvisX += Math.sin(idleT * 0.55) * 0.022 * still;
+    pelvisRotZ += Math.sin(idleT * 0.55) * 0.035 * still;
     let pelvisZ = 0;
     if (motion.airborne) pelvisY = 0.9;
     if (this.landT >= 0) {
@@ -3308,7 +3529,7 @@ export class Knight {
 
     // ----- Vapenarmen: stridsställning/gång, laddning eller slag -----
     let pose = STANCE_R.map((v, i) => lerp(v, CARRY_R[i], moving));
-    pose[0] -= swing * 0.3 * dirFwd;
+    pose[0] -= swing * 0.42 * dirFwd;
     this.chargeAmount += ((this.charging ? 1 : 0) - this.chargeAmount) * Math.min(1, dt * 8);
     const chargePose = movesFor(this.weaponKey).h.arm[0].slice(1);
     pose = pose.map((v, i) => lerp(v, chargePose[i], this.chargeAmount));
@@ -3359,7 +3580,7 @@ export class Knight {
 
     // ----- Sköldarmen: stridsställning/gång eller parering -----
     let shield = STANCE_L.map((v, i) => lerp(v, CARRY_L[i], moving));
-    shield[0] += swing * 0.15 * dirFwd;
+    shield[0] += swing * 0.3 * dirFwd;
     let shieldK = k;
     if (this.parryT >= 0 && !this.twoHanded) {
       this.parryT += dt;
@@ -3405,8 +3626,16 @@ export class Knight {
     }
 
     // ----- Bålen: lutar in i rörelsen, motvrids mot höfterna, andas -----
-    let lean = 0.06 * moving + 0.1 * run * dirFwd + Math.sin(this.time * 2.0) * 0.012 + (1 - moving) * 0.05 + lunge * 0.25 + this.crouchAmt * 0.28;
-    let torsoZ = attackBend;
+    let lean = 0.06 * moving + 0.1 * run * dirFwd + Math.sin(idleT * 1.9) * 0.016 + (1 - moving) * 0.05 + lunge * 0.25 + this.crouchAmt * 0.28 + this.accLean;
+    let torsoZ = attackBend + this.turnLean - pelvisRotZ * 0.6; // överkroppen rätar upp sig mot höftens lutning
+    // Stilla: rullar på axlarna och rättar till greppet då och då
+    let fidget = 0;
+    if (still > 0.5) {
+      this.fidgetT = (this.fidgetT ?? 2 + Math.random() * 4) - dt;
+      if (this.fidgetT < -1.2) this.fidgetT = 3 + Math.random() * 5;
+      if (this.fidgetT < 0) fidget = Math.sin((-this.fidgetT / 1.2) * Math.PI);
+    }
+    lean -= fidget * 0.05;
     lean += grabLean;
     if (this.twoHanded && !this.attack) lean += 0.04;
     // Zweihändern: vinglar till efter varje hugg
@@ -3632,16 +3861,26 @@ export class Knight {
     }
 
     set("torso", lean, torsoY, torsoZ, this.attack || this.kickT >= 0 || rollAmt > 0 ? kFast : k);
-    set("head", headX ?? -lean * 0.5, -torsoY * 0.5 - pelvisRotY * 0.3, headZ);
+    // Huvudet håller blicken stilla medan kroppen gungar (och tittar runt lite när man står still)
+    const lookAround = Math.sin(idleT * 0.37) * Math.sin(idleT * 0.23) * (this.gazeTarget ? 0.12 : 0.35) * still;
+    set("head", headX ?? -lean * 0.72, -torsoY * 0.8 - pelvisRotY * 0.75 + lookAround, headZ - torsoZ * 0.6 - pelvisRotZ * 0.5);
+    if (fidget > 0 && !this.attack) {
+      // rättar till greppet: handleden vrids och axeln lyfts lite
+      const hr = T.handR;
+      if (hr) hr[0] += fidget * 0.35;
+      const ua = T.upperArmL;
+      if (ua) ua[2] += fidget * 0.12;
+    }
 
     // ----- Flytta överkroppens leder mjukt mot målen -----
     for (const name in T) {
       if (name.startsWith("thigh") || name.startsWith("shin") || name.startsWith("foot")) continue;
-      this.easeJoint(name, T[name]);
+      this.springJoint(name, T[name], dt);
     }
     const pelvis = this.seg.pelvis;
     if (!pelvis.userData.detached) {
       pelvis.position.y += (pelvisY - pelvis.position.y) * k;
+      pelvis.position.x += (pelvisX - pelvis.position.x) * k;
       pelvis.position.z += (pelvisZ - pelvis.position.z) * kFast;
       pelvis.rotation.y += (pelvisRotY - pelvis.rotation.y) * k;
       pelvis.rotation.z += (pelvisRotZ - pelvis.rotation.z) * k;
@@ -3809,6 +4048,49 @@ export class Knight {
     }
   }
 
+  // Leden rör sig som en fjäder med lite tyngd: accelererar, bromsar och sviktar en aning förbi målet.
+  // Lederna längre ut (underarm, hand, huvud) är mjukare och släpar efter, så rörelser "piskar" som hos en människa.
+  springJoint(name, [x, y, z, sp], dt) {
+    const seg = this.seg[name];
+    if (!seg || seg.userData.detached) return;
+    if (dt <= 0) return;
+    const w0 = -Math.log(Math.max(1e-6, 1 - sp)) / dt; // samma styvhet som den gamla mjuka rörelsen
+    const J = SPRING[name.replace(/[LR]$/, "")] || SPRING.torso;
+    const w = w0 * J[0];
+    const zeta = J[1];
+    const r = seg.rotation;
+    const v = (seg.userData.sv ||= [0, 0, 0]);
+    // Fjädern har ett eget läge. Små rättningar utifrån (armen knuffas ut ur bröstet varje bild) räknas om
+    // varje gång och ska inte störa fjädern. Stora ändringar (tvåhandsgreppet, en ny pose) tas över.
+    // Rättningar utifrån (armen knuffas ut ur bröstet, tvåhandsgreppet) tas över som läge; farten behålls.
+    // Stora hopp (en helt ny pose utifrån) nollar farten.
+    const prev = seg.userData.sPos;
+    if (prev && Math.abs(r.x - prev[0]) + Math.abs(r.y - prev[1]) + Math.abs(r.z - prev[2]) > 0.6) v[0] = v[1] = v[2] = 0;
+    const cur = [r.x, r.y, r.z];
+    const target = [x, y, z];
+    const steps = Math.max(1, Math.ceil((w * dt) / 0.2));
+    const h = dt / steps;
+    for (let st = 0; st < steps; st++) {
+      for (let i = 0; i < 3; i++) {
+        const a = w * w * (target[i] - cur[i]) - 2 * zeta * w * v[i];
+        v[i] += a * h;
+        cur[i] += v[i] * h;
+      }
+    }
+    r.set(cur[0], cur[1], cur[2]);
+    seg.userData.sPos = cur;
+  }
+
+  // En knuff i lederna (träff): fjädrarna gör resten (rycker till och kommer tillbaka)
+  kickJoint(name, x, y, z) {
+    const seg = this.seg[name];
+    if (!seg || seg.userData.detached) return;
+    const v = (seg.userData.sv ||= [0, 0, 0]);
+    v[0] += x;
+    v[1] += y;
+    v[2] += z;
+  }
+
   easeJoint(name, [x, y, z, sp]) {
     const seg = this.seg[name];
     if (!seg || seg.userData.detached) return;
@@ -3853,9 +4135,9 @@ export class Knight {
     const hc = Math.cos(hipYaw);
     const hs = Math.sin(hipYaw);
     const pelvisWorld = [
-      pos.x + pelvis.position.z * s,
+      pos.x + pelvis.position.z * s + pelvis.position.x * c,
       pos.y + pelvis.position.y,
-      pos.z + pelvis.position.z * c,
+      pos.z + pelvis.position.z * c - pelvis.position.x * s,
     ];
 
     for (const side of ["L", "R"]) {
