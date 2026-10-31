@@ -648,7 +648,7 @@ function createKnight(player) {
   if (player.wear) knight.applyWear(player.wear);
   if (player.helmetOff) knight.removeHelmet();
   // Fotspår i sanden och små knaster-ljud när fötterna sätts ner
-  const metal = player.look && (player.look.a === 0 || player.look.a === 3);
+  const metal = player.look && [0, 3, 9, 10, 13].includes(player.look.a);
   // Zweihänderns spets ritar ett spår och dammar i sanden
   knight.onWeaponDrag = (x, z) => {
     if (phase !== "round" && phase !== "countdown") return;

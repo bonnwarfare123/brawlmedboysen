@@ -26,6 +26,7 @@ import { COMBAT, JOINT_SEGMENT, LEG_JOINTS, weaponSpec, FISTS } from "./shared.j
 import { Ragdoll } from "./ragdoll.js";
 import { FootPlanner, solveLeg, solveArm, gaitStride } from "./ik.js";
 import { Cloth, Chain } from "./cloth.js";
+import { KIT_STYLES, CLOSED_HELMETS, HOOD_HELMETS, kitMaterials, buildKitTorso, buildKitLimbs, buildKitHelmet } from "./kit.js";
 import { rollFeatures, sculptHead as sculptFace, faceTexture, buildHair, beardShell, BEARD_REGION, BEARD_THICK, noseGeometry as wedgeNose } from "./face.js";
 import {
   chainmailTexture, leatherTexture, quiltTexture, wrapTexture, strawTexture, metalWearTexture, heraldryTexture,
@@ -212,7 +213,8 @@ function sculptChest(geo, y0, y1, amount = 0.13) {
 }
 
 // Rustningarna
-const ARMOR_STYLES = ["plate", "chain", "leather", "gilded", "peasant", "jester", "hedge"];
+const ARMOR_STYLES = ["plate", "chain", "leather", "gilded", "peasant", "jester", "hedge", ...KIT_STYLES];
+const KIT_HELP = { sculptTorso, sculptChest, latheAlong, PROFILE };
 
 // Rörelsekurvor för vapenarmen:
 // [tid, överarm framåt, överarm i sidled, underarm böj, bålens vridning, handled]
@@ -693,19 +695,23 @@ export class Knight {
       m.motleyB = this.mat(other, 0.8, 0, { map: linenTexture() });
       m.bell = this.mat(0xe0b040, 0.25, 0.9);
     }
+    // De nya rustningarna (kit.js) har egna material
+    const kit = KIT_STYLES.includes(style) ? kitMaterials(this, m, style, colorHex) : null;
+    this.kitInfo = kit;
+    if (kit?.metal) this.isMetal = true;
     this.m = m;
     for (const mat of this.materials) mat.userData.baseColor = mat.color.clone();
 
     // Vad lemmarna består av under rustningen
-    const limbMat = { plate: m.chain, gilded: m.chain, chain: m.chain, leather: m.leather, peasant: m.quilt, jester: m.motleyA, hedge: m.rustChain }[style];
-    const legMat = { plate: m.chain, gilded: m.chain, chain: m.chain, leather: m.wool, peasant: m.wool, jester: m.motleyB, hedge: m.wool }[style];
+    const limbMat = kit ? kit.limbL : { plate: m.chain, gilded: m.chain, chain: m.chain, leather: m.leather, peasant: m.quilt, jester: m.motleyA, hedge: m.rustChain }[style];
+    const legMat = kit ? kit.legL : { plate: m.chain, gilded: m.chain, chain: m.chain, leather: m.wool, peasant: m.wool, jester: m.motleyB, hedge: m.wool }[style];
     this.limbMat = limbMat;
 
     // ---------- Kroppsdelarna ----------
     // segment(namn, förälder, ledens position, punkter för fysiken, radie)
 
     // Bålens form för att hålla armarna utanför den (se keepArmsOut)
-    this.chestBody = isPlate ? { rx: 0.205, rz: 0.145, ar: 0.068 } : style === "hedge" ? { rx: 0.19, rz: 0.135, ar: 0.062 } : { rx: 0.168, rz: 0.112, ar: 0.054 };
+    this.chestBody = kit ? { ...kit.chest } : isPlate ? { rx: 0.205, rz: 0.145, ar: 0.068 } : style === "hedge" ? { rx: 0.19, rz: 0.135, ar: 0.062 } : { rx: 0.168, rz: 0.112, ar: 0.054 };
     const pelvis = this.segment("pelvis", this.group, [0, 1.0, 0], [[0, 0, 0], [0.1, -0.08, 0], [-0.1, -0.08, 0]], 0.1);
     const torso = this.segment("torso", pelvis, [0, 0, 0], [[0, 0, 0], [0, 0.44, 0], [0.19, 0.4, 0], [-0.19, 0.4, 0], [0, 0.25, 0.12]], 0.13);
     const head = this.segment("head", torso, [0, 0.46, 0], [[0, 0, 0], [0, 0.28, 0], [0, 0.12, 0.12]], 0.12);
@@ -730,8 +736,8 @@ export class Knight {
 
       // Lemmarna under rustningen (formade, inte rör). Kulor i lederna så det aldrig blir glipor.
       // Gycklaren har olika färg på vänster och höger sida (och korsvis på benen).
-      const lm = style === "jester" ? (side === "L" ? m.motleyA : m.motleyB) : limbMat;
-      const lg = style === "jester" ? (side === "L" ? m.motleyB : m.motleyA) : legMat;
+      const lm = style === "jester" ? (side === "L" ? m.motleyA : m.motleyB) : kit ? (side === "L" ? kit.limbL : kit.limbR) : limbMat;
+      const lg = style === "jester" ? (side === "L" ? m.motleyB : m.motleyA) : kit ? (side === "L" ? kit.legL : kit.legR) : legMat;
       upper.add(this.shape(latheAlong(PROFILE.upperArm, 0.29), lm));
       upper.add(this.shape(new THREE.SphereGeometry(0.06, 10, 8), lm));
       fore.add(this.shape(latheAlong(PROFILE.forearm, 0.26), lm));
@@ -743,7 +749,8 @@ export class Knight {
       if (style === "chain" || style === "jester") shin.add(this.shape(new THREE.SphereGeometry(0.045, 10, 8), lg, [0, -0.005, 0.04], [1, 0.95, 0.6])); // knäskål
       fore.add(this.shape(new THREE.SphereGeometry(0.04, 8, 6), lm, [0, 0.005, -0.035], [1, 0.9, 0.6])); // armbågsspets
 
-      if (isPlate) this.buildPlateLimbs(side, s, upper, fore, hand, thigh, shin, foot, m, gilded);
+      if (kit) buildKitLimbs(this, style, side, s, upper, fore, hand, thigh, shin, foot, m, KIT_HELP);
+      else if (isPlate) this.buildPlateLimbs(side, s, upper, fore, hand, thigh, shin, foot, m, gilded);
       else if (style === "chain") this.buildChainLimbs(side, s, upper, fore, hand, thigh, shin, foot, m);
       else if (style === "leather") this.buildLeatherLimbs(side, s, upper, fore, hand, thigh, shin, foot, m);
       else if (style === "jester") this.buildJesterLimbs(side, s, upper, fore, hand, thigh, shin, foot, m);
@@ -813,8 +820,8 @@ export class Knight {
     this.mergeChildren(shield);
     this.mergeChildren(this.helmet);
     if (this.plume) this.mergeChildren(this.plume);
-    this.closedHelmet = style !== "jester" && [0, 1, 4].includes(look.h);
-    this.headgear = style === "jester" ? "hat" : this.closedHelmet ? "closed" : [7, 8].includes(look.h) ? "hood" : look.h === 10 ? "none" : "hat";
+    this.closedHelmet = style !== "jester" && CLOSED_HELMETS.includes(look.h);
+    this.headgear = style === "jester" ? "hat" : this.closedHelmet ? "closed" : HOOD_HELMETS.includes(look.h) ? "hood" : look.h === 10 ? "none" : "hat";
     this.updateHairVisibility();
 
     // Blod på vapnet (syns mer ju fler man träffat)
@@ -824,6 +831,8 @@ export class Knight {
     // Mjukt tyg: mantel (valfri) och vapenrockens skört (ringbrynja)
     if (look.c === 1) this.addCape(m, gilded);
     if (style === "chain") this.addTabard(m);
+    if (style === "surcoat") this.addTabard(m, { height: 0.6, width: 0.34 });
+    if (style === "crusader") this.addTabard(m, { material: m.surWhite, height: 0.58, width: 0.34 });
 
     this.group.traverse((obj) => {
       if (obj.isMesh) {
@@ -862,11 +871,13 @@ export class Knight {
     const T = (...a) => torso.add(this.shape(...a));
 
     // Höfterna
-    P(new THREE.SphereGeometry(1, 14, 10), isPlate || style === "chain" ? m.chain : m.wool, [0, -0.04, 0], [0.16, 0.11, 0.12]);
+    P(new THREE.SphereGeometry(1, 14, 10), this.kitInfo ? this.kitInfo.hips : isPlate || style === "chain" ? m.chain : m.wool, [0, -0.04, 0], [0.16, 0.11, 0.12]);
     // Axlarna sitter fast på bålen, så det aldrig blir ett tomrum mellan arm och kropp
     for (const s of [1, -1]) T(new THREE.SphereGeometry(0.075, 12, 8), limbMat, [0.178 * s, 0.395, 0], [1.15, 0.85, 1.1]);
 
-    if (isPlate) {
+    if (this.kitInfo) {
+      buildKitTorso(this, style, pelvis, torso, m, look, KIT_HELP);
+    } else if (isPlate) {
       // Bröstharnesk: format runt bålen, med mittås, rullad halskant och nitar
       const chest = [[0.15, 0.0], [0.168, 0.06], [0.192, 0.2], [0.2, 0.3], [0.182, 0.39], [0.13, 0.445], [0.095, 0.46]]
         .map(([r, y]) => new THREE.Vector2(r, y));
@@ -1201,12 +1212,15 @@ export class Knight {
     const skull = sculptFace(f);
     H(skull, m.face);
     for (const s of [1, -1]) {
-      H(new THREE.SphereGeometry(0.024, 7, 5), m.faceSolid, [0.088 * s, 0.13, -0.004], [0.42, 1, 0.72]); // öron
-      H(new THREE.TorusGeometry(0.012, 0.0045, 4, 7), m.faceSolid, [0.092 * s, 0.13, -0.002], [0.5, 1.4, 1], [0, Math.PI / 2, 0]); // örats kant
+      const ek = f.earSize ?? 1;
+      H(new THREE.SphereGeometry(0.024, 7, 5), m.faceSolid, [0.088 * s, 0.13, -0.004], [0.42 * ek, ek, 0.72 * ek]); // öron
+      H(new THREE.TorusGeometry(0.012, 0.0045, 4, 7), m.faceSolid, [(0.088 + 0.004 * ek) * s, 0.13, -0.002], [0.5, 1.4, 1].map((v) => v * ek), [0, Math.PI / 2, 0.15 * s * (ek - 0.9)]); // örats kant
     }
     // Näsa: rak, kantig näsrygg (stor, liten eller sned)
-    H(wedgeNose(f.nose, f.broken), m.faceSolid);
-    for (const s of [1, -1]) H(new THREE.SphereGeometry(0.0034, 4, 3), m.mouth, [0.0075 * s, 0.0985, 0.0985 + 0.006 * f.nose]); // näsborrar
+    H(wedgeNose(f.nose, f.broken, f.noseType), m.faceSolid);
+    const up = f.noseType === 3 ? 0.004 : f.noseType === 1 ? -0.004 : 0;
+    const wide = f.noseType === 2 || f.noseType === 4 ? 1.35 : 1;
+    for (const s of [1, -1]) H(new THREE.SphereGeometry(0.0034 * (f.noseType === 3 ? 1.3 : 1), 4, 3), m.mouth, [0.0075 * s * wide, 0.0985 + up, 0.0985 + 0.006 * f.nose - up * 0.6]); // näsborrar
     if (f.bandage) {
       // Plåster i kors över näsryggen
       H(new THREE.BoxGeometry(0.036, 0.011, 0.004), m.bandage, [0, 0.133, 0.107 + 0.004 * f.nose], [1, 1, 1], [-0.35, 0, 0.35]);
@@ -1305,11 +1319,25 @@ export class Knight {
     mouth.add(this.shape(new THREE.SphereGeometry(0.02, 8, 6), m.mouth, [0, 0, 0], [1.35, 1, 0.5]));
     for (let i = 0; i < 6; i++) {
       if (f.gap && i === 2) continue;
-      mouth.add(this.shape(new THREE.BoxGeometry(0.0046, 0.0068, 0.006), m.teeth, [-0.0128 + i * 0.0051, 0.0088, 0.0045]));
+      const crooked = f.teeth === 2 ? ((i * 37) % 5 - 2) * 0.12 : 0; // sneda tänder
+      mouth.add(this.shape(new THREE.BoxGeometry(0.0046, 0.0068, 0.006), m.teeth, [-0.0128 + i * 0.0051, 0.0088 - Math.abs(crooked) * 0.004, 0.0045], [1, 1, 1], [0, crooked, crooked * 0.8]));
     }
     mouth.add(this.shape(new THREE.SphereGeometry(0.01, 6, 4), this.mat(0xa04048, 0.5, 0), [0, -0.007, 0.0], [1.3, 0.5, 1])); // tunga
     face.add(mouth);
     this.mouthMesh = mouth;
+    // Hästtänder: två stora framtänder som syns under överläppen även när munnen är stängd
+    if (f.teeth === 1) for (const s of [1, -1]) {
+      if (f.gap && s > 0) continue;
+      H(new THREE.BoxGeometry(0.0062, 0.0085, 0.004), m.teeth, [0.0034 * s, 0.0868, 0.0985], [1, 1, 1], [0.25, 0, 0.05 * s]);
+    }
+    // Humöret: trött, sur, stolt eller dumstridig (påverkar ögonlock, bryn och mun, se updateFace)
+    this.moodFx = [
+      { lid: 0, brow: 0, browY: 0, mouth: 0, smirk: 1, wide: 1, cross: 0 },
+      { lid: 0.3, brow: -0.22, browY: -0.002, mouth: 0.07, smirk: 0.5, wide: 0.95, cross: 0 },
+      { lid: 0.12, brow: 0.32, browY: -0.004, mouth: 0, smirk: 0.6, wide: 0.86, cross: 0 },
+      { lid: 0.18, brow: -0.1, browY: 0.004, mouth: 0, smirk: 1.9, wide: 1.05, cross: 0 },
+      { lid: -0.08, brow: -0.38, browY: 0.007, mouth: 0.22, smirk: 0.3, wide: 1.1, cross: 0.22 },
+    ][f.mood ?? 0];
     this.smirk = f.smirk * 0.12; // snett leende
     const lower = new THREE.Group();
     lower.position.set(0, 0.0815, 0.092);
@@ -1573,6 +1601,7 @@ export class Knight {
     const cyl = (r1, r2, h, y, start = 0, length = Math.PI * 2, segs = 22) =>
       shell(new THREE.CylinderGeometry(r1, r2, h, segs, 1, true, start, length), [0, y, 0]);
     this.visor = null;
+    if (kind >= 11) return buildKitHelmet(this, helmet, kind, m, gilded);
 
     if (kind === 1) {
       // Visirhjälm (bascinet med "hundsnos"): öppen framtill, visiret sitter på gångjärn och kan fällas upp
@@ -2644,16 +2673,18 @@ export class Knight {
   }
 
   // Vapenrockens skört fram och bak: mjukt tyg som gungar runt benen
-  addTabard(m) {
+  addTabard(m, opts = {}) {
     const P = this.seg.pelvis;
     const T = this.seg;
+    const height = opts.height ?? 0.46;
+    const width = opts.width ?? 0.3;
     for (const side of [1, -1]) {
       const cols = 5;
-      const cloth = new Cloth({ cols, rows: 6, widthTop: 0.3, widthBottom: 0.36, height: 0.46, material: m.tabardCloth, damping: 0.96 });
+      const cloth = new Cloth({ cols, rows: height > 0.5 ? 7 : 6, widthTop: width, widthBottom: width * 1.2, height, material: opts.material ?? m.tabardCloth, damping: 0.96 });
       const pins = [];
       for (let c = 0; c < cols; c++) {
         const f = c / (cols - 1) - 0.5;
-        pins.push([P, [f * 0.3 * side, -0.02, (0.128 - Math.abs(f) * 0.05) * side]]);
+        pins.push([P, [f * width * side, -0.02, (0.128 - Math.abs(f) * 0.05) * side]]);
       }
       const colliders = [
         [T.pelvis, [0.06, -0.08, 0], 0.13], [T.pelvis, [-0.06, -0.08, 0], 0.13],
@@ -2661,6 +2692,7 @@ export class Knight {
         [T.thighL, [0, -0.28, 0], 0.088], [T.thighR, [0, -0.28, 0], 0.088],
         [T.shinL, [0, -0.02, 0], 0.08], [T.shinR, [0, -0.02, 0], 0.08],
       ];
+      if (height > 0.5) colliders.push([T.shinL, [0, -0.16, 0], 0.075], [T.shinR, [0, -0.16, 0], 0.075]);
       this.addSoft(cloth, pins, colliders, "pelvis", side, 0.06);
     }
   }
@@ -3186,14 +3218,16 @@ export class Knight {
     let target = this.mouthTimer > 0 ? this.mouthTarget : 0;
     if (lowHp) target = Math.max(target, 0.35 + Math.max(0, Math.sin(t * 7)) * 0.25); // flämtar
     if (grin) target = Math.max(target, 0.25);
+    const mood = this.moodFx || { lid: 0, brow: 0, browY: 0, mouth: 0, smirk: 1, wide: 1, cross: 0 };
+    target = Math.max(target, mood.mouth);
     if (clench) target = Math.min(target, 0.05);
     if (this.dead) target = 0.55;
     this.mouthOpen += (target - this.mouthOpen) * (1 - Math.exp(-dt * (target > this.mouthOpen ? 30 : 10)));
-    const wide = grin ? 1.35 : clench ? 1.15 : 1;
+    const wide = (grin ? 1.35 : clench ? 1.15 : 1) * mood.wide;
     this.mouthMesh.scale.set((1 - this.mouthOpen * 0.15) * wide, 0.2 + this.mouthOpen * 1.5, 1);
     this.mouthMesh.position.y = 0.088 - this.mouthOpen * 0.01 + (grin ? 0.002 : 0);
     // Snett leende: munnen lutar lite åt ena hållet (mer när man flinar)
-    this.mouthMesh.rotation.z = (this.smirk || 0) * (grin ? 1.6 : 0.6);
+    this.mouthMesh.rotation.z = (this.smirk || 0) * (grin ? 1.6 : 0.6) * mood.smirk;
     this.lowerLip.rotation.z = this.mouthMesh.rotation.z;
     this.lowerLip.position.y = 0.0815 - this.mouthOpen * 0.02;
     this.lowerLip.position.z = 0.092 - this.mouthOpen * 0.004;
@@ -3201,7 +3235,7 @@ export class Knight {
     // Kisar vid träff, blinkar ibland, halvslutna ögon när man är död
     this.squint = Math.max(0, this.squint - dt * 2.5);
     this.blinkTimer -= dt;
-    let lid = 1 - this.squint * 0.75 - (clench ? 0.2 : 0) - (lowHp ? 0.15 : 0) - (grin ? 0.25 : 0);
+    let lid = 1 - mood.lid - this.squint * 0.75 - (clench ? 0.2 : 0) - (lowHp ? 0.15 : 0) - (grin ? 0.25 : 0);
     if (this.blinkTimer < 0) {
       lid = 0.1;
       if (this.blinkTimer < -0.12) this.blinkTimer = 2 + Math.random() * 4;
@@ -3221,18 +3255,18 @@ export class Knight {
       this.gaze.y += (gy - this.gaze.y) * Math.min(1, dt * 8);
     }
     const g = this.gaze || { x: 0, y: 0 };
-    for (const eye of this.eyes) {
+    this.eyes.forEach((eye, i) => {
       const iris = eye.userData.iris;
-      if (iris) iris.rotation.set(-g.y * 0.35, g.x * 0.5, 0);
-    }
+      if (iris) iris.rotation.set(-g.y * 0.35, g.x * 0.5 + (i === 0 ? -1 : 1) * mood.cross * (this.dead ? 0 : 1), 0); // dumstridig: lite skelögd
+    });
     // Ögonbrynen: arg i strid, höjda vid skratt, rynkade när man laddar, sorgsna när man är nära döden
     const laughing = this.emote && this.emote.e === 2;
-    let angry = laughing ? -0.2 : 0.35 + this.squint * 0.3 + this.mouthOpen * 0.2 + (clench ? 0.25 : 0);
+    let angry = laughing ? -0.2 : 0.35 + mood.brow + this.squint * 0.3 + this.mouthOpen * 0.2 + (clench ? 0.25 : 0);
     if (lowHp) angry = -0.25;
     if (this.dead) angry = 0;
     for (const brow of this.brows) {
       brow.rotation.z = (brow.userData.base ?? 0) + brow.userData.side * angry;
-      brow.position.y = 0.168 + (brow.userData.raise || 0) + (laughing ? 0.008 : -this.squint * 0.005 - Math.max(0, angry - 0.35) * 0.008 + this.mouthOpen * 0.004 + (lowHp ? 0.004 : 0));
+      brow.position.y = 0.168 + mood.browY + (brow.userData.raise || 0) + (laughing ? 0.008 : -this.squint * 0.005 - Math.max(0, angry - 0.35) * 0.008 + this.mouthOpen * 0.004 + (lowHp ? 0.004 : 0));
       brow.position.x = brow.userData.side * (0.034 - Math.max(0, angry - 0.35) * 0.006);
     }
     // Visiret fälls upp när man hånar (så man ser flinet)

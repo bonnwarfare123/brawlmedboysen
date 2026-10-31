@@ -14,6 +14,10 @@ import {
   heraldBanner, makeSky, setSkyColors, resetFlags, getCloudMaterial, radialPatch, sandScatter, updateClouds, groundMacro,
 } from "./arena.js";
 import { rakedSandTexture, sandGrainTexture, trampledTexture } from "./textures.js";
+import {
+  tracksTexture, makeWoodpile, makeSacks, makeCart, makeBench, makeHay, makeGarlands, makeEmbers, makeWarmPool, makeSmoke,
+  makeColdHaze, makeFlurries,
+} from "./castle-extras.js";
 
 const STONE = 0xa8a29a;
 const STONE_DARK = 0x8c867e;
@@ -57,27 +61,41 @@ function snowEdgeTexture(size = 1024) {
   const rand = seededRandom(909);
   const h = size / 2;
   ctx.clearRect(0, 0, size, size);
-  for (let i = 0; i < 2200; i++) {
-    const a = rand() * Math.PI * 2;
-    const d = Math.sqrt(rand());
-    const edge = Math.pow(d, 3);
-    if (rand() > edge * 1.2 + 0.02) continue;
-    const x = h + Math.cos(a) * d * h;
-    const y = h + Math.sin(a) * d * h;
-    const r = 4 + rand() * 20 * (0.3 + edge);
+  // Snöfläckarna är oregelbundna klumpar (flera små i en hög) med mörkare, blöt slask runt om.
+  // Mest mot kanten; i mitten bara enstaka, små fläckar (där är snön upptrampad).
+  const soft = (x, y, r, tone, al, sy = 1, rot = 0) => {
     ctx.save();
     ctx.translate(x, y);
-    ctx.rotate(a + (rand() - 0.5));
-    ctx.scale(1, 0.3 + rand() * 0.5);
+    ctx.rotate(rot);
+    ctx.scale(1, sy);
     const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
-    const al = 0.25 + edge * 0.55;
-    const tone = rand() < 0.25 ? "190,190,195" : "238,242,248"; // smutsig eller ren snö
     g.addColorStop(0, `rgba(${tone},${al})`);
-    g.addColorStop(0.65, `rgba(${tone},${al * 0.45})`);
+    g.addColorStop(0.6, `rgba(${tone},${al * 0.5})`);
     g.addColorStop(1, `rgba(${tone},0)`);
     ctx.fillStyle = g;
     ctx.fillRect(-r, -r, r * 2, r * 2);
     ctx.restore();
+  };
+  for (let i = 0; i < 1500; i++) {
+    const a = rand() * Math.PI * 2;
+    const d = Math.sqrt(rand());
+    const edge = Math.pow(d, 3.2);
+    if (rand() > edge * 1.15 + 0.006) continue;
+    const x = h + Math.cos(a) * d * h;
+    const y = h + Math.sin(a) * d * h;
+    const r = 3 + rand() * 15 * (0.3 + edge);
+    const rot = a + (rand() - 0.5);
+    const sy = 0.35 + rand() * 0.45;
+    soft(x, y, r * 1.7, "62,52,46", 0.16 + edge * 0.12, sy, rot); // blöt slask runt fläcken
+    const dirty = rand() < 0.3;
+    const al = 0.3 + edge * 0.55;
+    const clumps = 2 + Math.floor(rand() * 4);
+    for (let k = 0; k < clumps; k++) {
+      const ox = (rand() - 0.5) * r * 1.1;
+      const oy = (rand() - 0.5) * r * 0.6;
+      soft(x + Math.cos(rot) * ox - Math.sin(rot) * oy, y + Math.sin(rot) * ox + Math.cos(rot) * oy, r * (0.4 + rand() * 0.5),
+        dirty ? "176,172,170" : "238,242,248", al, sy, rot + (rand() - 0.5) * 0.6);
+    }
   }
   // snövall längs kanten
   const rim = ctx.createRadialGradient(h, h, h * 0.86, h, h, h);
@@ -184,10 +202,49 @@ function stoneTextures() {
   return stoneTex;
 }
 const stoneMats = new Map();
+// Stenen varierar över hela borgen (räknas i grafikkortet efter var i världen ytan är, så det kostar
+// nästan inget): varmare och kallare partier, ljusare och mörkare stenar, smuts och fukt nertill,
+// rinnande fuktränder, snö på allt som pekar uppåt och snöstänk längst ner mot marken.
+const STONE_GLSL = `
+varying vec3 vStoneW;
+varying vec3 vStoneN;
+float sHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float sNoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(sHash(i), sHash(i + vec2(1.0, 0.0)), u.x), mix(sHash(i + vec2(0.0, 1.0)), sHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}`;
+const STONE_FRAG = `
+{
+  vec3 w = vStoneW;
+  vec2 q = vec2(w.x * 0.8 + w.z * 0.6, w.y);
+  float big = sNoise(q * 0.21);
+  float mid = sNoise(q * 0.85 + 7.3);
+  float fine = sNoise(q * 3.7 + 1.7);
+  vec3 tint = mix(vec3(0.84, 0.86, 0.9), vec3(1.08, 1.02, 0.94), big);
+  diffuseColor.rgb *= tint * (0.86 + mid * 0.2 + fine * 0.08);
+  float grime = 1.0 - smoothstep(0.0, 1.0 + mid * 1.1, w.y);
+  diffuseColor.rgb *= 1.0 - grime * 0.4;
+  float streak = sNoise(vec2((w.x - w.z) * 2.4, w.y * 0.3));
+  diffuseColor.rgb *= 1.0 - smoothstep(0.6, 0.95, streak) * 0.18 * smoothstep(0.8, 2.6, w.y);
+  float up = smoothstep(0.45, 0.85, vStoneN.y);
+  float frost = smoothstep(0.22, 0.0, w.y) * (0.25 + fine * 0.3) + up * (0.5 + mid * 0.5);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.93, 0.98), clamp(frost, 0.0, 0.92));
+}`;
 function stoneMat(color = STONE) {
   if (!stoneMats.has(color)) {
     const { map, bump } = stoneTextures();
-    stoneMats.set(color, new THREE.MeshStandardMaterial({ color, map, bumpMap: bump, bumpScale: 2.2, roughness: 0.93 }));
+    const m = new THREE.MeshStandardMaterial({ color, map, bumpMap: bump, bumpScale: 2.2, roughness: 0.93 });
+    m.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", "#include <common>\nvarying vec3 vStoneW;\nvarying vec3 vStoneN;")
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvStoneW = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvStoneN = normalize(mat3(modelMatrix) * objectNormal);");
+      shader.fragmentShader = shader.fragmentShader
+        .replace("#include <common>", "#include <common>\n" + STONE_GLSL)
+        .replace("#include <map_fragment>", "#include <map_fragment>\n" + STONE_FRAG);
+    };
+    m.customProgramCacheKey = () => "stone-variation";
+    stoneMats.set(color, m);
   }
   return stoneMats.get(color);
 }
@@ -260,11 +317,17 @@ function makeWallTorch() {
     x.fillRect(0, 0, 64, 64);
     torchGlow = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false });
   }
-  const glow = new THREE.Sprite(torchGlow);
+  const glow = new THREE.Sprite(torchGlow.clone());
   glow.scale.setScalar(1.6);
   glow.position.set(0, 0.5, 0.45);
   g.add(glow);
   g.userData.flame = flame;
+  g.userData.glow = glow;
+  // Lite rök som stiger från facklan
+  const smoke = makeSmoke(1, 0x3a3634, 0.16);
+  smoke.group.position.set(0, 0.6, 0.42);
+  g.add(smoke.group);
+  g.userData.smoke = smoke;
   return g;
 }
 
@@ -636,6 +699,21 @@ export function buildCastleArena() {
   trampled.receiveShadow = true;
   trampled.userData.noMerge = true;
   group.add(trampled);
+  // Spår av striden: fotspår, skrapmärken, släpspår och lerklumpar (en bild över hela ytan)
+  const tracks = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 64),
+    new THREE.MeshStandardMaterial({ map: tracksTexture(), transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -1.2 }),
+  );
+  tracks.rotation.x = -Math.PI / 2;
+  tracks.rotation.z = 0.4;
+  tracks.scale.set(FX + 0.4, FZ + 0.4, 1);
+  tracks.position.y = 0.0115;
+  tracks.renderOrder = -2;
+  tracks.receiveShadow = true;
+  tracks.userData.noMerge = true;
+  group.add(tracks);
+  // Upptrampad slask på gården runt den låga muren (folk har gått runt planen)
+  group.add(radialPatch(FX + 3.2, FZ + 3.2, (FX + 0.3) / (FX + 3.2), 1.0, 0x7a6e66, 0.55, 0, 0.011));
   const snowOverMat = new THREE.MeshStandardMaterial({ map: snowEdgeTexture(), transparent: true, depthWrite: false, roughness: 0.85, polygonOffset: true, polygonOffsetFactor: -1.5, opacity: 0.85 });
   const snowOver = new THREE.Mesh(new THREE.CircleGeometry(1, 72), snowOverMat);
   snowOver.rotation.x = -Math.PI / 2;
@@ -646,7 +724,8 @@ export function buildCastleArena() {
   snowOver.userData.noMerge = true;
   group.add(snowOver);
   // Frusna pölar: blank, ljusblå is
-  const iceMat = new THREE.MeshStandardMaterial({ color: 0xa9bccc, roughness: 0.08, metalness: 0.25, transparent: true, opacity: 0.7, depthWrite: false });
+  const iceMat = new THREE.MeshStandardMaterial({ color: 0x7e92a6, roughness: 0.05, metalness: 0.45, transparent: true, opacity: 0.55, depthWrite: false });
+  const slushMat = new THREE.MeshBasicMaterial({ color: 0x2a201a, transparent: true, opacity: 0.28, depthWrite: false });
   for (let i = 0; i < 7; i++) {
     const t = rand() * Math.PI * 2;
     const d = 0.35 + rand() * 0.5;
@@ -658,6 +737,14 @@ export function buildCastleArena() {
     ice.renderOrder = -1;
     ice.userData.noMerge = true;
     group.add(ice);
+    // Blöt, mörk kant runt isen
+    const rim = new THREE.Mesh(new THREE.CircleGeometry(1, 16), slushMat);
+    rim.rotation.copy(ice.rotation);
+    rim.scale.set(ice.scale.x * 1.25, ice.scale.y * 1.35, 1);
+    rim.position.set(ice.position.x, 0.0145, ice.position.z);
+    rim.renderOrder = -1;
+    rim.userData.noMerge = true;
+    group.add(rim);
   }
   // Mörk slask där gården möter den höga muren
   group.add(radialPatch(FX + 6.5, FZ + 6.5, 0.9, 0.99, 0x7a7c84, 0, 0.45, 0.012));
@@ -755,6 +842,7 @@ export function buildCastleArena() {
 
   // ---------- Ringmuren med tinnar och en gångbana där publiken står ----------
   const WALL_H = 5.2;
+  const torches = [];
   const WSEGS = 72;
   const wpts = [];
   for (let i = 0; i < WSEGS; i++) wpts.push(ellipsePoint((i / WSEGS) * Math.PI * 2, WX, WZ));
@@ -808,7 +896,9 @@ export function buildCastleArena() {
         const torch = makeWallTorch();
         torch.position.set(mx + inn.x * 0.8, 2.4, mz + inn.z * 0.8);
         torch.rotation.y = Math.atan2(inn.x, inn.z);
+        torch.userData.seed = i * 1.37;
         group.add(torch);
+        torches.push(torch);
       }
     }
     // Bröstvärn med tinnar på utsidan
@@ -830,8 +920,8 @@ export function buildCastleArena() {
       crowdSpots.push({ pos: new THREE.Vector3(mx - out.x * 0.35, WALL_H + 0.06, mz - out.z * 0.35), yaw: Math.atan2(-mx, -mz), row: 3, standing: true });
     }
     // Fanor som hänger på murens insida
-    if (i % 9 === 4) {
-      const banner = heraldBanner(i % 18 === 4 ? PALETTE.blue : PALETTE.red, i % 4, 0.8, 1.6);
+    if (i % 9 === 4 || i % 9 === 8) {
+      const banner = heraldBanner(i % 18 === 4 || i % 18 === 17 ? PALETTE.blue : i % 9 === 8 ? PALETTE.gold : PALETTE.red, i % 4, 0.8, i % 9 === 8 ? 1.25 : 1.6);
       banner.position.set(mx - out.x * 0.82, WALL_H - 0.25, mz - out.z * 0.82);
       banner.lookAt(center.x, WALL_H - 0.25, center.z);
       group.add(banner);
@@ -866,6 +956,22 @@ export function buildCastleArena() {
     group.add(tower);
   });
 
+  // ---------- Vimpelgirlanger längs murens insida (i bågar under bröstvärnet) ----------
+  {
+    const spans = [];
+    const N = 36;
+    for (let i = 0; i < N; i++) {
+      const t0 = (i / N) * Math.PI * 2;
+      const t1 = ((i + 1) / N) * Math.PI * 2;
+      if (Math.abs(((t0 - GATE_T + Math.PI * 3) % (Math.PI * 2)) - Math.PI) < 0.35) continue;
+      if (Math.abs(((t1 - GATE_T + Math.PI * 3) % (Math.PI * 2)) - Math.PI) < 0.35) continue;
+      const a = ellipsePoint(t0, WX - 0.95, WZ - 0.95);
+      const b = ellipsePoint(t1, WX - 0.95, WZ - 0.95);
+      spans.push([new THREE.Vector3(a.x, WALL_H - 0.45, a.z), new THREE.Vector3(b.x, WALL_H - 0.45, b.z), 0.55]);
+    }
+    group.add(makeGarlands(spans));
+  }
+
   // ---------- Gården: eldkorgar, tunnor, lådor, vapenställ, ställningar och smedja ----------
   const fires = [];
   [0.35, 1.25, -1.25, -0.35, GATE_T - 0.42, GATE_T + 0.42].forEach((t, i) => {
@@ -874,7 +980,34 @@ export function buildCastleArena() {
     fire.group.position.set(p.x, 0, p.z);
     group.add(fire.group);
     fires.push(fire);
+    // Varmt sken på snön runt elden, och ett varmare, längre ljus
+    const pool = makeWarmPool(2.6);
+    pool.position.set(p.x, 0.03, p.z);
+    group.add(pool);
+    fire.pool = pool;
+    fire.light.color.set(0xff7a30);
+    fire.light.distance = 10;
   });
+  const embers = makeEmbers(fires.map((f) => new THREE.Vector3(f.group.position.x, 1.35, f.group.position.z)));
+  group.add(embers.points);
+
+  // Mer liv på gården: vedtravar, säckar, kärror, bänkar med sejdlar och halmbalar
+  {
+    const pr = seededRandom(4711);
+    const extras = [
+      [0.92, 3.6, makeWoodpile], [-0.9, 3.4, makeCart], [1.92, 2.2, makeSacks], [-1.86, 2.4, makeHay],
+      [2.25, 3.4, makeBench], [-2.28, 3.2, makeWoodpile], [0.45, 1.85, makeHay], [-0.48, 1.9, makeSacks],
+      [2.62, 2.1, makeCart], [-2.62, 2.2, makeBench], [1.05, 1.9, makeBench], [-1.08, 1.9, makeSacks],
+    ];
+    for (const [t, out, make] of extras) {
+      const obj = make(pr);
+      const p = ellipsePoint(t, FX + out, FZ + out);
+      obj.position.copy(p);
+      obj.lookAt(center);
+      obj.rotateY((pr() - 0.5) * 0.8);
+      group.add(obj);
+    }
+  }
   const propTs = [0.12, -0.12, 1.15, -1.18, 2.0, -1.95, 2.45, -2.45];
   propTs.forEach((t, i) => {
     const p = ellipsePoint(t, FX + 2.6 + (i % 2) * 1.6, FZ + 2.6 + (i % 2) * 1.6);
@@ -976,6 +1109,12 @@ export function buildCastleArena() {
     group.add(tree);
   }
 
+  // Kall dis vid murarnas fot och lätta snöflingor i luften
+  const haze = makeColdHaze(WX - 1.0, WZ - 1.0, 2.6);
+  group.add(haze);
+  const flurries = makeFlurries(WX, WZ, 320);
+  group.add(flurries.points);
+
   // Slå ihop allt som står still
   group.add(mergeStatic(group));
 
@@ -1000,7 +1139,22 @@ export function buildCastleArena() {
     royals.update(dt);
     podium.update(dt);
     quintain.update(dt);
-    for (const fire of fires) fire.update(dt, time);
+    for (const fire of fires) {
+      fire.update(dt, time);
+      if (fire.pool) fire.pool.material.opacity = (0.3 + Math.sin(time * 11 + fire.group.position.x) * 0.03 + (fire.light.intensity / fire.boost - 4) * 0.025) * Math.min(1.6, fire.boost);
+    }
+    embers.update(dt, time);
+    if (flurries.points.visible) flurries.update(dt, time);
+    // Facklorna fladdrar och ryker
+    for (const torch of torches) {
+      const s = torch.userData.seed;
+      const fl = Math.sin(time * 14 + s) * 0.5 + Math.sin(time * 27.3 + s * 2) * 0.3 + Math.sin(time * 5.1 + s) * 0.2;
+      const flame = torch.userData.flame;
+      flame.scale.set(1 - fl * 0.08, 1 + fl * 0.22, 1 - fl * 0.08);
+      flame.rotation.z = Math.sin(time * 3 + s) * 0.12;
+      if (torch.userData.glow) torch.userData.glow.material.opacity = 0.85 + fl * 0.15;
+      torch.userData.smoke?.update(time + s, 0.32, 1.6, 0.9);
+    }
     forge.light.intensity = 2.2 + Math.sin(time * 9) * 0.3 + Math.sin(time * 23) * 0.2;
     for (const flag of flags) waveFlag(flag, time);
     updateClouds(dt);
@@ -1027,6 +1181,9 @@ export function buildCastleArena() {
     setQuality: (low) => {
       fires.forEach((f) => (f.light.visible = !low));
       forge.light.visible = !low;
+      embers.points.visible = !low;
+      flurries.points.visible = !low;
+      haze.visible = !low;
     },
     // Snöfall: lite mer snö på marken (stridsytan blir ljusare)
     setWet(wet) {

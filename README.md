@@ -1,4 +1,4 @@
-# Brawlmedboysen – v0.24
+# Brawlmedboysen – v0.25
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
@@ -15,6 +15,8 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 **Arenan:** tornerbarriär av plankor med järnband, lera nedtill, hängande tygdraperier och vapensköldar, upptrampad lerig sand där blodet sjunker in, eldkorgar med eld och rök, träningsdocka som snurrar när man slår på den, torn byggda av riktiga plankor (med stege, fönsterluckor och tinnar), krattad sand med småsten och halmstrån, läktare med plankbänkar, snidade räcken, tak med fransar och ståplats längst bak, levande publik (axlar, armbågar, kläder med veck, smala och runda, tydligare ansikten) med barn, gamla med käpp, damer och adelsmän (reser sig, jublar, klappar, pekar, dricker, äter, dunkar grannen i ryggen och viftar med hatten), försäljare som går runt, folk som går på marknaden, en lägereld med gryta och rök vid tälten, tätare gräs med blommor, damm som svävar i luften, hundar, fåglar och flugor runt elden, kungapar som visar tummen upp eller ner, vakter och en härold med trumpet.
 
 **Grafik:** på hög grafik (F2) får ljusa saker ett mjukt glöd-sken, och färgtonen anpassas efter dag, kväll, regn och dimma (varmare på kvällen, gråare i regn, mörka hörn). Mjuka, fluffiga moln driver sakta över himlen på båda banorna (och blir ett grått molntäcke när det regnar eller snöar). På låg grafik stängs glöd, skuggor och dammet av. **F3** visar bilder per sekund, ritanrop och hur många millisekunder varje bild tar. Alla shaders byggs när banan laddas (inga ryck första gången något syns), bara de 4 eldarna närmast det du tittar på lyser upp omgivningen, och molnen och tyget kostar mindre.
+
+**Nya rustningar och hjälmar (v0.25):** åtta nya rustningar – Gambeson (tjock vadderad jacka), Surcoat-riddare (brynja och lång vapenrock med axelbrickor), Plåtrock (tygklädda plåtar med nitar), Brigandin (nitat tyg med remmar framtill), Stadsvakt (livré i två färger med stadens nycklar), Legoknekt (hopplockad utrustning, randig hosa), Halvplåt (bröstplåt och plåtben men brynjeskört och läderskor) och Korsriddare (vit vapenrock med kors i spelarens färg). Åtta nya hjälmar – Näshjälm, Öppet bascinet, Cervellière, Fotfolkshjälm, Öppen tunnhjälm, Krigarduk, Läderhätta och Bucklig hjälm. Ansiktena har fått humör (trött, sur, stolt eller dumstridig), fler näsformer, hästtänder och sneda tänder, vårtor, rynkor och olika stora öron. Borggården har fått varierad sten med smuts nertill och snö på ovansidor, spår i leran, oregelbundna snöfläckar med slask, vedtravar, kärror, säckar, bänkar med sejdlar, halmbalar, vimpelgirlanger, fler fanor, vakter och en tjänare vid prispallen, glöd från eldkorgarna, rök från facklorna, varma ljuspölar på snön, kall dis vid murarna och lätta snöflingor. Publiken har dämpade växtfärger, viftar med vimplar och kliar sig, pratar med grannen, gäspar och gnuggar händerna när det är lugnt.
 
 **Lobbyn (v0.24):** en panel i mörkt trä, smitt järn och pergament med tre flikar (⚔️ Riddare: färg, utrustning och vapen; 🏰 Match: spelsätt, bana, tid, väder och botar; 👥 Spelare: lag och vilka som är med) och en fast sidfot med en prick per riddare som lyser när den är redo, Redo-knappen och en stor Starta-knapp som pulserar när alla är redo. Riddarna står i en båge vända mot kameran, mitt i den fria ytan mellan panelerna, med namnskyltar som visar krona för lobbyledaren och REDO/VÄNTAR. Var och en har sin egen takt i lobbyn (svingar vapnet, kollar skölden, bugar, skrattar, dansar ibland). Marken har fått storskalig variation (blöta och torra partier, släpspår, nötta stråk).
 
@@ -53,6 +55,8 @@ Alla knappar kan bytas: tryck **⌨️ Tangenter** i lobbyn eller i menyn när m
 | `public/js/arena.js` | Bygger arenan av enkla former (barriär, läktare, kungaloge, plankstorn, eldkorgar, träningsdocka, prispall) |
 | `server/index.js` (Leaderboard) | Den gemensamma topplistan (ett eget Durable Object som heter BOARD i `wrangler.jsonc`) |
 | `public/js/castle.js` | Borggården (vinterbanan) med porten som öppnas i introt |
+| `public/js/castle-extras.js` | Borggårdens detaljer: spår i leran, rekvisita, girlanger, glöd, rök, dis och snöflingor |
+| `public/js/kit.js` | De nya rustningarna och hjälmarna (v0.25) |
 | `public/js/keybinds.js` | Knappar som går att byta (sparas i webbläsaren) |
 | `public/js/postfx.js` | Glöd och färgton (efterbehandling av bilden, bara på hög grafik) |
 | `public/js/crowd.js` | Publiken, kungaparet, vakterna och härolden |

@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { ARENA_RX, ARENA_RZ } from "./shared.js";
 import { CONFIG } from "./config.js";
-import { Crowd, makeRoyals, mergeFigure, makeVendor } from "./crowd.js";
+import { Crowd, makeRoyals, mergeFigure, makeVendor, makePodiumAttendants } from "./crowd.js";
 import {
   plankTexture, stripeTexture, rakedSandTexture, glowTexture, heraldryTexture, daggedTexture, linenTexture, strawTexture,
   sandGrainTexture, podiumTexture, barrierBoardTexture, trampledTexture,
@@ -2527,6 +2527,10 @@ function makePodium() {
     inner.add(flag);
   }
 
+  // Vakter och en tjänare med bägare (står bredvid pallen)
+  const attendants = makePodiumAttendants();
+  group.add(attendants.group);
+
   // Röd matta fram mot kungen (ligger på marken, syns bara när pallen är uppe)
   const carpet = new THREE.Mesh(
     new THREE.PlaneGeometry(1.2, 7),
@@ -2558,6 +2562,7 @@ function makePodium() {
     update(dt) {
       if (t < 0) return;
       t += dt;
+      attendants.update(dt);
       const f = Math.min(1, t / 1.6);
       const ease = 1 - (1 - f) ** 3;
       inner.position.y = -SINK * (1 - ease) + Math.sin(Math.min(1, t / 1.6) * Math.PI * 3) * 0.015 * (1 - f);

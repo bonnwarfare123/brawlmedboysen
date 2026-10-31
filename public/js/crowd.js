@@ -245,6 +245,16 @@ function buildShapes() {
     part(new THREE.CylinderGeometry(0.035, 0.038, 0.09, 8), 1, [0, -0.34, 0.06]),
     part(new THREE.TorusGeometry(0.022, 0.007, 4, 8), 0.7, [0.04, -0.34, 0.06], [1, 1, 1], [0, Math.PI / 2, 0]),
   ]);
+  // Liten vimpel på en pinne (hålls i handen och viftas med)
+  const tri = new THREE.Shape();
+  tri.moveTo(0, 0);
+  tri.lineTo(0.2, -0.06);
+  tri.lineTo(0, -0.13);
+  tri.lineTo(0, 0);
+  S.pennant = merge([
+    part(new THREE.CylinderGeometry(0.007, 0.008, 0.62, 5), 0.32, [0, -0.6, 0.06]),
+    part(new THREE.ShapeGeometry(tri), 1, [0.006, -0.78, 0.06], [1, -1, 1]),
+  ]);
   return S;
 }
 
@@ -283,6 +293,7 @@ export class Crowd {
       let style = styleRoll < 0.22 ? "clap" : styleRoll < 0.36 ? "kerchief" : styleRoll < 0.48 ? "mug" : styleRoll < 0.6 ? "fist" : styleRoll < 0.68 ? "wave"
         : styleRoll < 0.76 ? "eat" : styleRoll < 0.84 ? "point" : styleRoll < 0.92 ? "slap" : "hatwave";
       if (style === "hatwave" && !["brim", "straw"].includes(hat)) style = "wave";
+      if ((style === "wave" || style === "fist") && rand() < 0.35) style = "flag"; // viftar med en liten vimpel
       if (type === "elder" && (style === "slap" || style === "wave")) style = "clap";
       return {
         index: i, spot, type, female, hat,
@@ -304,6 +315,9 @@ export class Crowd {
         eager: type === "elder" ? 0.6 + rand() * 0.4 : rand(), // hur lätt personen reser sig och jublar
         style: type === "priest" && style !== "clap" ? "fist" : style,
         look: 0, stand: 0, throwT: -1,
+        // Småsaker när det är lugnt: kliar sig i huvudet, pratar med grannen, sträcker på sig, byter fot
+        idle: null, idleT: 2 + rand() * 12,
+        flagColor: [0xb8322f, 0x2f5fb3, 0xd9a521, 0xf2efe6][Math.floor(rand() * 4)],
       };
     });
 
@@ -364,11 +378,16 @@ export class Crowd {
     extra(S.drumstick, P.filter((p) => p.style === "eat"), () => 0xffffff, "wristR");
     extra(S.kerchief, P.filter((p) => p.style === "kerchief"), () => 0xf2efe6, "wristR", material({ side: THREE.DoubleSide }));
     extra(S.mug, P.filter((p) => p.style === "mug"), (p) => (p.index % 2 ? 0x8a8e94 : 0x7a5434), "wristR", material({ metalness: 0.3, roughness: 0.5 }));
+    extra(S.pennant, P.filter((p) => p.style === "flag"), (p) => p.flagColor, "wristR", material({ side: THREE.DoubleSide }));
 
-    // Fasta färger
+    // Fasta färger. Växtfärgat tyg: lite blekt, smutsigt och olika mättat från person till person
+    const dyeRand = seededRandom(seed * 3 + 1);
+    const drab = new THREE.Color(0x6e6252);
     for (const p of P) {
       const i = p.index;
-      const clothes = new THREE.Color(p.clothes);
+      const fine = p.type === "noble" || p.type === "lady";
+      const clothes = new THREE.Color(p.clothes).lerp(drab, fine ? dyeRand() * 0.12 : 0.12 + dyeRand() * 0.3).multiplyScalar(0.86 + dyeRand() * 0.24);
+      p.hose = new THREE.Color(p.hose).lerp(drab, dyeRand() * 0.3).multiplyScalar(0.85 + dyeRand() * 0.25).getHex();
       if (p.female) this.mesh.bodice.setColorAt(p.wi, clothes);
       else this.mesh.torso.setColorAt(p.mi, clothes);
       this.mesh.head.setColorAt(i, new THREE.Color(p.skin));
@@ -509,6 +528,12 @@ export class Crowd {
         rx = lerp(rx, -1.1, cheer); rz = lerp(-rest, -1.1 + slap * 0.6, cheer);
         lx = lerp(lx, -2.4, cheer * 0.7);
         re = lerp(restE, -0.4 - slap * 0.5, cheer); le = lerp(restE, -0.4, cheer * 0.7);
+      } else if (p.style === "flag") {
+        // Vimpeln hålls uppe och viftas fram och tillbaka (mer ju mer det händer)
+        const sway = Math.sin(time * (3 + cheer * 7) + p.phase);
+        const up = Math.max(cheer, 0.35);
+        rx = lerp(-0.6, -2.7 + sway * 0.25, up); rz = lerp(-0.25, -0.2 + sway * 0.35 * up, up);
+        re = lerp(-0.9, -0.3 + sway * 0.2, up);
       } else if (p.style === "hatwave") {
         // Viftar med hatten över huvudet
         const wave = Math.sin(time * 9 + p.phase) * 0.5;
@@ -518,6 +543,51 @@ export class Crowd {
         const pump = Math.max(0, Math.sin(time * 9 + p.phase)) * 0.5;
         rx = lerp(rx, -2.6 - pump, cheer); rz = lerp(-rest, -0.2, cheer);
         re = lerp(restE, -0.25 - (0.5 - pump) * 0.8, cheer);
+      }
+      // Lugnt på planen: ibland en liten egen rörelse
+      if (cheer < 0.25 && p.throwT < 0) {
+        p.idleT -= dt;
+        if (!p.idle && p.idleT <= 0) {
+          const kinds = ["scratch", "chat", "chat", "stretch", "shift", "rub"];
+          p.idle = { kind: kinds[Math.floor(((p.phase * 997 + time * 13) % 1) * kinds.length)], t: 0, side: Math.sin(p.phase * 31 + time) > 0 ? 1 : -1 };
+        }
+      }
+      if (p.idle) {
+        const I = p.idle;
+        I.t += dt;
+        const dur = I.kind === "chat" ? 3.2 : I.kind === "shift" ? 2.5 : 1.8;
+        const k = Math.sin(Math.min(1, I.t / dur) * Math.PI); // in och ut mjukt
+        const calm = 1 - Math.min(1, cheer * 4);
+        const w = k * calm;
+        if (I.kind === "scratch") {
+          // Kliar sig i huvudet (vänster hand)
+          const rub = Math.sin(I.t * 18) * 0.12;
+          lx = lerp(lx, -2.6, w); lz = lerp(lz, 0.55 + rub, w); le = lerp(le, -1.9, w);
+          d.head.rotation.z += 0.12 * w;
+        } else if (I.kind === "chat") {
+          // Vänder sig mot grannen och pratar (huvudet och lite gester med vänster hand)
+          d.head.rotation.y += I.side * 0.9 * w;
+          d.torso.rotation.y += I.side * 0.25 * w;
+          d.mouth.scale.y += Math.abs(Math.sin(I.t * 9)) * 0.8 * w;
+          lx = lerp(lx, -0.9 + Math.sin(I.t * 4) * 0.2, w * 0.8); le = lerp(le, -1.2, w * 0.8);
+        } else if (I.kind === "stretch") {
+          lx = lerp(lx, -2.9, w); rx = lerp(rx, -2.9, w); lz = lerp(lz, 0.3, w); rz = lerp(rz, -0.3, w);
+          le = lerp(le, -0.2, w); re = lerp(re, -0.2, w);
+          d.head.rotation.x -= 0.25 * w;
+          d.mouth.scale.y += 0.9 * w; // gäspar
+        } else if (I.kind === "shift") {
+          d.torso.rotation.z += I.side * 0.09 * w;
+          d.root.position.x += Math.cos(spot.yaw) * I.side * 0.03 * w;
+        } else {
+          // Gnuggar händerna mot kylan
+          const rub = Math.sin(I.t * 14) * 0.1;
+          lx = lerp(lx, -1.2, w); rx = lerp(rx, -1.2, w); lz = lerp(lz, 0.35 + rub, w); rz = lerp(rz, -0.35 + rub, w);
+          le = lerp(le, -1.4, w); re = lerp(re, -1.4, w);
+        }
+        if (I.t >= dur) {
+          p.idle = null;
+          p.idleT = 6 + ((p.phase * 7.7 + time) % 1) * 14;
+        }
       }
       // De gamla stödjer sig på käppen med vänster hand
       if (p.type === "elder") {
@@ -764,6 +834,68 @@ function makeFigure(opts) {
   return f;
 }
 
+// En vakt med hillebard (lång stång med yxblad, spets och krok)
+function makeGuard(color, beard, skin = 0xd09a6c) {
+  const g = makeFigure({ robe: color, skin, hair: 0x23170e, beard, hat: "kettle", tabard: color, hose: 0x4a4a52 });
+  const wood = figureMat(0x6a4a2c);
+  const steel = figureMat(0xb6bcc4, { metalness: 0.8, roughness: 0.35 });
+  const halberd = new THREE.Group();
+  addMesh(halberd, new THREE.CylinderGeometry(0.016, 0.018, 2.2, 6), wood, [0, 0.9, 0]);
+  addMesh(halberd, new THREE.ConeGeometry(0.025, 0.25, 4), steel, [0, 2.1, 0]);
+  addMesh(halberd, new THREE.BoxGeometry(0.01, 0.2, 0.16), steel, [0, 1.85, 0.09]);
+  addMesh(halberd, new THREE.ConeGeometry(0.02, 0.12, 4), steel, [0, 1.9, -0.06], [1, 1, 1], [-Math.PI / 2, 0, 0]);
+  halberd.position.set(0, -0.08, 0.05);
+  g.handR.add(halberd);
+  g.armR.rotation.set(-0.35, 0, -0.15);
+  g.foreR.rotation.set(-1.1, 0, 0);
+  g.halberd = halberd;
+  return g;
+}
+
+// Vakter och en tjänare vid prispallen: två vakter med hillebard på var sida och en tjänare
+// med en bricka med bägare till vinnarna. Står still men andas och vrider på huvudet.
+export function makePodiumAttendants() {
+  const group = new THREE.Group();
+  const left = makeGuard(0x2f5fb3, true, 0xe6b890);
+  const right = makeGuard(0xb8322f, false, 0xa86e48);
+  left.group.position.set(-2.75, 0, 0.35);
+  right.group.position.set(2.75, 0, 0.35);
+  const servant = makeFigure({ robe: 0x7a6a4a, skin: 0xf2cfaa, hair: 0x9a3c18, hat: "beret", hose: 0x4a3a2a });
+  // Bricka med tre bägare av guld och en kanna
+  const gold = figureMat(0xd8ae42, { metalness: 0.85, roughness: 0.3 });
+  const tray = new THREE.Group();
+  addMesh(tray, new THREE.CylinderGeometry(0.2, 0.2, 0.02, 14), figureMat(0x9a7a4a, { metalness: 0.4, roughness: 0.4 }), [0, 0, 0]);
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    addMesh(tray, new THREE.CylinderGeometry(0.03, 0.012, 0.07, 8), gold, [Math.sin(a) * 0.1, 0.06, Math.cos(a) * 0.1]);
+    addMesh(tray, new THREE.CylinderGeometry(0.004, 0.004, 0.04, 4), gold, [Math.sin(a) * 0.1, 0.03, Math.cos(a) * 0.1]);
+  }
+  addMesh(tray, new THREE.CylinderGeometry(0.035, 0.05, 0.14, 8), figureMat(0x8a5a3a), [0, 0.08, 0]);
+  tray.position.set(0, -0.06, 0.18);
+  servant.handR.add(tray);
+  servant.armR.rotation.set(-0.9, 0, 0.1);
+  servant.foreR.rotation.set(-0.9, 0, 0);
+  tray.rotation.x = 1.8;
+  servant.group.position.set(-3.25, 0, -0.45);
+  servant.group.rotation.y = 0.6;
+  const all = [left, right, servant];
+  for (const f of all) {
+    mergeFigure(f.group);
+    group.add(f.group);
+  }
+  let time = 0;
+  return {
+    group,
+    update(dt) {
+      time += dt;
+      all.forEach((f, i) => {
+        f.torso.rotation.x = Math.sin(time * 1.4 + i * 2) * 0.02;
+        f.head.rotation.y = Math.sin(time * 0.35 + i * 1.9) * 0.35;
+      });
+    },
+  };
+}
+
 // Bygger kungaparet, två vakter och en härold. Placeras i kungalogen av arenan.
 export function makeRoyals() {
   const king = makeFigure({ robe: 0x7a1a2a, skin: 0xe6b890, hair: 0xb8b4ac, beard: true, crown: "king", ermine: true, sitting: true, dress: true });
@@ -781,23 +913,7 @@ export function makeRoyals() {
   king.armR.rotation.set(-0.4, 0, -0.1);
   king.foreR.rotation.set(-0.8, 0, 0);
 
-  const guards = [0, 1].map(() => {
-    const g = makeFigure({ robe: 0x2f5fb3, skin: 0xd09a6c, hair: 0x23170e, beard: Math.random() < 0.5, hat: "kettle", tabard: 0x2f5fb3, hose: 0x4a4a52 });
-    // Hillebard: lång stång med yxblad, spets och krok
-    const wood = figureMat(0x6a4a2c);
-    const steel = figureMat(0xb6bcc4, { metalness: 0.8, roughness: 0.35 });
-    const halberd = new THREE.Group();
-    addMesh(halberd, new THREE.CylinderGeometry(0.016, 0.018, 2.2, 6), wood, [0, 0.9, 0]);
-    addMesh(halberd, new THREE.ConeGeometry(0.025, 0.25, 4), steel, [0, 2.1, 0]);
-    addMesh(halberd, new THREE.BoxGeometry(0.01, 0.2, 0.16), steel, [0, 1.85, 0.09]);
-    addMesh(halberd, new THREE.ConeGeometry(0.02, 0.12, 4), steel, [0, 1.9, -0.06], [1, 1, 1], [-Math.PI / 2, 0, 0]);
-    halberd.position.set(0, -0.08, 0.05);
-    g.handR.add(halberd);
-    g.armR.rotation.set(-0.35, 0, -0.15);
-    g.foreR.rotation.set(-1.1, 0, 0);
-    g.halberd = halberd;
-    return g;
-  });
+  const guards = [0, 1].map(() => makeGuard(0x2f5fb3, Math.random() < 0.5));
 
   const herald = makeFigure({ robe: 0xd9a521, skin: 0xe6b890, hair: 0x7a4e26, hat: "beret", tabard: 0xb8322f, hose: 0xb8322f });
   // Lång trumpet med en liten fana

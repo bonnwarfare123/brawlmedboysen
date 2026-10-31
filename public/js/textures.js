@@ -1019,3 +1019,84 @@ export function trampledTexture() {
     }
   });
 }
+
+// Brigandin och plåtrock: tyg med tätt satta nitar i rader (nitarna håller plåtarna under tyget)
+export function rivetClothTexture() {
+  return makeTexture("rivetcloth", 256, (ctx, n) => {
+    const rand = seeded(77);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, n, n);
+    for (let i = 0; i < n; i += 2) {
+      ctx.fillStyle = `rgba(0,0,0,${0.03 + rand() * 0.04})`;
+      ctx.fillRect(0, i, n, 1);
+    }
+    // Plåtarna under tyget syns som svaga, överlappande band
+    const rows = 8;
+    for (let r = 0; r < rows; r++) {
+      const y = (r / rows) * n;
+      const g = ctx.createLinearGradient(0, y, 0, y + n / rows);
+      g.addColorStop(0, "rgba(255,255,255,0.10)");
+      g.addColorStop(0.85, "rgba(0,0,0,0.10)");
+      g.addColorStop(1, "rgba(0,0,0,0.28)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, y, n, n / rows);
+    }
+    // Nitarna: mörk kant, ljus mässingstopp
+    for (let r = 0; r < rows; r++) {
+      const y = (r / rows) * n + n / rows * 0.32;
+      for (let c = 0; c < 10; c++) {
+        const x = ((c + (r % 2) * 0.5) / 10) * n;
+        ctx.fillStyle = "rgba(30,20,10,0.55)";
+        ctx.beginPath(); ctx.arc(x, y, 4.2, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "rgba(245,215,140,0.95)";
+        ctx.beginPath(); ctx.arc(x - 0.6, y - 0.6, 2.8, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    // Nött tyg och smuts
+    for (let i = 0; i < 26; i++) {
+      ctx.fillStyle = `rgba(60,45,25,${0.06 + rand() * 0.12})`;
+      ctx.beginPath();
+      ctx.ellipse(rand() * n, rand() * n, 6 + rand() * 22, 4 + rand() * 12, rand() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }, [3, 1]);
+}
+
+// Vadderad jacka i längsgående kanaler (gambeson): lodräta sömmar med mjuka kuddar emellan
+export function channelQuiltTexture() {
+  return makeTexture("channelquilt", 256, (ctx, n) => {
+    const rand = seeded(41);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, n, n);
+    const cell = 21;
+    for (let x = 0; x < n; x += cell) {
+      const g = ctx.createLinearGradient(x, 0, x + cell, 0);
+      g.addColorStop(0, "rgba(0,0,0,0.28)");
+      g.addColorStop(0.3, "rgba(255,255,255,0.12)");
+      g.addColorStop(0.6, "rgba(255,255,255,0.05)");
+      g.addColorStop(1, "rgba(0,0,0,0.26)");
+      ctx.fillStyle = g;
+      ctx.fillRect(x, 0, cell, n);
+      ctx.strokeStyle = "rgba(60,45,25,0.6)";
+      ctx.setLineDash([3, 3]);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, n); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    // Smuts nertill och svett under armarna, en lagning
+    for (let i = 0; i < 36; i++) {
+      ctx.fillStyle = `rgba(70,50,25,${0.05 + rand() * 0.12})`;
+      ctx.beginPath();
+      ctx.ellipse(rand() * n, n * 0.5 + rand() * n * 0.5, 5 + rand() * 20, 3 + rand() * 10, rand() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = "rgba(140,110,70,0.35)";
+    ctx.fillRect(40, 120, 34, 30);
+    ctx.strokeStyle = "rgba(40,30,20,0.85)";
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 8; i++) {
+      ctx.beginPath(); ctx.moveTo(40 + i * 4.5, 116); ctx.lineTo(42 + i * 4.5, 124); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(40 + i * 4.5, 146); ctx.lineTo(42 + i * 4.5, 154); ctx.stroke();
+    }
+  }, [4, 1]);
+}

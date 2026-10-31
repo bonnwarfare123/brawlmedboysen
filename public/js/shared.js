@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.24";
+export const VERSION = "0.25";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -47,8 +47,8 @@ export const COMBAT = {
 };
 
 // UTSEENDE – bara kosmetiskt, alla är lika starka
-export const ARMORS = ["Plåtrustning", "Ringbrynja", "Läderrustning", "Praktrustning", "Bonde", "Gycklare", "Vandrande riddare"];
-export const HELMETS = ["Tunnhjälm", "Visirhjälm", "Järnhatt", "Hornhjälm", "Plymhjälm", "Kastrull", "Halmhatt", "Ringbrynjehuva", "Sjal", "Pälsmössa", "Barhuvad"];
+export const ARMORS = ["Plåtrustning", "Ringbrynja", "Läderrustning", "Praktrustning", "Bonde", "Gycklare", "Vandrande riddare", "Gambeson", "Surcoat-riddare", "Plåtrock", "Brigandin", "Stadsvakt", "Legoknekt", "Halvplåt", "Korsriddare"];
+export const HELMETS = ["Tunnhjälm", "Visirhjälm", "Järnhatt", "Hornhjälm", "Plymhjälm", "Kastrull", "Halmhatt", "Ringbrynjehuva", "Sjal", "Pälsmössa", "Barhuvad", "Näshjälm", "Öppet bascinet", "Cervellière", "Fotfolkshjälm", "Öppen tunnhjälm", "Krigarduk", "Läderhätta", "Bucklig hjälm"];
 export const SHIELDS = ["Rund", "Droppformad", "Riddarsköld", "Bucklare", "Pavis"];
 export const WEAPONS = [
   "Svärd", "Yxa", "Slagkedja", "Tvåhandssvärd", "Stridsyxa", "Hillebard", "Zweihänder", "Spjut", "Stridshammare", "Slägga", "Dolk",

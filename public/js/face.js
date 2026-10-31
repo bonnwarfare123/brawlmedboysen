@@ -26,7 +26,7 @@ export function rollFeatures(rand) {
   const hairStyle = pick([1.6, 1.4, 1, old ? 1.4 : 0.5, old ? 1.4 : 0.4, 0.9]); // 0 spretig, 1 rufsig, 2 långt, 3 flint, 4 tunnhårig, 5 snaggad
   const beard = pick([1.4, 1.2, 0.8, 1.4, 0.45, 0.7, 0.45]); // 0 inget, 1 stubb, 2 mustasch, 3 helskägg, 4 långt flätat, 5 pipskägg, 6 knävelborr
   const paintRoll = rand();
-  return {
+  const f = {
     skin: SKIN[skinI],
     skinIndex: skinI,
     hair: HAIR[hairI],
@@ -50,6 +50,14 @@ export function rollFeatures(rand) {
     headband: rand() < 0.18 ? (rand() < 0.55 ? 0xa82418 : 0x1e1c1a) : 0, // pannband (syns utan hjälm)
     paint: paintRoll < 0.06 ? 1 : paintRoll < 0.11 ? 2 : paintRoll < 0.15 ? 3 : 0, // krigsmålning: röda ränder, blått band, svart dödskalle
   };
+  // Nytt i v0.25 (slumpas efter de gamla, så de gamla ansiktena ser likadana ut som förut)
+  f.noseType = pick([1.6, 1, 1, 0.9, 0.7]); // 0 rak, 1 krokig örnnäsa, 2 potatisnäsa, 3 uppnäsa, 4 platt boxarnäsa
+  f.mood = pick([1.1, 1, 1, 1, 0.8]);       // 0 lugn, 1 trött, 2 sur, 3 stolt, 4 dumstridig
+  f.teeth = pick([2.2, 0.6, 0.6]);          // 0 vanliga, 1 hästtänder, 2 sneda
+  f.mole = rand() < 0.25 ? [(rand() - 0.5) * 1.1, -0.35 + rand() * 0.55] : null; // vårta eller födelsemärke
+  f.wrinkles = old || f.mood === 1 ? 1 : rand() < 0.15 ? 0.5 : 0;
+  f.earSize = 0.9 + rand() * 0.35;          // öronen
+  return f;
 }
 
 // ---------- Huvudet ----------
@@ -209,6 +217,29 @@ export function faceTexture(f, rand) {
   };
   if (f.scar === 1) scarLine([[0.26, 0.45, 0.86], [0.34, 0.15, 0.92], [0.42, -0.2, 0.88]]);
   if (f.scar === 2) scarLine([[-0.3, -0.05, 0.92], [-0.62, -0.38, 0.7]]);
+  // Humöret syns i huden: påsar under ögonen (trött), rynka mellan brynen (sur), rynkor i pannan
+  const shade = skin.clone().multiplyScalar(0.62).lerp(new THREE.Color(0x5a3a4a), 0.25);
+  if (f.mood === 1) for (const s of [1, -1]) {
+    blob([0.36 * s, -0.04, 0.92], 15, shade, 0.5);
+    stroke([[0.25 * s, -0.06, 0.95], [0.36 * s, -0.1, 0.93], [0.47 * s, -0.07, 0.88]], 1.4, shade, 0.7);
+  }
+  if (f.mood === 2) {
+    for (const s of [1, -1]) stroke([[0.05 * s, 0.38, 0.95], [0.035 * s, 0.24, 0.97]], 1.8, shade, 0.75);
+    for (const s of [1, -1]) stroke([[0.2 * s, -0.1, 0.96], [0.27 * s, -0.36, 0.92], [0.27 * s, -0.5, 0.86]], 1.6, shade, 0.45); // fåror från näsan
+  }
+  if (f.wrinkles) for (let i = 0; i < 3; i++) {
+    const y = 0.5 + i * 0.07;
+    stroke([[-0.34, y, 0.88], [-0.12, y + 0.02, 0.93], [0.12, y + 0.015, 0.93], [0.34, y, 0.88]], 1.3, shade, 0.35 * f.wrinkles);
+  }
+  // Vårta eller födelsemärke
+  if (f.mole) {
+    const [mx, my] = f.mole;
+    const [cx, cy] = toCanvas(mx, my, 0.9);
+    g.fillStyle = hex(skin.clone().multiplyScalar(0.45).lerp(new THREE.Color(0x4a2a1a), 0.4));
+    g.beginPath();
+    g.arc(cx, cy, 2.6, 0, Math.PI * 2);
+    g.fill();
+  }
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
@@ -369,7 +400,7 @@ export const BEARD_REGION = (x, y, z) => {
 export const BEARD_THICK = (x, y, z) => 0.004 + Math.max(0, -0.55 - y) * 0.03 + Math.max(0, z) * 0.003;
 
 // Näsa: en kantig kil med rak näsrygg, spets och näsvingar (platta ytor)
-export function noseGeometry(size, broken) {
+export function noseGeometry(size, broken, type = 0) {
   const k = size;
   const P = [
     [0, 0.158, 0.086],                      // 0 näsrot
@@ -382,6 +413,23 @@ export function noseGeometry(size, broken) {
     [-0.012 * k, 0.12, 0.09 + 0.008 * k],   // 7 sida vänster
     [0.012 * k, 0.12, 0.09 + 0.008 * k],    // 8 sida höger
   ];
+  if (type === 1) {
+    // Krokig örnnäsa: puckel på näsryggen och en spets som hänger ner
+    for (const i of [7, 8]) P[i][2] += 0.012 * k;
+    P[1][1] -= 0.008; P[1][2] -= 0.002; P[4][1] -= 0.005; P[4][2] -= 0.003;
+  } else if (type === 2) {
+    // Potatisnäsa: bred och knölig
+    for (const i of [2, 3, 7, 8]) P[i][0] *= 1.35;
+    P[1][2] += 0.005; P[4][2] += 0.007; P[1][1] -= 0.003;
+  } else if (type === 3) {
+    // Uppnäsa: spetsen pekar uppåt (näsborrarna syns)
+    P[1][1] += 0.009; P[1][2] -= 0.007; P[4][1] += 0.005; P[4][2] -= 0.006;
+  } else if (type === 4) {
+    // Platt boxarnäsa: tryckt in och bred
+    P[1][2] -= 0.011; P[4][2] -= 0.008;
+    for (const i of [2, 3]) P[i][0] *= 1.45;
+    for (const i of [7, 8]) { P[i][0] *= 1.25; P[i][2] -= 0.004; }
+  }
   if (broken) for (const i of [1, 4]) P[i][0] += 0.005;
   const tris = [[0, 7, 1], [0, 1, 8], [0, 5, 7], [0, 8, 6], [7, 2, 1], [1, 3, 8], [5, 2, 7], [8, 3, 6], [2, 4, 1], [1, 4, 3], [2, 3, 4]];
   const pos = [];
