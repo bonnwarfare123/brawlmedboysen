@@ -1531,6 +1531,7 @@ const net = new Net({
     const other = others.get(msg.id);
     if (!other) return;
     other.target.set(msg.p[0], msg.p[1], msg.p[2]);
+    addSnapshot(other, msg.p, msg.r, msg.k);
     other.targetYaw = msg.r;
     other.anim = msg.a;
     other.knight.setCrouch(msg.c === 1);
@@ -3353,13 +3354,95 @@ let lobbyEmoteTimer = 2;
 const prevPos = new THREE.Vector3();
 const measuredVel = new THREE.Vector3();
 
+// ---------------------------------------------------------------------------
+// JÄMNA RÖRELSER FÖR ANDRA SPELARE (snapshot-interpolering)
+// Positionerna kommer 10–15 gånger i sekunden och lite ojämnt. Förut "jagade" riddaren den senaste
+// positionen, så den ryckte fram och saktade in mellan varje paket (och benen gick ojämnt).
+// Nu sparas positionerna med tid i en kort kö, och riddaren visas en liten stund i efterhand,
+// jämnt mellan två kända lägen. Farten (för benen) räknas från kön, så stegen blir jämna.
+// ---------------------------------------------------------------------------
+const _snapP = new THREE.Vector3();
+const _snapV = new THREE.Vector3();
+function addSnapshot(other, p, r, k) {
+  const now = seconds();
+  const snaps = (other.snaps ||= []);
+  const last = snaps[snaps.length - 1];
+  const sent = Number.isFinite(k) ? k / 1000 : null; // avsändarens klocka (sekunder)
+  if (last) {
+    const gap = sent !== null && last.sent !== null ? sent - last.sent : now - last.arrived;
+    // Medelavståndet mellan paketen (pauser när man står still räknas inte)
+    if (gap > 0 && gap < 0.3) other.snapGap = (other.snapGap ?? gap) * 0.85 + gap * 0.15;
+    // Långt hopp (ny runda, teleport) eller klockan har slagit runt: börja om
+    if (Math.hypot(p[0] - last.p[0], p[2] - last.p[2]) > 4 || (sent !== null && last.sent !== null && sent < last.sent - 1)) {
+      snaps.length = 0;
+      other.clockOff = undefined;
+    }
+  }
+  let t;
+  if (sent !== null) {
+    // Avsändarens tid översatt till vår klocka. Förskjutningen följer de snabbaste paketen
+    // (de långsamma har fastnat i nätet) och glider sakta uppåt om nätet blir långsammare.
+    const off = now - sent;
+    if (other.clockOff === undefined || off < other.clockOff) other.clockOff = off;
+    else other.clockOff += (off - other.clockOff) * 0.02;
+    other.jitter = (other.jitter ?? 0.02) * 0.9 + Math.abs(off - other.clockOff) * 0.1;
+    t = sent + other.clockOff;
+  } else {
+    // Äldre klient utan tidsstämpel: paket som kommer i klump sprids ut i tid
+    const prev = snaps[snaps.length - 1];
+    t = prev ? Math.max(now, prev.t + (other.snapGap ?? 0.066) * 0.6) : now;
+  }
+  const prev = snaps[snaps.length - 1];
+  if (prev && t <= prev.t) t = prev.t + 0.001;
+  snaps.push({ t, arrived: now, sent, p: [p[0], p[1], p[2]], r });
+  if (snaps.length > 20) snaps.shift();
+  other.snapFor = other.target.clone(); // vad kön senast visade (för att märka om någon annan flyttar riddaren)
+}
+
+// Räkna ut var riddaren ska stå nu. Returnerar false om kön inte går att använda.
+function sampleSnapshots(other, out, vel) {
+  const snaps = other.snaps;
+  if (!snaps || !snaps.length) return false;
+  // Har riddaren flyttats utan ett paket (ny runda, intro, prisceremoni)? Då gäller den nya platsen.
+  if (other.snapFor && other.target.distanceToSquared(other.snapFor) > 0.0025) {
+    snaps.length = 0;
+    return false;
+  }
+  const delay = Math.min(0.3, Math.max(0.06, (other.snapGap ?? 0.066) * 1.15 + (other.jitter ?? 0.02) * 2 + 0.01));
+  const rt = seconds() - delay;
+  while (snaps.length > 2 && snaps[1].t <= rt) snaps.shift();
+  const a = snaps[0];
+  const b = snaps[1];
+  if (!b || rt <= a.t) {
+    out.set(a.p[0], a.p[1], a.p[2]);
+    vel.set(0, 0, 0);
+    other.snapYaw = a.r;
+    return true;
+  }
+  const span = Math.max(1e-3, b.t - a.t);
+  // Lite förlängning om nästa paket dröjer (max 0,1 s), sedan står den kvar
+  const f = Math.min(1 + Math.min(0.1, Math.max(0, rt - b.t)) / span, (rt - a.t) / span);
+  out.set(a.p[0] + (b.p[0] - a.p[0]) * f, a.p[1] + (b.p[1] - a.p[1]) * f, a.p[2] + (b.p[2] - a.p[2]) * f);
+  if (span < 0.35) vel.set((b.p[0] - a.p[0]) / span, 0, (b.p[2] - a.p[2]) / span);
+  else vel.set(0, 0, 0);
+  if (rt > b.t + 0.1) vel.set(0, 0, 0);
+  other.snapYaw = angleLerp(a.r, b.r, Math.min(1, f));
+  return true;
+}
+
 function updateOthers(dt) {
   const t = 1 - Math.exp(-dt * 12); // mjuk förflyttning mot senaste kända position
   for (const other of others.values()) {
     if (ceremonyActive()) break; // prisceremonin styr riddarna
     const group = other.knight.group;
     prevPos.copy(group.position);
-    if (group.position.distanceTo(other.target) > 5) {
+    const smooth = sampleSnapshots(other, _snapP, _snapV);
+    if (smooth) {
+      if (group.position.distanceTo(_snapP) > 5) group.position.copy(_snapP);
+      else group.position.lerp(_snapP, 1 - Math.exp(-dt * 30)); // tar bort små hopp när kön börjar om
+      other.vel.lerp(_snapV, 1 - Math.exp(-dt * 8));
+      other.targetYawSmooth = other.snapYaw;
+    } else if (group.position.distanceTo(other.target) > 5) {
       group.position.copy(other.target); // för långt efter: hoppa direkt
       other.vel.set(0, 0, 0);
     } else {
@@ -3382,7 +3465,7 @@ function updateOthers(dt) {
       other.dustTimer = 0;
       effects.dust(group.position, 1, 0.7);
     }
-    group.rotation.y = angleLerp(group.rotation.y, other.targetYaw, t);
+    group.rotation.y = smooth ? angleLerp(group.rotation.y, other.snapYaw ?? other.targetYaw, 1 - Math.exp(-dt * 25)) : angleLerp(group.rotation.y, other.targetYaw, t);
     other.knight.farAway = camera.position.distanceToSquared(group.position) > 18 * 18;
     other.knight.animate(dt, motionOf(other.vel, group.rotation.y, group.position.y > 0.05));
     other.knight.updateTrail(scene);
@@ -3505,7 +3588,7 @@ function sendStateNow() {
   const z = Math.round(me.pos.z * 100) / 100;
   const r = Math.round(me.yaw * 100) / 100;
   const c = me.crouch ? 1 : 0;
-  net.send({ t: "s", p: [x, y, z], r, a: me.anim, c });
+  net.send({ t: "s", p: [x, y, z], r, a: me.anim, c, k: Math.round(performance.now()) % 10000000 });
   lastSent = { x, y, z, r, a: me.anim, c };
   heartbeatTimer = 0;
   sendTimer = 0;

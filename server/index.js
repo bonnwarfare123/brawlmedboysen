@@ -1162,14 +1162,16 @@ export class GameRoom extends DurableObject {
     player.r = round2(finite(msg.r));
     player.a = msg.a === 1 || msg.a === 2 ? msg.a : 0;
     player.crouch = msg.c === 1 && !player.legless;
-    this.broadcast({ t: "s", id: player.id, p: player.p, r: player.r, a: player.a, c: player.crouch ? 1 : 0 }, ws);
+    // k = avsändarens klocka (ms): mottagarna kan då visa rörelsen i jämn takt oavsett ojämnt nätverk
+    const k = Number.isFinite(msg.k) ? Math.round(msg.k) % 10000000 : undefined;
+    this.broadcast({ t: "s", id: player.id, p: player.p, r: player.r, a: player.a, c: player.crouch ? 1 : 0, k }, ws);
     // Den man håller fast följer med
     if (player.holding) {
       const held = this.players.get(player.holding);
       if (held) {
         held.p = this.frontOf(player);
         held.r = round2(player.r + Math.PI);
-        this.broadcast({ t: "s", id: held.id, p: held.p, r: held.r, a: 0, c: 0 });
+        this.broadcast({ t: "s", id: held.id, p: held.p, r: held.r, a: 0, c: 0, k });
       }
     }
   }
@@ -1891,7 +1893,7 @@ export class GameRoom extends DurableObject {
       bot.p = [round2(x), 0, round2(z)];
     }
     bot.a = moving;
-    this.broadcast({ t: "s", id: bot.id, p: bot.p, r: bot.r, a: bot.a, c: 0 });
+    this.broadcast({ t: "s", id: bot.id, p: bot.p, r: bot.r, a: bot.a, c: 0, k: Date.now() % 10000000 });
 
     // Ett laddat tungt slag släpps när det är klart
     if (ai.heavyAt && t >= ai.heavyAt) {

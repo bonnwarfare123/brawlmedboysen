@@ -523,6 +523,33 @@ const _mat = new THREE.Matrix4();
 const _mid = new THREE.Vector3();
 const _linkScale = new THREE.Vector3(1, 1.7, 1);
 
+// Kontaktskugga: en mjuk mörk fläck under riddaren (delas av alla riddare: en bild, en form)
+let contactShared = null;
+function contactShadow() {
+  if (!contactShared) {
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const g = c.getContext("2d");
+    const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, "rgba(0,0,0,0.85)");
+    grad.addColorStop(0.45, "rgba(0,0,0,0.45)");
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 64, 64);
+    const tex = new THREE.CanvasTexture(c);
+    const geo = new THREE.PlaneGeometry(1, 1);
+    geo.rotateX(-Math.PI / 2);
+    contactShared = { tex, geo };
+  }
+  const mat = new THREE.MeshBasicMaterial({ map: contactShared.tex, transparent: true, depthWrite: false, opacity: 0.5, polygonOffset: true, polygonOffsetFactor: -2 });
+  const mesh = new THREE.Mesh(contactShared.geo, mat);
+  mesh.renderOrder = 1;
+  mesh.castShadow = mesh.receiveShadow = false;
+  mesh.userData.equipment = true;
+  mesh.userData.contact = true;
+  return mesh;
+}
+
 export class Knight {
   constructor(colorHex, name = null, look = {}, opts = {}) {
     look = { a: 0, h: 0, s: 0, w: 0, c: 0, ...look };
@@ -718,20 +745,37 @@ export class Knight {
 
     // Proportioner: längre bål och armar, lite mindre huvud, större händer och fötter.
     // Varje riddare blir också lite olika lång i överkroppen och olika bred över axlarna.
+    // Kroppsbyggnad (slumpas ur samma frö som ansiktet): vanlig, kraftig (bred med mage),
+    // smal och gänglig, eller muskulös (breda axlar, smal midja, grova armar)
     const build = seededRandom((opts.seed ?? colorHex) * 13 + 5);
-    const tall = 1.08 + build() * 0.08;
-    const broad = 0.98 + build() * 0.08;
+    for (let i = 0; i < 6; i++) build(); // små frön ger nästan samma första tal
+    const kind = (() => {
+      const r = build();
+      return r < 0.4 ? "normal" : r < 0.6 ? "stout" : r < 0.8 ? "slim" : "muscular";
+    })();
+    this.buildKind = kind;
+    const B = {
+      normal: { broad: 0.99 + build() * 0.06, tall: 1.08 + build() * 0.06, deep: 1, hips: 0.96, arm: 1, fore: 1, leg: 1 },
+      stout: { broad: 1.12, tall: 1.03, deep: 1.24, hips: 1.12, arm: 1.16, fore: 1.1, leg: 1.16 },
+      slim: { broad: 0.88, tall: 1.17, deep: 0.88, hips: 0.9, arm: 0.84, fore: 0.86, leg: 0.86 },
+      muscular: { broad: 1.17, tall: 1.12, deep: 1.06, hips: 0.92, arm: 1.24, fore: 1.14, leg: 1.1 },
+    }[kind];
+    const { broad, tall } = B;
     this.reshape({
-      torso: [broad, tall, 1],
+      torso: [broad, tall, B.deep],
       head: [0.94, 0.94, 0.94],
-      upperArmL: [1, 1.1, 1], upperArmR: [1, 1.1, 1],
-      forearmL: [1, 1.04, 1], forearmR: [1, 1.04, 1],
+      upperArmL: [B.arm, 1.1, B.arm], upperArmR: [B.arm, 1.1, B.arm],
+      forearmL: [B.fore, 1.04, B.fore], forearmR: [B.fore, 1.04, B.fore],
       handL: [1.15, 1.15, 1.15], handR: [1.15, 1.15, 1.15],
+      thighL: [B.leg, 1, B.leg], thighR: [B.leg, 1, B.leg],
+      shinL: [B.leg * 0.97 + 0.03, 1, B.leg * 0.97 + 0.03], shinR: [B.leg * 0.97 + 0.03, 1, B.leg * 0.97 + 0.03],
       footL: [1.04, 1.02, 1.14], footR: [1.04, 1.02, 1.14],
-      pelvis: [0.96, 1, 1],
+      pelvis: [B.hips, 1, B.deep * 0.5 + 0.5],
     });
     this.armLen = [0.29 * 1.1, 0.26 * 1.04]; // överarm, underarm (för armlösaren)
     this.chestBody.rx *= broad;
+    this.chestBody.rz *= B.deep;
+    this.chestBody.ar *= B.arm;
     this.chestBody.top = 0.44 * tall;
 
     // Vapen och sköld
@@ -781,6 +825,11 @@ export class Knight {
     });
 
     this.trimShadows();
+
+    // Kontaktskugga under fötterna (läggs till efter skuggorna ovan, så den inte kastar någon egen)
+    this.contact = contactShadow();
+    this.contact.position.y = 0.015;
+    this.group.add(this.contact);
 
     this.name = name;
     this.colorHex = colorHex;
@@ -1372,6 +1421,9 @@ export class Knight {
     F(new THREE.CylinderGeometry(0.048, 0.04, 0.07, 12, 1, true), m.leatherDark, [0, -0.225, 0]);
     SH(new THREE.CylinderGeometry(0.056, 0.052, 0.12, 12, 1, true), m.leatherDark, [0, -0.35, 0]);
     SH(new THREE.TorusGeometry(0.056, 0.006, 4, 14), m.strap, [0, -0.29, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
+    // Nedvikt stövelkant med ett litet spänne på utsidan, och en nött läderlapp på knät
+    SH(new THREE.CylinderGeometry(0.064, 0.058, 0.03, 12, 1, true), m.leather, [0, -0.29, 0]);
+    SH(new THREE.BoxGeometry(0.016, 0.016, 0.006), m.brass, [0.062 * s, -0.33, 0.01], [1, 1, 1], [0, Math.PI / 2 * s, 0]);
     this.addPointedShoe(FT, m.leatherDark, m.strap, 0.2, false);
   }
 
@@ -1413,6 +1465,12 @@ export class Knight {
     SH(new THREE.SphereGeometry(0.045, 8, 6), m.leather, [0, -0.01, 0.045], [1, 1, 0.45]); // lappat knä
     this.addHand(H, m.skin, s, 1);
     SH(latheAlong(PROFILE.shin, 0.4, 0.35, 1, 0.006, false), m.wool);
+    // Benlindor korsbundna med snöre upp över vaden
+    for (let i = 0; i < 4; i++) {
+      const y = -0.17 - i * 0.055;
+      const r = 0.064 - i * 0.004;
+      SH(new THREE.TorusGeometry(r, 0.004, 3, 14), m.rope, [0, y, 0.004], [1, 1, 1.1], [Math.PI / 2 + (i % 2 ? 0.3 : -0.3), 0, 0]);
+    }
     FT(new THREE.CylinderGeometry(0.056, 0.06, 0.08, 12, 1, true), m.leatherDark, [0, -0.04, 0]); // skoskaft över fotleden
     FT(new THREE.SphereGeometry(1, 12, 8), m.leatherDark, [0, -0.065, 0.055], [0.068, 0.055, 0.135]);
     FT(new THREE.TorusGeometry(0.058, 0.007, 4, 12), m.rope, [0, -0.02, 0], [1, 1, 1], [Math.PI / 2, 0, 0]); // snöre
@@ -3940,6 +3998,18 @@ export class Knight {
       }
     }
 
+    // ----- Kontaktskuggan följer höfterna: större och mörkare när man hukar eller ligger, svagare i luften -----
+    if (this.contact) {
+      const pv = this.seg.pelvis;
+      const lying = Math.max(downAmt, this.sitAmt, rollAmt * 0.6);
+      const hY = pv.userData.detached ? 1 : pv.position.y;
+      const air = motion.airborne ? 0.45 : 1;
+      this.contact.position.set(pv.position.x * 0.7, this.groundY - this.group.position.y + 0.015, pv.position.z * 0.7);
+      const size = 0.85 + lying * 0.7 + Math.max(0, 0.95 - hY) * 0.6;
+      this.contact.scale.set(size * (1 + lying * 0.3), 1, size);
+      this.contact.material.opacity = 0.5 * air * (1 - Math.max(0, hY - 1.1));
+    }
+
     // ----- Ansiktet, tyget och kedjan -----
     this.updateFace(dt);
     // Långt bort från kameran räknas tyget bara varannan bild (syns inte, sparar tid)
@@ -4050,35 +4120,42 @@ export class Knight {
 
   // Leden rör sig som en fjäder med lite tyngd: accelererar, bromsar och sviktar en aning förbi målet.
   // Lederna längre ut (underarm, hand, huvud) är mjukare och släpar efter, så rörelser "piskar" som hos en människa.
-  springJoint(name, [x, y, z, sp], dt) {
+  springJoint(name, T, dt) {
     const seg = this.seg[name];
     if (!seg || seg.userData.detached) return;
     if (dt <= 0) return;
+    const sp = T[3];
     const w0 = -Math.log(Math.max(1e-6, 1 - sp)) / dt; // samma styvhet som den gamla mjuka rörelsen
-    const J = SPRING[name.replace(/[LR]$/, "")] || SPRING.torso;
-    const w = w0 * J[0];
-    const zeta = J[1];
+    const part = name.replace(/[LR]$/, "");
+    const J = SPRING[part] || SPRING.torso;
+    let w = w0 * J[0];
+    let zeta = J[1];
+    // Tunga vapen: vapenarmen är trögare och svingar längre efter slaget (man känner tyngden)
+    if (this.attack && (name === "upperArmR" || name === "forearmR" || name === "handR" || (this.twoHanded && name.endsWith("L") && part !== "hand"))) {
+      const heavy = Math.max(0, (weaponSpec(this.wIndex).speed || 1) - 1);
+      w /= 1 + heavy * 0.45;
+      zeta -= heavy * 0.12;
+    }
     const r = seg.rotation;
-    const v = (seg.userData.sv ||= [0, 0, 0]);
-    // Fjädern har ett eget läge. Små rättningar utifrån (armen knuffas ut ur bröstet varje bild) räknas om
-    // varje gång och ska inte störa fjädern. Stora ändringar (tvåhandsgreppet, en ny pose) tas över.
+    const ud = seg.userData;
+    const v = (ud.sv ||= [0, 0, 0]);
+    const cur = (ud.sPos ||= [r.x, r.y, r.z]);
     // Rättningar utifrån (armen knuffas ut ur bröstet, tvåhandsgreppet) tas över som läge; farten behålls.
     // Stora hopp (en helt ny pose utifrån) nollar farten.
-    const prev = seg.userData.sPos;
-    if (prev && Math.abs(r.x - prev[0]) + Math.abs(r.y - prev[1]) + Math.abs(r.z - prev[2]) > 0.6) v[0] = v[1] = v[2] = 0;
-    const cur = [r.x, r.y, r.z];
-    const target = [x, y, z];
+    if (Math.abs(r.x - cur[0]) + Math.abs(r.y - cur[1]) + Math.abs(r.z - cur[2]) > 0.6) v[0] = v[1] = v[2] = 0;
+    cur[0] = r.x;
+    cur[1] = r.y;
+    cur[2] = r.z;
     const steps = Math.max(1, Math.ceil((w * dt) / 0.2));
     const h = dt / steps;
     for (let st = 0; st < steps; st++) {
       for (let i = 0; i < 3; i++) {
-        const a = w * w * (target[i] - cur[i]) - 2 * zeta * w * v[i];
+        const a = w * w * (T[i] - cur[i]) - 2 * zeta * w * v[i];
         v[i] += a * h;
         cur[i] += v[i] * h;
       }
     }
     r.set(cur[0], cur[1], cur[2]);
-    seg.userData.sPos = cur;
   }
 
   // En knuff i lederna (träff): fjädrarna gör resten (rycker till och kommer tillbaka)
