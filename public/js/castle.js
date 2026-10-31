@@ -11,7 +11,7 @@ import { Crowd, makeRoyals } from "./crowd.js";
 import {
   PALETTE, mat, mesh, box, ellipsePoint, seededRandom, makeBrazier, makePodium, makeQuintain, mergeStatic,
   makeCloud, makeStand, makeRoyalBox, makeBarrels, makeCrates, makeWeaponRack, makeFlag, waveFlag,
-  heraldBanner, makeSky, setSkyColors, resetFlags, getCloudMaterial, radialPatch, sandScatter, updateClouds,
+  heraldBanner, makeSky, setSkyColors, resetFlags, getCloudMaterial, radialPatch, sandScatter, updateClouds, groundMacro,
 } from "./arena.js";
 import { rakedSandTexture, sandGrainTexture, trampledTexture } from "./textures.js";
 
@@ -623,6 +623,7 @@ export function buildCastleArena() {
   group.add(field);
   group.add(radialPatch(FX + 0.4, FZ + 0.4, 0.8, 1.0, 0x3a2c22, 0, 0.6, 0.012));   // blöt slask mot muren
   group.add(radialPatch(FX * 0.6, FZ * 0.6, 0, 1.0, 0x4e3a2c, 0.38, 0, 0.013));  // upptrampad lera i mitten
+  group.add(groundMacro(FX + 0.4, FZ + 0.4, 23, [34, 26, 22])); // storskalig variation: blöta partier, spår, nötta stråk
   group.add(sandScatter(FX, FZ));
   const trampled = new THREE.Mesh(
     new THREE.CircleGeometry(1, 64),

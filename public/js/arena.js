@@ -138,6 +138,7 @@ export function buildArena() {
   group.add(radialPatch(FX + 0.4, FZ + 0.4, 0.84, 1.0, 0x4a3420, 0, 0.55, 0.012));
   group.add(radialPatch(FX * 0.55, FZ * 0.55, 0, 1.0, 0x5e4430, 0.32, 0, 0.013));
   group.add(sandScatter(FX, FZ));
+  group.add(groundMacro(FX + 0.4, FZ + 0.4, 11));
   // Upptrampad yta ovanpå sanden: fuktiga partier, gropar efter fötter, släpspår och klumpar
   const trampled = new THREE.Mesh(
     new THREE.CircleGeometry(1, 64),
@@ -1963,6 +1964,79 @@ function makeShingleRoof(color, y0, B, h, rand) {
 }
 
 // En platt fläck på marken som tonar ut (ellips). Alfa går från a0 (radie r0) till a1 (radie r1).
+// Storskalig variation i marken: blöta, mörka partier, torra ljusa fläckar, släpspår och nötta stråk.
+// Ett enda lager över hela stridsytan (bryter upp det upprepade mönstret i sanden). Ritas före allt annat på marken.
+function groundMacro(rx, rz, seed = 7, tint = [40, 26, 14]) {
+  const N = 512;
+  const c = document.createElement("canvas");
+  c.width = c.height = N;
+  const g = c.getContext("2d");
+  const rand = seededRandom(seed);
+  const blob = (x, y, r, rgb, a) => {
+    const grad = g.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, `rgba(${rgb},${a})`);
+    grad.addColorStop(1, `rgba(${rgb},0)`);
+    g.fillStyle = grad;
+    g.fillRect(x - r, y - r, r * 2, r * 2);
+  };
+  // Blöta, mörka fläckar och torra, ljusa (stora och mjuka)
+  for (let i = 0; i < 26; i++) blob(rand() * N, rand() * N, 40 + rand() * 110, tint.join(","), 0.1 + rand() * 0.16);
+  for (let i = 0; i < 18; i++) blob(rand() * N, rand() * N, 30 + rand() * 90, "214,186,138", 0.07 + rand() * 0.1);
+  // Släpspår: långa böjda dubbelspår över ytan
+  g.lineCap = "round";
+  for (let i = 0; i < 4; i++) {
+    const x0 = rand() * N, y0 = rand() * N, a = rand() * Math.PI * 2, len = 160 + rand() * 220, bend = (rand() - 0.5) * 0.9;
+    for (const off of [-7, 7]) {
+      g.strokeStyle = `rgba(${tint.join(",")},0.16)`;
+      g.lineWidth = 4 + rand() * 3;
+      g.beginPath();
+      for (let k = 0; k <= 20; k++) {
+        const t = k / 20;
+        const aa = a + bend * t;
+        const x = x0 + Math.cos(aa) * len * t - Math.sin(aa) * off;
+        const y = y0 + Math.sin(aa) * len * t + Math.cos(aa) * off;
+        if (k) g.lineTo(x, y);
+        else g.moveTo(x, y);
+      }
+      g.stroke();
+    }
+  }
+  // Nött stråk där man oftast går: en mjuk ring i mitten
+  g.strokeStyle = `rgba(${tint.join(",")},0.08)`;
+  g.lineWidth = 60;
+  g.beginPath();
+  g.ellipse(N / 2, N / 2, N * 0.28, N * 0.24, 0.3, 0, Math.PI * 2);
+  g.stroke();
+  // Små klumpar av mörkare lera
+  for (let i = 0; i < 420; i++) {
+    g.fillStyle = `rgba(${tint.join(",")},${0.15 + rand() * 0.2})`;
+    g.beginPath();
+    g.ellipse(rand() * N, rand() * N, 1 + rand() * 3, 1 + rand() * 2, rand() * 3, 0, Math.PI * 2);
+    g.fill();
+  }
+  // Mjuk kant (ytan tonar ut mot barriären)
+  const edge = g.createRadialGradient(N / 2, N / 2, N * 0.42, N / 2, N / 2, N / 2);
+  edge.addColorStop(0, "rgba(0,0,0,1)");
+  edge.addColorStop(1, "rgba(0,0,0,0)");
+  g.globalCompositeOperation = "destination-in";
+  g.fillStyle = edge;
+  g.fillRect(0, 0, N, N);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  const mesh = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 64),
+    new THREE.MeshStandardMaterial({ map: tex, transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -1 }),
+  );
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.scale.set(rx, rz, 1);
+  mesh.position.y = 0.0105;
+  mesh.renderOrder = -3;
+  mesh.receiveShadow = true;
+  mesh.userData.noMerge = true;
+  return mesh;
+}
+
 function radialPatch(rx, rz, r0, r1, color, a0, a1, y) {
   const SEG = 72;
   const RINGS = 6;
@@ -2571,5 +2645,5 @@ export const getCloudMaterial = () => cloudMaterial;
 export {
   PALETTE, mat, mesh, box, ellipsePoint, seededRandom, makeBrazier, makePodium, makeQuintain, mergeStatic,
   makeCloud, makeStand, makeRoyalBox, makeBarrels, makeCrates, makeWeaponRack, makeFlag, waveFlag, makeBanner,
-  heraldBanner, makeHeraldicShield, makeBaskets, makePots, makeDog, makeBirds, radialPatch, sandScatter,
+  heraldBanner, makeHeraldicShield, makeBaskets, makePots, makeDog, makeBirds, radialPatch, sandScatter, groundMacro,
 };

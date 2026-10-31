@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Brawlmedboysen</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Alegreya:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
   <!-- Three.js (3D-motorn) laddas direkt från nätet, ingen installation behövs -->
   <script type="importmap">
@@ -43,70 +46,105 @@
     </div>
   </div>
 
-  <!-- Lobbyn: väntar på att lobbyledaren startar -->
-  <div id="match-lobby" class="card side-card" hidden>
-    <h2>Lobby</h2>
-    <div class="room-row">
-      Rum <strong id="lobby-room-code"></strong>
-      <button id="lobby-copy-link" class="small">Kopiera inbjudningslänk</button>
-    </div>
-    <label>Spelsätt</label>
-    <div class="mode-row">
-      <button class="small mode-btn" data-mode="ffa">Alla mot alla</button>
-      <button class="small mode-btn" data-mode="team">Lag</button>
-      <button class="small mode-btn" data-mode="tourney">Turnering</button>
-    </div>
-    <p id="mode-info" class="rules"></p>
-    <div id="team-row" hidden>
-      <div class="team-buttons">
-        <button class="small team-btn red" data-team="0">Röda laget</button>
-        <button class="small team-btn blue" data-team="1">Blå laget</button>
+  <!-- Lobbyn: väntar på att lobbyledaren startar. Tre flikar (Riddare, Match, Spelare) och en fast sidfot med Redo/Starta. -->
+  <div id="match-lobby" class="side-card lobby-panel" hidden>
+    <header class="lp-head">
+      <h2>Lobby</h2>
+      <div class="room-row">
+        <span class="room-chip" title="Rumskod">Rum <strong id="lobby-room-code"></strong></span>
+        <button id="lobby-copy-link" class="small iron">🔗 Kopiera inbjudan</button>
       </div>
-      <button id="shuffle-button" class="small" hidden>🎲 Slumpa lag</button>
+    </header>
+    <nav class="lp-tabs" role="tablist">
+      <button class="lp-tab active" data-tab="knight" role="tab">⚔️ Riddare</button>
+      <button class="lp-tab" data-tab="match" role="tab">🏰 Match</button>
+      <button class="lp-tab" data-tab="players" role="tab">👥 Spelare <span id="tab-player-count" class="tab-count"></span></button>
+    </nav>
+    <div class="lp-body">
+      <!-- Riddare: färg och utseende -->
+      <section class="lp-section" data-section="knight">
+        <div id="color-row">
+          <h3>Din färg</h3>
+          <div id="lobby-colors" class="colors"></div>
+        </div>
+        <h3>Utrustning</h3>
+        <div class="look-row"><span>Rustning</span><button class="small" data-look="a" data-dir="-1" aria-label="Föregående">‹</button><b id="look-a"></b><button class="small" data-look="a" data-dir="1" aria-label="Nästa">›</button></div>
+        <div class="look-row"><span>Hjälm</span><button class="small" data-look="h" data-dir="-1" aria-label="Föregående">‹</button><b id="look-h"></b><button class="small" data-look="h" data-dir="1" aria-label="Nästa">›</button></div>
+        <div class="look-row"><span>Sköld</span><button class="small" data-look="s" data-dir="-1" aria-label="Föregående">‹</button><b id="look-s"></b><button class="small" data-look="s" data-dir="1" aria-label="Nästa">›</button></div>
+        <div class="look-row"><span>Mantel</span><button class="small" data-look="c" data-dir="-1" aria-label="Föregående">‹</button><b id="look-c"></b><button class="small" data-look="c" data-dir="1" aria-label="Nästa">›</button></div>
+        <h3>Vapen</h3>
+        <div class="look-row weapon-row"><span>Vapen</span><button class="small" data-look="w" data-dir="-1" aria-label="Föregående">‹</button><b id="look-w"></b><button class="small" data-look="w" data-dir="1" aria-label="Nästa">›</button></div>
+        <div id="weapon-card">
+          <div class="weapon-head"><span id="weapon-type" class="weapon-type"></span><button id="weapon-list-button" class="small" type="button">📜 Alla vapen</button></div>
+          <div class="weapon-stats" id="weapon-stats"></div>
+          <div class="weapon-tags" id="weapon-tags"></div>
+          <p id="weapon-info" class="rules weapon-info"></p>
+          <div id="weapon-list" class="weapon-list" hidden></div>
+        </div>
+        <p class="rules tip">Tips: tryck 1, 2 eller 3 för att buga, håna eller dansa</p>
+      </section>
+
+      <!-- Match: spelsätt, tid, väder, bana och träningsmotståndare -->
+      <section class="lp-section" data-section="match" hidden>
+        <h3>Spelsätt</h3>
+        <div class="mode-row">
+          <button class="small mode-btn" data-mode="ffa">Alla mot alla</button>
+          <button class="small mode-btn" data-mode="team">Lag</button>
+          <button class="small mode-btn" data-mode="tourney">Turnering</button>
+        </div>
+        <p id="mode-info" class="rules"></p>
+        <h3>Bana</h3>
+        <div class="mode-row map-row">
+          <button class="small map-btn" data-map="arena">🏟️ Tornerplatsen</button>
+          <button class="small map-btn" data-map="castle">🏰 Borggården</button>
+        </div>
+        <h3>Tid på dygnet</h3>
+        <div class="mode-row two">
+          <button class="small time-btn" data-time="day">☀️ Dag</button>
+          <button class="small time-btn" data-time="evening">🌇 Kväll</button>
+        </div>
+        <h3>Väder</h3>
+        <div class="mode-row">
+          <button class="small weather-btn" data-weather="sun">🌤️ Sol</button>
+          <button class="small weather-btn" data-weather="rain">🌧️ Regn</button>
+          <button class="small weather-btn" data-weather="fog">🌫️ Dimma</button>
+        </div>
+        <h3>Träningsmotståndare</h3>
+        <div id="bot-row" class="look-row bot-row">
+          <span>Botar</span>
+          <button id="bot-remove" class="small" aria-label="Färre">−</button><b id="bot-count">Inga</b><button id="bot-add" class="small" aria-label="Fler">+</button>
+        </div>
+        <p class="rules host-note">Bara lobbyledaren (👑) kan ändra matchinställningarna.</p>
+      </section>
+
+      <!-- Spelare: vilka som är med och vilka lag -->
+      <section class="lp-section" data-section="players" hidden>
+        <div id="team-row" hidden>
+          <h3>Välj lag</h3>
+          <div class="team-buttons">
+            <button class="small team-btn red" data-team="0">Röda laget</button>
+            <button class="small team-btn blue" data-team="1">Blå laget</button>
+          </div>
+          <button id="shuffle-button" class="small" hidden>🎲 Slumpa lag</button>
+        </div>
+        <h3>Riddare i rummet</h3>
+        <ul id="lobby-players" class="lobby-list"></ul>
+        <button class="small keys-open" type="button">⌨️ Tangenter</button>
+        <p class="rules" id="lobby-rules"></p>
+      </section>
     </div>
-    <ul id="lobby-players" class="lobby-list"></ul>
-    <div id="color-row">
-      <label>Din färg</label>
-      <div id="lobby-colors" class="colors"></div>
-    </div>
-    <label>Utseende</label>
-    <div class="look-row"><span>Rustning</span><button class="small" data-look="a" data-dir="-1">◀</button><b id="look-a"></b><button class="small" data-look="a" data-dir="1">▶</button></div>
-    <div class="look-row"><span>Hjälm</span><button class="small" data-look="h" data-dir="-1">◀</button><b id="look-h"></b><button class="small" data-look="h" data-dir="1">▶</button></div>
-    <div class="look-row"><span>Sköld</span><button class="small" data-look="s" data-dir="-1">◀</button><b id="look-s"></b><button class="small" data-look="s" data-dir="1">▶</button></div>
-    <div class="look-row"><span>Vapen</span><button class="small" data-look="w" data-dir="-1">◀</button><b id="look-w"></b><button class="small" data-look="w" data-dir="1">▶</button></div>
-    <p id="weapon-info" class="rules weapon-info"></p>
-    <div class="look-row"><span>Mantel</span><button class="small" data-look="c" data-dir="-1">◀</button><b id="look-c"></b><button class="small" data-look="c" data-dir="1">▶</button></div>
-    <label>Tid på dygnet</label>
-    <div class="mode-row">
-      <button class="small time-btn" data-time="day">☀️ Dag</button>
-      <button class="small time-btn" data-time="evening">🌇 Kväll</button>
-    </div>
-    <label>Väder</label>
-    <div class="mode-row">
-      <button class="small weather-btn" data-weather="sun">🌤️ Sol</button>
-      <button class="small weather-btn" data-weather="rain">🌧️ Regn</button>
-      <button class="small weather-btn" data-weather="fog">🌫️ Dimma</button>
-    </div>
-    <label>Bana</label>
-    <div class="mode-row map-row">
-      <button class="small map-btn" data-map="arena">🏟️ Tornerplatsen</button>
-      <button class="small map-btn" data-map="castle">🏰 Borggården</button>
-    </div>
-    <div id="bot-row" class="look-row bot-row">
-      <span>Träningsmotståndare</span>
-      <button id="bot-remove" class="small">−</button><b id="bot-count">Inga</b><button id="bot-add" class="small">+</button>
-    </div>
-    <p class="rules">Tips: tryck 1, 2 eller 3 för att buga, håna eller dansa</p>
-    <button class="small keys-open" type="button">⌨️ Tangenter</button>
-    <button id="ready-button" class="ready-btn">Jag är redo</button>
-    <button id="start-button" class="primary" hidden>Starta matchen</button>
-    <p id="lobby-wait" class="subtitle"></p>
-    <p class="rules" id="lobby-rules"></p>
+    <footer class="lp-foot">
+      <div class="ready-summary" id="ready-summary"></div>
+      <button id="ready-button" class="ready-btn">Jag är redo</button>
+      <button id="start-button" class="primary" hidden>⚔️ Starta matchen</button>
+      <p id="lobby-wait" class="subtitle"></p>
+    </footer>
   </div>
 
   <!-- Topplistan (gemensam för alla rum) och mitt eget kort, visas i lobbyn -->
   <div id="board" class="card board-card" hidden>
-    <h2>🏆 Topplista</h2>
+    <button id="board-toggle" class="board-head" type="button" title="Fäll ihop / visa"><span>🏆 Topplista</span><span class="chev">▾</span></button>
+    <div class="board-body">
     <table id="board-table">
       <thead><tr><th>#</th><th>Riddare</th><th title="Matchvinster">🏆</th><th title="Dråp">⚔</th><th title="Matcher">Matcher</th></tr></thead>
       <tbody></tbody>
@@ -129,7 +167,8 @@
         <div class="restore-row"><code id="my-code"></code><button id="copy-code" class="small">Kopiera</button></div>
       </div>
     </div>
-    <p class="rules">Matcher räknas bara när minst två riktiga spelare är med (inte bara botar).</p>
+    <p class="rules board-note">Matcher räknas bara när minst två riktiga spelare är med (inte bara botar).</p>
+    </div>
   </div>
 
   <!-- Turneringsträdet (visas mellan duellerna) -->

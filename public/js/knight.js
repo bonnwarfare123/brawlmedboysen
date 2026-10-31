@@ -404,6 +404,14 @@ const MOVES = {
       body: [[0, ...BODY0], [0.13, -0.06, -0.05, 0, 0], [0.26, 0.22, 0.3, 0.08, 0], [0.5, ...BODY0]] },
   },
 };
+// De nya vapnen (v0.23) använder rörelserna från närmast liknande vapen
+MOVES.falchion = MOVES.axe;
+MOVES.messer = MOVES.sword;
+MOVES.mace = MOVES.warhammer;
+MOVES.shortspear = MOVES.spear;
+MOVES.glaive = MOVES.halberd;
+MOVES.poleaxe = MOVES.daneaxe;
+MOVES.goedendag = { q: MOVES.maul.q, h: MOVES.maul.h, t: MOVES.spear.t };
 // Kasta vapnet: upp bakom axeln, sedan släpps det vid tiden 0,22 (COMBAT.throw.windup)
 const THROW_MOVE = {
   arm: [at(0, S), [0.14, -2.9, -0.35, -1.6, -0.55, -0.4], [0.22, -1.5, 0.1, -0.2, 0.55, 0.3], [0.36, -0.9, 0.35, -0.2, 0.6, 0.2], at(0.6, S)],
@@ -1882,6 +1890,173 @@ export class Knight {
       g.userData.edge = [[0.008, 0.12, 0], [0.003, 0.34, 0]];
       g.userData.trail = { tip: [0, 0.385, 0], base: [0, 0.12, 0] };
       g.userData.blood = { w: 0.03, len: 0.22, y: 0.24 };
+    } else if (kind === 11) {
+      // Falchion: bred, enkeleggad klinga som blir bredare mot spetsen (tyngden långt ut = kraftiga hugg),
+      // rak parerstång med knoppar, läderlindat fäste och en skivformad knapp
+      const hilt = gilded ? m.gold : m.steelDark;
+      const sh = new THREE.Shape();
+      sh.moveTo(-0.017, 0);
+      sh.lineTo(0.019, 0);
+      sh.quadraticCurveTo(0.03, 0.4, 0.04, 0.6);                // eggen sväller ut mot spetsen
+      sh.quadraticCurveTo(0.036, 0.7, 0.0, 0.76);              // rundad, kapad spets
+      sh.lineTo(-0.012, 0.7);
+      sh.lineTo(-0.017, 0.0);
+      const blade = new THREE.ExtrudeGeometry(sh, { depth: 0.004, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.004, bevelSegments: 1, curveSegments: 10 });
+      blade.translate(0, 0, -0.002);
+      add(blade, m.blade, [0, 0.09, 0]);
+      this.weaponBloodGeo = blade.clone();
+      this.weaponBloodPos = [0, 0.09, 0];
+      add(new THREE.BoxGeometry(0.004, 0.6, 0.009), m.steelDark, [-0.014, 0.42, 0]);      // tjock rygg
+      add(new THREE.BoxGeometry(0.004, 0.62, 0.003), m.edge, [0.032, 0.48, 0], [1, 1, 1], [0, 0, -0.03]); // slipad egg
+      this.addMakersMark(add, m, gilded, 0.2, 0.0055);
+      this.addGuard(add, hilt, 0.2, 0.085, 0.008, 0.006);
+      this.addGrip(add, m, 0.13, 0.017, 0.0);
+      add(new THREE.CylinderGeometry(0.026, 0.026, 0.014, 14), hilt, [0, -0.085, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
+      add(new THREE.CylinderGeometry(0.01, 0.012, 0.014, 8), hilt, [0, -0.07, 0]);
+      g.userData.edge = [[0.03, 0.3, 0], [0.04, 0.68, 0]];
+      g.userData.trail = { tip: [0.02, 0.84, 0], base: [0, 0.3, 0] };
+    } else if (kind === 12) {
+      // Messer (långkniv): lätt böjd enkeleggad klinga, "nagel" som skyddar handen, fäste av två träskivor
+      // med nitar och en knapp som böjer sig åt sidan (typiskt för messern)
+      const hilt = gilded ? m.gold : m.steelDark;
+      const sh = new THREE.Shape();
+      sh.moveTo(-0.014, 0);
+      sh.lineTo(0.016, 0);
+      sh.quadraticCurveTo(0.03, 0.45, 0.012, 0.78);  // eggen följer böjen
+      sh.lineTo(0.0, 0.8);
+      sh.quadraticCurveTo(-0.004, 0.5, -0.014, 0);
+      const blade = new THREE.ExtrudeGeometry(sh, { depth: 0.004, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 1, curveSegments: 12 });
+      blade.translate(0, 0, -0.002);
+      add(blade, m.blade, [0, 0.085, 0]);
+      this.weaponBloodGeo = blade.clone();
+      this.weaponBloodPos = [0, 0.085, 0];
+      add(new THREE.BoxGeometry(0.003, 0.6, 0.003), m.edge, [0.024, 0.46, 0], [1, 1, 1], [0, 0, 0.02]);
+      add(new THREE.BoxGeometry(0.14, 0.014, 0.016), hilt, [0, 0.078, 0]);                                // rak parerstång
+      add(new THREE.BoxGeometry(0.01, 0.04, 0.012), hilt, [0, 0.08, 0.016], [1, 1, 1], [0.4, 0, 0]);     // nageln
+      add(new THREE.BoxGeometry(0.028, 0.15, 0.03), m.wood, [0, 0.0, 0]);                                  // träskivor
+      add(new THREE.BoxGeometry(0.03, 0.15, 0.005), m.iron, [0, 0.0, 0]);                                  // tånge mellan skivorna
+      for (const y of [-0.045, 0.0, 0.045]) for (const z of [1, -1]) add(new THREE.CylinderGeometry(0.0045, 0.0045, 0.004, 6), m.brass, [0, y, 0.016 * z], [1, 1, 1], [Math.PI / 2, 0, 0]); // nitar
+      add(new THREE.BoxGeometry(0.034, 0.03, 0.034), hilt, [0.008, -0.088, 0], [1, 1, 1], [0, 0, -0.5]);  // böjd knapp
+      g.userData.edge = [[0.025, 0.3, 0], [0.02, 0.75, 0]];
+      g.userData.trail = { tip: [0.01, 0.88, 0], base: [0, 0.3, 0] };
+    } else if (kind === 13) {
+      // Stridsklubba (flänsklubba): järnskaft med läderlindat grepp och ett huvud av sju smidda flänsar
+      add(new THREE.CylinderGeometry(0.015, 0.017, 0.58, 8), m.forged, [0, 0.2, 0]);
+      this.addGrip(add, m, 0.18, 0.019, -0.02, m.leatherDark);
+      add(new THREE.CylinderGeometry(0.024, 0.02, 0.035, 8), m.forged, [0, -0.12, 0]);     // knopp
+      add(new THREE.TorusGeometry(0.016, 0.003, 3, 8), m.strap, [0, -0.15, 0.02], [1, 1.6, 1], [0.3, 0, 0]); // rem för handleden
+      add(new THREE.CylinderGeometry(0.024, 0.02, 0.17, 8), m.forged, [0, 0.55, 0]);      // kärnan
+      const fl = new THREE.Shape();
+      fl.moveTo(0, -0.085);
+      fl.quadraticCurveTo(0.06, -0.04, 0.052, 0.03);
+      fl.quadraticCurveTo(0.04, 0.08, 0, 0.09);
+      fl.lineTo(0, -0.085);
+      const flGeo = new THREE.ExtrudeGeometry(fl, { depth: 0.006, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 1, curveSegments: 6 });
+      flGeo.translate(0, 0, -0.003);
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2;
+        add(flGeo, i % 2 ? m.steel : m.forgedFace, [Math.sin(a) * 0.012, 0.56, Math.cos(a) * 0.012], [1, 1, 1], [0, a - Math.PI / 2, 0]);
+      }
+      add(new THREE.ConeGeometry(0.02, 0.05, 7), m.forged, [0, 0.665, 0]);                  // topp
+      add(new THREE.TorusGeometry(0.022, 0.005, 4, 10), m.forged, [0, 0.46, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
+      g.userData.trail = { tip: [0, 0.62, 0.06], base: [0, 0.45, 0.05] };
+      g.userData.blood = { w: 0.1, len: 0.12, y: 0.56 };
+    } else if (kind === 14) {
+      // Kortspjut: kortare askskaft för en hand (bakom skölden), smalt blad med holk och nitar
+      add(new THREE.CylinderGeometry(0.015, 0.018, 1.5, 8), m.wood, [0, 0.2, 0]);
+      this.addGrip(add, m, 0.16, 0.019, 0.0, m.leatherDark);
+      add(new THREE.CylinderGeometry(0.018, 0.016, 0.1, 8), m.iron, [0, 0.98, 0]);          // holk
+      for (const y of [0.95, 1.0]) add(new THREE.SphereGeometry(0.004, 4, 3), m.brass, [0, y, 0.018]);
+      const leaf = new THREE.Shape();
+      leaf.moveTo(0, 0);
+      leaf.quadraticCurveTo(0.042, 0.06, 0.022, 0.16);
+      leaf.lineTo(0, 0.26);
+      leaf.lineTo(-0.022, 0.16);
+      leaf.quadraticCurveTo(-0.042, 0.06, 0, 0);
+      const blade = new THREE.ExtrudeGeometry(leaf, { depth: 0.005, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.004, bevelSegments: 1, curveSegments: 8 });
+      blade.translate(0, 0, -0.0025);
+      add(blade, m.blade, [0, 1.02, 0]);
+      add(new THREE.BoxGeometry(0.009, 0.22, 0.012), m.steelDark, [0, 1.13, 0]);           // mittås
+      this.weaponBloodGeo = blade.clone();
+      this.weaponBloodPos = [0, 1.02, 0];
+      add(new THREE.ConeGeometry(0.016, 0.06, 6), m.iron, [0, -0.58, 0], [1, 1, 1], [Math.PI, 0, 0]); // doppsko
+      g.userData.trail = { tip: [0, 1.28, 0], base: [0, 0.9, 0] };
+      g.userData.edge = [[0.03, 1.07, 0], [0.01, 1.24, 0]];
+    } else if (kind === 15) {
+      // Glaive: långt, enkeleggat knivblad på en stång, med en liten hake på ryggen och järnskenor (langetter)
+      this.addShaft(add, m, 2.0, 0.018, 0.021, 0.28);
+      this.addGrip(add, m, 0.14, 0.022, -0.36, m.leatherDark);
+      add(new THREE.CylinderGeometry(0.023, 0.021, 0.12, 10), m.iron, [0, 1.25, 0]);        // holk
+      for (const sx of [1, -1]) add(new THREE.BoxGeometry(0.005, 0.32, 0.02), m.iron, [0.02 * sx, 1.05, 0]); // langetter
+      const sh = new THREE.Shape();
+      sh.moveTo(0, 0);
+      sh.lineTo(0.045, 0.02);
+      sh.quadraticCurveTo(0.09, 0.28, 0.035, 0.6);   // eggen (framåt)
+      sh.lineTo(0.0, 0.66);
+      sh.quadraticCurveTo(-0.01, 0.4, -0.012, 0.18);
+      sh.lineTo(-0.05, 0.14);                          // haken på ryggen
+      sh.lineTo(-0.014, 0.1);
+      sh.lineTo(0, 0);
+      const blade = new THREE.ExtrudeGeometry(sh, { depth: 0.005, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 1, curveSegments: 10 });
+      blade.translate(0, 0, -0.0025);
+      blade.rotateY(-Math.PI / 2); // eggen pekar framåt (+Z)
+      add(blade, m.blade, [0, 1.3, 0]);
+      this.weaponBloodGeo = blade.clone();
+      this.weaponBloodPos = [0, 1.3, 0];
+      add(new THREE.BoxGeometry(0.003, 0.5, 0.004), m.edge, [0, 1.6, 0.07], [1, 1, 1], [-0.1, 0, 0]);
+      add(new THREE.SphereGeometry(0.03, 8, 6), m.cloth, [0, 1.14, 0], [1, 0.7, 1]);      // tofs i spelarens färg
+      add(new THREE.ConeGeometry(0.018, 0.07, 6), m.iron, [0, -0.73, 0], [1, 1, 1], [Math.PI, 0, 0]);
+      g.userData.edge = [[0, 1.45, 0.075], [0, 1.85, 0.04]];
+      g.userData.trail = { tip: [0, 1.95, 0.02], base: [0, 1.35, 0.06] };
+      g.userData.grip2 = [0, -0.4, 0];
+    } else if (kind === 16) {
+      // Pålyxa: stångvapen med yxblad framåt, hammare med fyra spetsar bakåt, lång spets upptill,
+      // järnskenor nerför skaftet och en rund handskiva (rondell) som skyddar handen
+      this.addShaft(add, m, 1.65, 0.019, 0.022, 0.25);
+      this.addGrip(add, m, 0.14, 0.023, -0.3, m.leatherDark);
+      add(new THREE.CylinderGeometry(0.05, 0.05, 0.008, 14), m.steelDark, [0, 0.12, 0]);   // rondell
+      add(new THREE.TorusGeometry(0.05, 0.003, 3, 14), m.trim, [0, 0.12, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
+      for (const sx of [1, -1]) add(new THREE.BoxGeometry(0.005, 0.36, 0.022), m.iron, [0.021 * sx, 0.84, 0]); // langetter
+      for (const y of [0.72, 0.84, 0.96]) for (const sx of [1, -1]) add(new THREE.SphereGeometry(0.005, 4, 3), fit, [0.024 * sx, y, 0]);
+      add(new THREE.BoxGeometry(0.034, 0.12, 0.05), m.iron, [0, 1.06, 0]);                    // huvudets mitt
+      const blade = new THREE.ExtrudeGeometry(this.axeShape(0.72), { depth: 0.007, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 1 });
+      blade.translate(0, 0, -0.0035);
+      blade.rotateY(-Math.PI / 2);
+      add(blade, m.steel, [0, 1.06, 0.02]);
+      this.weaponBloodGeo = blade.clone();
+      this.weaponBloodPos = [0, 1.06, 0.02];
+      add(new THREE.BoxGeometry(0.004, 0.16, 0.01), m.edge, [0, 1.05, 0.15], [1, 1, 1], [0.12, 0, 0]);
+      // Hammaren bakåt med fyra trubbiga spetsar
+      add(new THREE.BoxGeometry(0.045, 0.045, 0.07), m.forged, [0, 1.06, -0.06]);
+      for (const [x, y] of [[-0.012, -0.012], [0.012, -0.012], [-0.012, 0.012], [0.012, 0.012]]) {
+        add(new THREE.ConeGeometry(0.009, 0.016, 4), m.forged, [x, 1.06 + y, -0.102], [1, 1, 1], [-Math.PI / 2, 0, 0]);
+      }
+      add(new THREE.ConeGeometry(0.02, 0.26, 4), m.steel, [0, 1.25, 0], [1, 1, 0.8]);        // spets upptill
+      add(new THREE.ConeGeometry(0.016, 0.06, 6), m.iron, [0, -0.58, 0], [1, 1, 1], [Math.PI, 0, 0]);
+      g.userData.edge = [[0, 1.0, 0.15], [0, 1.12, 0.16]];
+      g.userData.trail = { tip: [0, 1.36, 0], base: [0, 1.0, 0.15] };
+      g.userData.grip2 = [0, -0.32, 0];
+    } else if (kind === 17) {
+      // Goedendag: tjock klubba av trä som blir grövre uppåt, järnband och en lång järnspets i toppen
+      const club = new THREE.CylinderGeometry(0.05, 0.024, 1.25, 10, 4);
+      add(club, m.wood, [0, 0.2, 0]);
+      this.addGrip(add, m, 0.16, 0.027, -0.3, m.rag);
+      this.addGrip(add, m, 0.12, 0.031, 0.02, m.leatherDark);
+      for (const [y, r] of [[0.6, 0.046], [0.74, 0.05]]) {
+        add(new THREE.CylinderGeometry(r + 0.004, r + 0.004, 0.035, 10), m.forged, [0, y, 0]);
+        for (let i = 0; i < 5; i++) {
+          const a = (i / 5) * Math.PI * 2;
+          const stud = new THREE.Mesh(new THREE.ConeGeometry(0.008, 0.016, 4), m.forged);
+          stud.position.set(Math.sin(a) * (r + 0.01), y, Math.cos(a) * (r + 0.01));
+          stud.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(Math.sin(a), 0, Math.cos(a))); // pekar rakt ut
+          g.add(stud);
+        }
+      }
+      add(new THREE.CylinderGeometry(0.03, 0.04, 0.06, 8), m.forged, [0, 0.84, 0]);          // holk för spetsen
+      add(new THREE.ConeGeometry(0.022, 0.2, 4), m.forged, [0, 0.97, 0]);                     // järnspets
+      g.userData.trail = { tip: [0, 1.06, 0], base: [0, 0.6, 0.05] };
+      g.userData.blood = { w: 0.11, len: 0.26, y: 0.75 };
+      g.userData.grip2 = [0, -0.3, 0];
     } else if (kind === 1) {
       // Skäggyxa: träskaft med lindat grepp, holk med skenor och ett brett blad med "skägg" nertill
       add(new THREE.CylinderGeometry(0.016, 0.019, 0.8, 8), m.wood, [0, 0.28, 0]);
@@ -1911,22 +2086,25 @@ export class Knight {
       this.buildFlailChain(m);
       g.userData.anchor = [0, 0.35, 0];
     } else if (kind === 3) {
-      // Tvåhandssvärd: lång klinga, långt grepp för två händer
+      // Tvåhandssvärd (långsvärd): lång, avsmalnande klinga med linsformat tvärsnitt och blodränna,
+      // nedåtböjd parerstång, långt läderlindat grepp för två händer och en päronformad knapp
       const hilt = gilded ? m.gold : m.steelDark;
-      add(new THREE.BoxGeometry(0.056, 1.15, 0.011), m.blade, [0, 0.7, 0]);
-      add(new THREE.BoxGeometry(0.014, 0.9, 0.015), m.steelDark, [0, 0.6, 0]);
-      for (const sx of [1, -1]) add(new THREE.BoxGeometry(0.006, 1.1, 0.006), m.edge, [0.026 * sx, 0.72, 0]); // slipade eggar
-      g.userData.edge = [[0.029, 0.3, 0], [0.029, 1.22, 0]];
-      add(new THREE.ConeGeometry(0.028, 0.1, 4), m.blade, [0, 1.325, 0], [1, 1, 0.22]);
-      this.addMakersMark(add, m, gilded, 0.2, 0.0087);
-      add(new THREE.BoxGeometry(0.28, 0.035, 0.045), hilt, [0, 0.11, 0]);
-      for (const s of [1, -1]) add(new THREE.SphereGeometry(0.024, 8, 6), hilt, [0.14 * s, 0.12, 0]);
-      add(new THREE.CylinderGeometry(0.018, 0.02, 0.36, 8), m.leatherDark, [0, -0.07, 0]);
-      for (let i = 0; i < 9; i++) add(new THREE.TorusGeometry(0.02, 0.003, 3, 8), m.leather, [0, -0.22 + i * 0.035, 0], [1, 1, 1], [Math.PI / 2, 0, 0.4]);
-      add(new THREE.SphereGeometry(0.035, 10, 8), hilt, [0, -0.27, 0], [1, 0.8, 0.6]);
-      g.userData.trail = { tip: [0, 1.36, 0], base: [0, 0.45, 0] };
-      g.userData.blood = { w: 0.06, len: 0.8, y: 0.85 };
-      g.userData.grip2 = [0, -0.2, 0];
+      add(this.lensBlade(1.15, 0.03, 0.0062, 0.4), m.blade, [0, 0.7, 0]);
+      add(new THREE.ConeGeometry(1, 0.11, 10), m.blade, [0, 1.33, 0], [0.012, 1, 0.0042]);       // spets
+      for (const z of [1, -1]) add(new THREE.BoxGeometry(0.008, 0.7, 0.002), m.steelDark, [0, 0.55, 0.0048 * z]); // blodränna
+      for (const sx of [1, -1]) add(new THREE.BoxGeometry(0.004, 1.12, 0.003), m.edge, [0.021 * sx, 0.7, 0], [1, 1, 1], [0, 0, 0.0158 * sx]); // eggar
+      for (let k = 0; k < 4; k++) add(new THREE.BoxGeometry(0.012, 0.0015, 0.0012), m.scratch, [(k % 2 ? 0.007 : -0.009), 1.0 + k * 0.05, 0.004], [1, 1, 1], [0, 0, 0.5 + k * 0.3]);
+      this.addMakersMark(add, m, gilded, 0.22, 0.0055);
+      g.userData.edge = [[0.027, 0.3, 0], [0.018, 1.22, 0]];
+      this.addGuard(add, hilt, 0.3, 0.115, 0.011, 0.02);
+      add(new THREE.ConeGeometry(0.024, 0.035, 4), m.leatherDark, [0, 0.135, 0], [1, 1, 0.5], [0, Math.PI / 4, 0]); // regnskydd
+      this.addGrip(add, m, 0.3, 0.019, -0.04);
+      add(new THREE.SphereGeometry(0.034, 10, 8), hilt, [0, -0.225, 0], [1, 1.3, 0.75]);         // päronformad knapp
+      add(new THREE.CylinderGeometry(0.011, 0.014, 0.025, 8), hilt, [0, -0.195, 0]);
+      add(new THREE.SphereGeometry(0.008, 6, 5), hilt, [0, -0.272, 0]);
+      g.userData.trail = { tip: [0, 1.38, 0], base: [0, 0.45, 0] };
+      g.userData.blood = { w: 0.055, len: 0.8, y: 0.85 };
+      g.userData.grip2 = [0, -0.17, 0];
     } else if (kind === 4) {
       // Stridsyxa (dansk yxa): ovalt askskaft med svag böj, två lindade grepp och ett tunt, brett blad
       // med lång böjd egg, smitt i flera lager (ränder), en holk med "öron" och en tygremsa i spelarens färg
@@ -1982,47 +2160,69 @@ export class Knight {
       g.userData.trail = { tip: [0, 1.03, 0.32], base: [0, 0.72, 0.26] };
       g.userData.grip2 = [0, -0.3, 0];
     } else if (kind === 5) {
-      // Hillebard: lång stång med yxblad, krok bakåt och en spets för stötar
-      add(new THREE.CylinderGeometry(0.017, 0.02, 2.1, 8), m.wood, [0, 0.33, 0]);
-      add(new THREE.CylinderGeometry(0.022, 0.02, 0.05, 8), m.iron, [0, -0.72, 0]);
-      for (let i = 0; i < 5; i++) add(new THREE.TorusGeometry(0.021, 0.003, 3, 8), m.leatherDark, [0, -0.36 + i * 0.024, 0], [1, 1, 1], [Math.PI / 2, 0, 0.4]);
-      add(new THREE.CylinderGeometry(0.024, 0.024, 0.22, 10), m.iron, [0, 1.3, 0]);
-      const blade = new THREE.ExtrudeGeometry(this.axeShape(0.95), { depth: 0.008, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 1 });
-      blade.translate(0, 0, -0.004);
+      // Hillebard: lång stång med ett rakt, brett yxblad, en böjd hake bakåt för att krok-dra ner
+      // folk och en lång fyrkantig spets för stötar. Järnskenor (langetter) nerför stången.
+      this.addShaft(add, m, 2.1, 0.017, 0.021, 0.33);
+      add(new THREE.CylinderGeometry(0.023, 0.02, 0.05, 8), m.iron, [0, -0.72, 0]);
+      this.addGrip(add, m, 0.13, 0.021, -0.32, m.leatherDark);
+      add(new THREE.CylinderGeometry(0.024, 0.024, 0.2, 10), m.iron, [0, 1.3, 0]);                // holk
+      for (const sx of [1, -1]) add(new THREE.BoxGeometry(0.005, 0.38, 0.022), m.iron, [0.021 * sx, 1.02, 0]); // langetter
+      for (const y of [0.9, 1.02, 1.14]) for (const sx of [1, -1]) add(new THREE.SphereGeometry(0.005, 4, 3), fit, [0.024 * sx, y, 0]);
+      // Yxbladet: rak, lång egg (lite bakåtlutad), sitter fast i holken
+      const ax = new THREE.Shape();
+      ax.moveTo(0, 0.1);
+      ax.lineTo(0.07, 0.085);
+      ax.lineTo(0.19, 0.13);
+      ax.quadraticCurveTo(0.215, 0.0, 0.18, -0.13);
+      ax.lineTo(0.07, -0.07);
+      ax.lineTo(0, -0.08);
+      ax.lineTo(0, 0.1);
+      const blade = new THREE.ExtrudeGeometry(ax, { depth: 0.007, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 1, curveSegments: 8 });
+      blade.translate(0, 0, -0.0035);
       blade.rotateY(-Math.PI / 2);
       add(blade, m.steel, [0, 1.3, 0]);
       this.weaponBloodGeo = blade.clone();
       this.weaponBloodPos = [0, 1.3, 0];
-      add(new THREE.ConeGeometry(0.022, 0.32, 4), m.steel, [0, 1.56, 0]);                                     // spets
-      add(new THREE.ConeGeometry(0.018, 0.14, 4), m.steel, [0, 1.32, -0.09], [1, 1, 1], [-Math.PI / 2 - 0.3, 0, 0]); // krok bakåt
-      add(new THREE.SphereGeometry(0.03, 8, 6), m.cloth, [0, 1.15, 0], [1, 0.7, 1]);                          // tofs i spelarens färg
-      add(new THREE.BoxGeometry(0.004, 0.2, 0.01), m.edge, [0, 1.29, 0.165], [1, 1, 1], [0.12, 0, 0]);       // egg
-      band(0.8, 0.02);
+      add(new THREE.BoxGeometry(0.004, 0.25, 0.01), m.edge, [0, 1.3, 0.2], [1, 1, 1], [0.0, 0, 0]);    // slipad egg
+      for (const sx of [1, -1]) add(new THREE.CircleGeometry(0.012, 8), m.hole, [0.0075 * sx, 1.3, 0.11], [1, 1, 1], [0, (Math.PI / 2) * sx, 0]); // genombrutet hål
+      // Haken bakåt: böjd och spetsig
+      const hook = new THREE.Shape();
+      hook.moveTo(0, 0.035);
+      hook.quadraticCurveTo(-0.08, 0.03, -0.15, -0.04);
+      hook.quadraticCurveTo(-0.08, -0.005, 0, -0.03);
+      hook.lineTo(0, 0.035);
+      const hookGeo = new THREE.ExtrudeGeometry(hook, { depth: 0.008, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 1, curveSegments: 6 });
+      hookGeo.translate(0, 0, -0.004);
+      hookGeo.rotateY(-Math.PI / 2);
+      add(hookGeo, m.steel, [0, 1.33, 0]);
+      // Lång spets med fyrkantigt tvärsnitt
+      add(new THREE.ConeGeometry(0.02, 0.4, 4), m.steel, [0, 1.6, 0], [1, 1, 1], [0, Math.PI / 4, 0]);
+      add(new THREE.SphereGeometry(0.03, 8, 6), m.cloth, [0, 1.15 - 0.37, 0], [1, 0.7, 1]);          // tofs i spelarens färg
       band(0.2, 0.019);
-      g.userData.edge = [[0, 1.22, 0.16], [0, 1.37, 0.17]];
-      g.userData.trail = { tip: [0, 1.7, 0], base: [0, 1.2, 0.18] };
+      g.userData.edge = [[0, 1.2, 0.19], [0, 1.4, 0.2]];
+      g.userData.trail = { tip: [0, 1.8, 0], base: [0, 1.2, 0.2] };
       g.userData.grip2 = [0, -0.4, 0];
     } else if (kind === 6) {
-      // Zweihänder: komiskt stort svärd med enorm parerstång, läderklädd ricasso med parerhakar
+      // Zweihänder: spelets största svärd. Lång, avsmalnande klinga med linsformat tvärsnitt,
+      // läderklädd ricasso med parerhakar, bred böjd parerstång med ringar och ett långt grepp
       const hilt = gilded ? m.gold : m.steelDark;
-      add(new THREE.BoxGeometry(0.075, 1.5, 0.013), m.blade, [0, 1.07, 0]);
-      add(new THREE.BoxGeometry(0.018, 1.2, 0.017), m.steelDark, [0, 0.95, 0]);
-      for (const sx of [1, -1]) add(new THREE.BoxGeometry(0.007, 1.45, 0.007), m.edge, [0.035 * sx, 1.08, 0]);
-      g.userData.edge = [[0.038, 0.4, 0], [0.038, 1.75, 0]];
-      add(new THREE.ConeGeometry(0.038, 0.14, 4), m.blade, [0, 1.89, 0], [1, 1, 0.22]);
-      this.addMakersMark(add, m, gilded, 0.4, 0.0097);
-      add(new THREE.BoxGeometry(0.05, 0.2, 0.03), m.leatherDark, [0, 0.22, 0]);                     // ricasso
-      for (const s of [1, -1]) {
-        add(new THREE.ConeGeometry(0.014, 0.08, 5), hilt, [0.045 * s, 0.33, 0], [1, 1, 1], [0, 0, -1.2 * s]); // parerhakar
-        add(new THREE.TorusGeometry(0.05, 0.012, 5, 10, Math.PI), hilt, [0.25 * s, 0.14, 0], [1, 1, 1], [0, 0, s > 0 ? 0 : Math.PI]); // böjda ändar
-      }
-      add(new THREE.BoxGeometry(0.5, 0.04, 0.05), hilt, [0, 0.11, 0]);                            // enorm parerstång
-      add(new THREE.TorusGeometry(0.035, 0.009, 5, 12), hilt, [0, 0.11, 0.03], [1, 1, 1], [0, 0, 0]); // ring
-      add(new THREE.CylinderGeometry(0.021, 0.024, 0.46, 8), m.leatherDark, [0, -0.13, 0]);
-      for (let i = 0; i < 12; i++) add(new THREE.TorusGeometry(0.023, 0.003, 3, 8), m.leather, [0, -0.33 + i * 0.035, 0], [1, 1, 1], [Math.PI / 2, 0, 0.4]);
-      add(new THREE.SphereGeometry(0.045, 10, 8), hilt, [0, -0.39, 0], [1, 0.85, 0.7]);
+      add(this.lensBlade(1.45, 0.037, 0.0072, 0.42), m.blade, [0, 1.1, 0]);
+      add(new THREE.ConeGeometry(1, 0.13, 10), m.blade, [0, 1.887, 0], [0.0155, 1, 0.0048]);       // spets
+      for (const z of [1, -1]) add(new THREE.BoxGeometry(0.01, 0.9, 0.002), m.steelDark, [0, 0.9, 0.0056 * z]); // blodränna
+      for (const sx of [1, -1]) add(new THREE.BoxGeometry(0.005, 1.42, 0.003), m.edge, [0.026 * sx, 1.1, 0], [1, 1, 1], [0, 0, 0.0151 * sx]);
+      for (let k = 0; k < 5; k++) add(new THREE.BoxGeometry(0.014, 0.0015, 0.0012), m.scratch, [(k % 2 ? 0.008 : -0.01), 1.3 + k * 0.07, 0.005], [1, 1, 1], [0, 0, 0.4 + k * 0.35]);
+      this.addMakersMark(add, m, gilded, 0.45, 0.0066);
+      g.userData.edge = [[0.034, 0.45, 0], [0.022, 1.75, 0]];
+      add(new THREE.BoxGeometry(0.05, 0.2, 0.026), m.leatherDark, [0, 0.24, 0]);                      // ricasso
+      for (let k = 0; k < 5; k++) add(new THREE.BoxGeometry(0.054, 0.004, 0.03), m.strap, [0, 0.16 + k * 0.04, 0]);
+      for (const sx of [1, -1]) add(new THREE.ConeGeometry(0.013, 0.08, 5), hilt, [0.045 * sx, 0.35, 0], [1, 1, 1], [0, 0, -1.2 * sx]); // parerhakar
+      this.addGuard(add, hilt, 0.46, 0.115, 0.014, 0.05);
+      for (const z of [1, -1]) add(new THREE.TorusGeometry(0.032, 0.007, 5, 12), hilt, [0, 0.09, 0.025 * z]); // sidoringar
+      this.addGrip(add, m, 0.42, 0.022, -0.12);
+      add(new THREE.SphereGeometry(0.042, 10, 8), hilt, [0, -0.375, 0], [1, 1.25, 0.8]);             // knapp
+      add(new THREE.SphereGeometry(0.01, 6, 5), hilt, [0, -0.43, 0]);
       g.userData.trail = { tip: [0, 1.95, 0], base: [0, 0.7, 0] };
-      g.userData.blood = { w: 0.08, len: 1.0, y: 1.2 };
+      g.userData.blood = { w: 0.07, len: 1.0, y: 1.2 };
       g.userData.grip2 = [0, -0.25, 0];
     } else {
       // Svärd (riddarsvärd): klinga som smalnar mot spetsen med linsformat tvärsnitt och en nedsänkt
@@ -2089,7 +2289,58 @@ export class Knight {
     return g;
   }
 
-  // Smedens märke: ett litet inristat kors med ruter på båda sidor av klingan (guld på praktrustningen)
+  // Parerstång: böjd lite nedåt och smalare ut mot ändarna, med knoppar i ändarna
+  addGuard(add, mat, width, y, r, droop = 0.012) {
+    const w = width / 2;
+    const curve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-w, y - droop, 0), new THREE.Vector3(-w / 2, y - droop * 0.25, 0), new THREE.Vector3(0, y, 0),
+      new THREE.Vector3(w / 2, y - droop * 0.25, 0), new THREE.Vector3(w, y - droop, 0),
+    ]);
+    const guard = new THREE.TubeGeometry(curve, 16, r, 7, false);
+    const gp = guard.attributes.position;
+    const c = new THREE.Vector3();
+    const v3 = new THREE.Vector3();
+    for (let a = 0; a <= 16; a++) {
+      curve.getPointAt(a / 16, c);
+      const k = 0.65 + 0.35 * Math.sin((a / 16) * Math.PI);
+      for (let b = 0; b <= 7; b++) {
+        const idx = a * 8 + b;
+        v3.fromBufferAttribute(gp, idx).sub(c).multiplyScalar(k).add(c);
+        gp.setXYZ(idx, v3.x, v3.y, v3.z * 1.3);
+      }
+    }
+    guard.computeVertexNormals();
+    add(guard, mat);
+    for (const sx of [1, -1]) add(new THREE.SphereGeometry(r * 1.05, 7, 5), mat, [w * sx, y - droop, 0]);
+    add(new THREE.BoxGeometry(r * 3.2, r * 3.2, r * 2.8), mat, [0, y, 0], [1, 1, 1], [0, 0, Math.PI / 4]);
+  }
+
+  // Läderlindat grepp: en kärna och lindning i spiral (längd, radie, mitt)
+  addGrip(add, m, len, r, y, mat = m.leatherDark) {
+    add(new THREE.CylinderGeometry(r * 0.96, r, len, 9), mat, [0, y, 0], [1, 1, 0.9]);
+    const n = Math.max(3, Math.round(len / 0.02));
+    for (let k = 0; k < n; k++) add(new THREE.TorusGeometry(r * 1.02, r * 0.14, 3, 9), mat === m.rag ? m.rag : m.leather, [0, y - len / 2 + (k + 0.5) * (len / n), 0], [1, 1, 0.9], [Math.PI / 2 + 0.3, 0, 0]);
+  }
+
+  // Träskaft (lite ovalt, smalare upptill), centrerat på y
+  addShaft(add, m, len, rTop, rBottom, y) {
+    const shaft = new THREE.CylinderGeometry(rTop, rBottom, len, 9, 6);
+    const p = shaft.attributes.position;
+    for (let v = 0; v < p.count; v++) p.setXYZ(v, p.getX(v) * 0.92, p.getY(v), p.getZ(v) * 1.08);
+    shaft.computeVertexNormals();
+    add(shaft, m.wood, [0, y, 0]);
+  }
+
+  // Linsformad klinga (tunn egg, tjockare mitt) som smalnar av mot spetsen
+  lensBlade(len, width, thick, taper = 0.45) {
+    const blade = new THREE.CylinderGeometry(taper, 1, len, 10, 6);
+    const p = blade.attributes.position;
+    for (let v = 0; v < p.count; v++) p.setXYZ(v, p.getX(v) * width, p.getY(v), p.getZ(v) * thick);
+    blade.computeVertexNormals();
+    return blade;
+  }
+
+  // Smedens märke:  // Smedens märke: ett litet inristat kors med ruter på båda sidor av klingan (guld på praktrustningen)
   addMakersMark(add, m, gilded, y, z) {
     const mat = gilded ? m.gold : m.steelDark;
     for (const side of [1, -1]) {
@@ -3051,6 +3302,76 @@ export class Knight {
     ctx.fillRect(x, 92, w, 18);
     ctx.fillStyle = hp > 50 ? "#4caf50" : hp > 25 ? "#e0a020" : "#d0302a";
     ctx.fillRect(x, 92, (w * Math.max(0, hp)) / COMBAT.maxHp, 18);
+    this.labelTexture.needsUpdate = true;
+  }
+
+  // Namnskylt i lobbyn: en sköldformad skylt med namnet, krona för lobbyledaren och REDO / VÄNTAR
+  // i stället för livmätaren. info = null går tillbaka till den vanliga skylten.
+  setLobbyTag(info) {
+    if (!this.labelCanvas) return;
+    const key = info ? `${info.ready ? 1 : 0}${info.host ? 1 : 0}${info.you ? 1 : 0}` : "";
+    if (key === (this.lobbyTagKey ?? "")) return;
+    this.lobbyTagKey = key;
+    if (!info) {
+      this.setHp(this.hp ?? COMBAT.maxHp);
+      return;
+    }
+    const ctx = this.labelCanvas.getContext("2d");
+    ctx.clearRect(0, 0, 512, 128);
+    const name = (info.host ? "♛ " : "") + this.name;
+    let size = 40;
+    ctx.font = `bold ${size}px Cinzel, Georgia, serif`;
+    while (ctx.measureText(name).width > 380 && size > 20) {
+      size -= 2;
+      ctx.font = `bold ${size}px Cinzel, Georgia, serif`;
+    }
+    const tw = Math.max(200, ctx.measureText(name).width + 70 + (this.isBot ? 66 : 0));
+    const x0 = 256 - tw / 2;
+    // Skylten: mörkt trä med guldkant
+    const r = 14;
+    ctx.beginPath();
+    ctx.moveTo(x0 + r, 6); ctx.lineTo(x0 + tw - r, 6); ctx.quadraticCurveTo(x0 + tw, 6, x0 + tw, 6 + r);
+    ctx.lineTo(x0 + tw, 66 - r); ctx.quadraticCurveTo(x0 + tw, 66, x0 + tw - r, 66);
+    ctx.lineTo(256 + 18, 66); ctx.lineTo(256, 80); ctx.lineTo(256 - 18, 66);
+    ctx.lineTo(x0 + r, 66); ctx.quadraticCurveTo(x0, 66, x0, 66 - r); ctx.lineTo(x0, 6 + r); ctx.quadraticCurveTo(x0, 6, x0 + r, 6);
+    const grad = ctx.createLinearGradient(0, 6, 0, 80);
+    grad.addColorStop(0, "rgba(74, 49, 27, 0.92)");
+    grad.addColorStop(1, "rgba(38, 25, 14, 0.92)");
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = info.you ? "#ecd189" : "#a8853a";
+    ctx.stroke();
+    // Färgprick (riddarens färg) och namnet
+    ctx.fillStyle = "#" + new THREE.Color(this.labelColor ?? this.colorHex).getHexString();
+    ctx.beginPath();
+    ctx.arc(x0 + 30, 36, 11, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0,0,0,0.6)";
+    ctx.stroke();
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#f6e7c4";
+    ctx.font = `bold ${size}px Cinzel, Georgia, serif`;
+    ctx.fillText(name, x0 + 52, 38);
+    if (this.isBot) {
+      const bx = x0 + 52 + ctx.measureText(name).width + 10;
+      ctx.fillStyle = "rgba(201, 162, 74, 0.9)";
+      ctx.fillRect(bx, 22, 52, 30);
+      ctx.fillStyle = "#2a1c0f";
+      ctx.font = "bold 20px Georgia, serif";
+      ctx.fillText("BOT", bx + 5, 38);
+    }
+    // REDO / VÄNTAR under skylten
+    ctx.textAlign = "center";
+    ctx.font = "bold 24px Cinzel, Georgia, serif";
+    const status = info.ready ? "✓ REDO" : "VÄNTAR …";
+    const sw = ctx.measureText(status).width + 26;
+    ctx.fillStyle = info.ready ? "rgba(79, 138, 58, 0.95)" : "rgba(40, 30, 20, 0.75)";
+    ctx.fillRect(256 - sw / 2, 88, sw, 34);
+    ctx.fillStyle = info.ready ? "#ffffff" : "#d9c59c";
+    ctx.fillText(status, 256, 106);
     this.labelTexture.needsUpdate = true;
   }
 

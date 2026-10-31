@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.22";
+export const VERSION = "0.24";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -52,6 +52,8 @@ export const HELMETS = ["Tunnhjälm", "Visirhjälm", "Järnhatt", "Hornhjälm", 
 export const SHIELDS = ["Rund", "Droppformad", "Riddarsköld", "Bucklare", "Pavis"];
 export const WEAPONS = [
   "Svärd", "Yxa", "Slagkedja", "Tvåhandssvärd", "Stridsyxa", "Hillebard", "Zweihänder", "Spjut", "Stridshammare", "Slägga", "Dolk",
+  // v0.23: nya vapen (alla från ungefär 1100–1400-talet)
+  "Falchion", "Messer", "Stridsklubba", "Kortspjut", "Glaive", "Pålyxa", "Goedendag",
 ];
 
 // VAPNENS EGENSKAPER (gånger grundvärdena i COMBAT ovan; 1 = som svärdet)
@@ -72,6 +74,20 @@ export const WEAPON_SPECS = [
   { key: "warhammer", damage: 0.95, speed: 1.05, recover: 1.05, reach: 0, arc: 0.9, sever: 0, thrust: 0.6, helmetKnock: 0.6, hitStagger: 0.35, blunt: true },
   { key: "maul", damage: 1.6, speed: 1.55, recover: 1.7, reach: 0.5, arc: 0.9, sever: 0, thrust: 0.6, twoHanded: true, helmetKnock: 0.4, hitStagger: 0.5, knockdown: true, blunt: true },
   { key: "dagger", noShield: true, damage: 0.6, speed: 0.7, recover: 0.65, reach: -0.5, arc: 1, sever: 0.5, thrust: 1.67, grabReach: 2.2, grabPunch: 16, grabCd: 1.8 },
+  // Falchion: bred, enkeleggad huggklinga (1200–1300-tal). Hugger hårt och av lemmar, svag stöt.
+  { key: "falchion", damage: 1.12, speed: 1.02, recover: 1.0, reach: -0.05, arc: 1.05, sever: 1.35, thrust: 0.75 },
+  // Messer (långkniv, 1300-tal): böjd huggklinga. Snabbare än svärdet men lite svagare.
+  { key: "messer", damage: 0.92, speed: 0.88, recover: 0.9, reach: 0.05, arc: 1.05, sever: 1.15, thrust: 0.85 },
+  // Stridsklubba (flänsklubba): krossar genom rustning. Hårdare än hammaren, men fienden vinglar mindre.
+  { key: "mace", damage: 1.1, speed: 1.05, recover: 1.05, reach: -0.05, arc: 0.95, sever: 0, thrust: 0.5, helmetKnock: 0.45, hitStagger: 0.22, blunt: true },
+  // Kortspjut: enhandsspjut bakom skölden. Snabba, långa stötar, svaga hugg.
+  { key: "shortspear", damage: 0.8, speed: 0.9, recover: 0.9, reach: 0.45, arc: 0.75, sever: 0.5, thrust: 1.4, thrustReach: 0.9, thrustCd: 0.9 },
+  // Glaive (1300-tal): långt knivblad på stång. Breda hugg på avstånd, svag på nära håll.
+  { key: "glaive", damage: 1.3, speed: 1.25, recover: 1.3, reach: 0.9, arc: 0.95, sever: 1.5, thrust: 1.1, thrustReach: 0.9, minRange: 0.8, twoHanded: true },
+  // Pålyxa (sent 1300-tal): riddarnas stångvapen med yxblad, hammare och spets. Bra mot rustning.
+  { key: "poleaxe", damage: 1.4, speed: 1.35, recover: 1.4, reach: 0.5, arc: 0.9, sever: 0.9, thrust: 1.25, helmetKnock: 0.35, hitStagger: 0.35, twoHanded: true },
+  // Goedendag (Flandern, omkring 1300): tung klubba med järnspets. Krossar, stöter och får fienden att vingla.
+  { key: "goedendag", damage: 1.3, speed: 1.3, recover: 1.35, reach: 0.4, arc: 0.9, sever: 0, thrust: 1.35, hitStagger: 0.4, twoHanded: true, blunt: true },
 ];
 
 // Utan vapen (vapenarmen avhuggen eller vapnet tappat): knytnävar

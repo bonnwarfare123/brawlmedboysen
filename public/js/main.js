@@ -366,6 +366,13 @@ let camPitch = 0.25;
 let shake = 0;
 
 function setPhase(p) {
+  if (p !== "lobby" && phase === "lobby") {
+    for (const pl of allPlayers()) {
+      pl.knight?.setLobbyTag?.(null);
+      if (pl.knight?.ownLabel && pl.knight.label) pl.knight.label.visible = false; // den egna skylten bara i lobbyn
+    }
+  }
+  if (p === "lobby" && me?.knight?.ownLabel && me.knight.label) me.knight.label.visible = true;
   phase = p;
   document.body.dataset.phase = p;
   updateVolumePanel();
@@ -392,7 +399,7 @@ function playerById(id) {
 }
 
 // Ljud för vapnen: 0 = klinga, 1 = yxblad (djupare sus), 2 = kedja, 3 = trubbigt (hammare, knytnäve)
-const SWING_SOUND = [0, 1, 2, 0, 1, 1, 0, 0, 1, 1, 0];
+const SWING_SOUND = [0, 1, 2, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1];
 const HIT_SOUND = [0, 1, 2, 0, 1, 1, 0, 0, 3, 3];
 function swingSound(player) {
   const w = weaponOf(player);
@@ -559,10 +566,11 @@ function renderBoard(msg) {
   const tbody = $("board-table").querySelector("tbody");
   tbody.innerHTML = "";
   const meRow = msg.me;
+  const MEDAL = { 1: "🥇", 2: "🥈", 3: "🥉" };
   const row = (r, isMe) => {
     const tr = document.createElement("tr");
-    if (isMe) tr.className = "me";
-    for (const v of [r.rank ?? "–", r.name, r.wins, r.kills, r.matches]) {
+    tr.className = [isMe ? "me" : "", r.rank >= 1 && r.rank <= 3 ? "top" + r.rank : ""].filter(Boolean).join(" ");
+    for (const v of [MEDAL[r.rank] ?? r.rank ?? "–", r.name, r.wins, r.kills, r.matches]) {
       const td = document.createElement("td");
       td.textContent = v;
       tr.appendChild(td);
@@ -671,20 +679,32 @@ function rebuildKnight(player) {
 function lineup() {
   // I lagspel står Röda laget till vänster och Blå laget till höger
   const list = mode === "team" ? allPlayers().sort((a, b) => (a.team ?? 2) - (b.team ?? 2)) : allPlayers();
+  // I en svag båge mot kameran, var och en vänd mot kameran (så man ser utrustningen ordentligt)
+  const n = list.length;
+  const spacing = n > 4 ? 1.25 : 1.4;
+  const cam = lobbyCamera(n);
   list.forEach((p, i) => {
-    const x = (i - (list.length - 1) / 2) * 1.5;
-    const pos = new THREE.Vector3(x, 0, 2);
+    const x = (i - (n - 1) / 2) * spacing;
+    const z = 2 + x * x * 0.09;
+    const pos = new THREE.Vector3(x, 0, z);
+    const yaw = Math.atan2(cam.x - x, cam.z - z) * 0.85;
     if (p === me) {
       me.pos.copy(pos);
-      me.yaw = 0;
+      me.yaw = yaw;
     } else {
       p.target.copy(pos);
-      p.targetYaw = 0;
+      p.targetYaw = yaw;
+      if (p.snaps) p.snaps.length = 0;
     }
     p.knight.group.position.copy(pos);
-    p.knight.group.rotation.y = 0;
+    p.knight.group.rotation.y = yaw;
     p.knight.group.visible = true;
   });
+}
+
+// Kamerans plats i lobbyn: lite lägre och närmare ju färre riddare
+function lobbyCamera(n) {
+  return { x: 0, y: 1.4, z: 2 + 3.5 + Math.min(6, n) * 0.4 };
 }
 
 // ---------------------------------------------------------------------------
@@ -2293,7 +2313,76 @@ const WEAPON_INFO = [
   "Med sköld. Slår av hjälmar och får fienden att vingla.",
   "Tvåhandsvapen. Långsam. Tunga slag fäller fienden. Krossar i stället för att hugga.",
   "Med knogjärn (parerar lika bra som en sköld, men tar inte emot kast). Blixtsnabb men kort. Tar tag på längre håll och hugger medan du brottas.",
+  "Med sköld. Bred, tung huggklinga. Hugger hårt och av lemmar, svag stöt.",
+  "Med sköld. Böjd långkniv. Snabbare än svärdet men lite svagare.",
+  "Med sköld. Flänsar som krossar genom rustning och slår av hjälmar. Hårdare än hammaren, men fienden vinglar mindre.",
+  "Med sköld. Snabba, långa stötar bakom skölden. Svaga hugg.",
+  "Tvåhandsvapen. Långt knivblad på stång. Breda hugg på avstånd, svag på nära håll.",
+  "Tvåhandsvapen. Riddarnas stångyxa med hammare och spets. Bra mot rustning, slår av hjälmar.",
+  "Tvåhandsvapen. Flamländsk klubba med järnspets. Krossar, stöter och får fienden att vingla.",
 ];
+
+// Vapnets typ, stats (jämfört med svärdet) och egenskaper, för lobbyn
+function weaponFacts(w) {
+  const ws = weaponSpec(w);
+  const type = ws.noShield ? { text: "Med knogjärn", cls: "special" } : ws.twoHanded ? { text: "Tvåhands", cls: "two" } : { text: "Med sköld", cls: "" };
+  const tags = [];
+  if (ws.blunt) tags.push("Krossar (hugger inte av)");
+  if (ws.helmetKnock) tags.push("Bra mot rustning");
+  if (ws.sever >= 1.35) tags.push("Hugger av lemmar");
+  if (ws.thrust >= 1.35) tags.push("Bra stöt");
+  if (ws.hitStagger >= 0.35) tags.push("Får fienden att vingla");
+  if (ws.knockdown) tags.push("Fäller fienden");
+  if (ws.minRange) tags.push("Svag på nära håll");
+  if (ws.parryBypass) tags.push("Går runt pareringar");
+  if (ws.grabReach) tags.push("Långt grepp");
+  if (ws.speed <= 0.9) tags.push("Snabb");
+  if (ws.speed >= 1.5) tags.push("Mycket långsam");
+  return { ws, type, tags };
+}
+const num = (v) => v.toFixed(2).replace(".", ",");
+
+function renderWeaponCard() {
+  if (!me) return;
+  const w = me.look.w ?? 0;
+  const { ws, type, tags } = weaponFacts(w);
+  const t = $("weapon-type");
+  t.textContent = type.text;
+  t.className = "weapon-type " + type.cls;
+  // Staplarna: skada (högst zweihändern), fart (snabbare = längre stapel), räckvidd
+  const bars = [
+    ["Skada", ws.damage / 1.9, num(ws.damage)],
+    ["Fart", 0.7 / ws.speed, num(1 / ws.speed)],
+    ["Räckvidd", (ws.reach + 0.5) / 1.6, ws.reach === 0 ? "norm" : (ws.reach > 0 ? "+" : "−") + num(Math.abs(ws.reach))],
+  ];
+  $("weapon-stats").innerHTML = bars.map(([label, f, v]) =>
+    `<span>${label}</span><span class="bar"><i style="width:${Math.round(Math.max(0.06, Math.min(1, f)) * 100)}%"></i></span><span class="num">${v}</span>`).join("");
+  $("weapon-tags").innerHTML = tags.map((x) => `<span>${x}</span>`).join("");
+  if (!$("weapon-list").hidden) renderWeaponList();
+}
+
+// Lista med alla vapen, grupperade efter typ
+function renderWeaponList() {
+  const groups = [["Med sköld", []], ["Tvåhands", []], ["Special", []]];
+  WEAPONS.forEach((name, w) => {
+    const ws = weaponSpec(w);
+    groups[ws.noShield ? 2 : ws.twoHanded ? 1 : 0][1].push([name, w, ws]);
+  });
+  const cur = me?.look.w ?? 0;
+  $("weapon-list").innerHTML = groups.filter(([, list]) => list.length).map(([title, list]) =>
+    `<h4>${title}</h4><div class="grid">${list.map(([name, w, ws]) =>
+      `<button type="button" class="small${w === cur ? " active" : ""}" data-weapon="${w}" title="${WEAPON_INFO[w] ?? ""}">${name}<small>${num(ws.damage)}/${num(1 / ws.speed)}</small></button>`).join("")}</div>`).join("");
+}
+$("weapon-list-button").addEventListener("click", () => {
+  const list = $("weapon-list");
+  list.hidden = !list.hidden;
+  if (!list.hidden) renderWeaponList();
+});
+$("weapon-list").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-weapon]");
+  if (!b || !me || phase !== "lobby") return;
+  net.send({ t: "look", look: { w: 0, c: 0, ...me.look, w: Number(b.dataset.weapon) } });
+});
 
 document.addEventListener("wheel", (e) => {
   if (rebinding) return;
@@ -2404,16 +2493,32 @@ function renderLobby() {
     if (i !== me.color) net.send({ t: "color", color: i });
   });
 
-  $("look-a").textContent = ARMORS[me.look.a] ?? "";
-  $("look-h").textContent = HELMETS[me.look.h] ?? "";
+  const setLook = (id, text) => {
+    // en liten "pop" när värdet byts (inte första gången)
+    const el = $(id);
+    if (el.textContent !== text && el.textContent !== "") {
+      el.classList.remove("changed");
+      void el.offsetWidth;
+      el.classList.add("changed");
+    }
+    el.textContent = text;
+  };
+  setLook("look-a", ARMORS[me.look.a] ?? "");
+  setLook("look-h", HELMETS[me.look.h] ?? "");
   // Tvåhandsvapen: ingen sköld
   const lspec = weaponSpec(me.look.w ?? 0);
   const twoHanded = lspec.twoHanded;
-  $("look-s").textContent = twoHanded ? "— (tvåhandsvapen)" : lspec.noShield ? "Knogjärn (dolken)" : SHIELDS[me.look.s] ?? "";
+  setLook("look-s", twoHanded ? "— (tvåhandsvapen)" : lspec.noShield ? "Knogjärn (dolken)" : SHIELDS[me.look.s] ?? "");
   document.querySelectorAll('[data-look="s"]').forEach((b) => (b.disabled = !!twoHanded || !!lspec.noShield));
-  $("look-w").textContent = WEAPONS[me.look.w ?? 0] ?? "";
+  setLook("look-w", WEAPONS[me.look.w ?? 0] ?? "");
   $("weapon-info").textContent = WEAPON_INFO[me.look.w ?? 0] ?? "";
-  $("look-c").textContent = CAPES[me.look.c ?? 0] ?? "";
+  renderWeaponCard();
+  setLook("look-c", CAPES[me.look.c ?? 0] ?? "");
+  // Sidfoten: en prick per riddare (ifylld när den är redo) och antal i fliken
+  $("tab-player-count").textContent = String(allPlayers().length);
+  $("ready-summary").innerHTML = allPlayers().map((p) =>
+    `<span class="pip${p.ready ? " ready" : ""}" style="background:${cssColor(displayColor(p))}" title="${p.name.replace(/[<>&"]/g, "")}${p.ready ? " – redo" : ""}">${p.ready ? "✓" : ""}</span>`).join("");
+  document.querySelector(".host-note").hidden = isHost;
 
   const count = allPlayers().length;
   $("start-button").hidden = !isHost;
@@ -2430,6 +2535,23 @@ function renderLobby() {
     $("lobby-wait").textContent = `${readyCount} av ${count} redo · väntar på att ${host ? host.name : "lobbyledaren"} startar matchen…`;
   }
 }
+
+// Lobbyns flikar: Riddare, Match, Spelare (valet sparas i webbläsaren)
+function showLobbyTab(tab) {
+  document.querySelectorAll(".lp-tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  document.querySelectorAll(".lp-section").forEach((sec) => (sec.hidden = sec.dataset.section !== tab));
+  saveSetting("lobbyflik", tab);
+}
+document.querySelectorAll(".lp-tab").forEach((b) => b.addEventListener("click", () => showLobbyTab(b.dataset.tab)));
+showLobbyTab(["knight", "match", "players"].includes(loadSetting("lobbyflik", "knight")) ? loadSetting("lobbyflik", "knight") : "knight");
+
+// Topplistan kan fällas ihop (så man ser riddarna bättre)
+function setBoardCollapsed(on) {
+  $("board").classList.toggle("collapsed", on);
+  saveSetting("topplista", on ? "ihop" : "visa");
+}
+$("board-toggle").addEventListener("click", () => setBoardCollapsed(!$("board").classList.contains("collapsed")));
+setBoardCollapsed(loadSetting("topplista", "visa") === "ihop");
 
 // ◀ ▶ för rustning, hjälm och sköld
 const LOOK_LISTS = { a: ARMORS, h: HELMETS, s: SHIELDS, w: WEAPONS, c: CAPES };
@@ -3471,14 +3593,33 @@ function updateOthers(dt) {
     other.knight.updateTrail(scene);
   }
 
-  // I lobbyn viftar riddarna med svärdet ibland, för stämningens skull
+  // I lobbyn har varje riddare sin egen takt: svingar vapnet, kollar skölden, bugar, skrattar
+  // eller (sällan) dansar en stund. Inte alla samtidigt, och aldrig i jämn takt.
   if (phase === "lobby") {
-    lobbyEmoteTimer -= dt;
-    if (lobbyEmoteTimer <= 0) {
-      lobbyEmoteTimer = 1.5 + Math.random() * 2.5;
-      const list = allPlayers();
-      const pick = list[Math.floor(Math.random() * list.length)];
-      if (pick) pick.knight.playAttack(Math.random() < 0.3 ? "h" : "q");
+    for (const p of allPlayers()) {
+      const k = p.knight;
+      if (!k) continue;
+      p.lobbyIdle = (p.lobbyIdle ?? 2 + Math.random() * 6) - dt;
+      if (p.lobbyIdle > 0 || k.attack || k.emote || k.parryT >= 0) continue;
+      p.lobbyIdle = 5 + Math.random() * 9;
+      const r = Math.random();
+      if (r < 0.32) k.playAttack("q");
+      else if (r < 0.45) k.playAttack("h");
+      else if (r < 0.65) k.playParry();
+      else if (r < 0.8) k.playEmote(1);
+      else if (r < 0.94) k.playEmote(2);
+      else k.playEmote(3);
+    }
+    // Namnskyltarna visar lobbyledare och vem som är redo (i lobbyn får även den egna riddaren en skylt)
+    for (const p of allPlayers()) {
+      const k = p.knight;
+      if (!k) continue;
+      if (!k.label && p === me) {
+        k.name = p.name;
+        k.createLabel();
+        k.ownLabel = true;
+      }
+      k.setLobbyTag?.({ ready: !!p.ready, host: p.id === hostId, you: p === me });
     }
   }
 }
@@ -3514,15 +3655,39 @@ function updateFightCenter(dt) {
   smoothCenter.lerp(fightCenter, 1 - Math.exp(-dt * 2));
 }
 
+// Förskjut bilden så att mitten hamnar mitt i den fria ytan mellan panelerna (utan att vrida kameran)
+function setLobbyFilmOffset() {
+  const W = window.innerWidth;
+  const panel = $("match-lobby");
+  const board = $("board");
+  let left = 0;
+  let right = W;
+  if (panel && !panel.hidden && W > 700) left = panel.getBoundingClientRect().right;
+  if (board && !board.hidden && !board.classList.contains("collapsed") && getComputedStyle(board).display !== "none") right = Math.min(right, board.getBoundingClientRect().left);
+  const shiftNdc = ((left + right) / 2 - W / 2) / (W / 2);
+  const want = -shiftNdc * camera.getFilmWidth() * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect;
+  camera.filmOffset += (want - camera.filmOffset) * 0.15;
+  camera.updateProjectionMatrix();
+}
+
 function updateCamera(dt) {
+  if (phase !== "lobby" && camera.filmOffset !== 0) {
+    camera.filmOffset = 0;
+    camera.updateProjectionMatrix();
+  }
   if (!me || phase === "start") {
     orbitCamera(24, 11, 0.00005, 1); // startskärm: svävar runt arenan
     return;
   }
   if (phase === "lobby") {
-    // Riddarna på rad; kameran lite åt vänster så lobbyrutan inte skymmer dem
-    camera.position.set(-1.4, 1.7, 7.2);
-    camera.lookAt(-1.4, 1.1, 2);
+    // Riddarna i en båge framför kameran. Bilden förskjuts (filmOffset) så att de hamnar mitt i den fria
+    // ytan mellan lobbypanelen och topplistan, och kameran andas lite (känns levande, inte som en stillbild).
+    const n = Math.max(1, allPlayers().length);
+    const c = lobbyCamera(n);
+    const t = seconds();
+    camera.position.set(c.x + Math.sin(t * 0.21) * 0.12, c.y + Math.sin(t * 0.33) * 0.04, c.z);
+    camera.lookAt(0, 1.05, 2.2);
+    setLobbyFilmOffset();
     return;
   }
   if (phase === "matchEnd" && ceremonyActive()) {
