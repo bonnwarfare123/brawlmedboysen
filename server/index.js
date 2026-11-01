@@ -20,7 +20,7 @@ import {
   MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, MATCH, ARENA_RX, ARENA_RZ,
   JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS, AIM_JOINT, ARMORS, HELMETS, SHIELDS,
   WEAPONS, CAPES, MODES, attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, MAX_BOTS, BOT_NAMES, WEATHERS, AWARDS,
-  MAPS, INTRO_SECONDS,
+  MAPS, INTRO_SECONDS, CROSSBOW, KING_BOW,
 } from "../public/js/shared.js";
 
 export default {
@@ -208,6 +208,7 @@ function resetForRound(player) {
   player.heldBy = null;
   player.nextGrab = 0;
   player.struggle = 0;
+  player.stash = null; // vapnet man bar innan man tog upp kungens armborst
 }
 
 const LEFT_LEG = ["ankleL", "kneeL", "hipL"];
@@ -476,6 +477,9 @@ export class GameRoom extends DurableObject {
         break;
       case "throw":
         this.handleThrow(ws, player);
+        break;
+      case "shoot":
+        this.handleShoot(ws, player, msg);
         break;
       case "grab":
         this.handleGrab(ws, player);
@@ -893,6 +897,9 @@ export class GameRoom extends DurableObject {
       const roundToken = this.setPhase("round");
       this.broadcast({ t: "round", round: this.round });
       if (this.bots().length) this.botTick(roundToken);
+      // Kungen kastar in sitt armborst en gång, någon gång mitt i rundan
+      const delay = this.kingBowDelay ?? KING_BOW.minDelay + Math.random() * (KING_BOW.maxDelay - KING_BOW.minDelay);
+      this.later(delay, roundToken, () => this.kingThrowsCrossbow(roundToken));
     });
   }
 
@@ -1197,6 +1204,7 @@ export class GameRoom extends DurableObject {
     const t = now();
     if (!this.canFight(player) || this.busy(player, t)) return;
     if (player.holding) return this.grabPunch(player, t);
+    if (player.cw === CROSSBOW) return this.handleShoot(ws, player, {});
 
     const w = player.cw;
     const spec = attackSpec(kind, w);
@@ -1441,7 +1449,7 @@ export class GameRoom extends DurableObject {
   // JUST DÅ. Kliver man åt sidan i tid missar det. Man kan parera det eller ta emot det med skölden.
   handleThrow(ws, player) {
     const t = now();
-    if (!this.canFight(player) || this.busy(player, t) || player.holding || player.cw === FISTS) return;
+    if (!this.canFight(player) || this.busy(player, t) || player.holding || player.cw === FISTS || player.cw === CROSSBOW) return;
     if (!jointAvailable(player, "wristR")) return;
     const T = COMBAT.throw;
     const w = player.cw;
@@ -1716,7 +1724,166 @@ export class GameRoom extends DurableObject {
     const item = { id, w: player.cw, p, r: round2(Math.random() * Math.PI * 2) };
     this.items.set(id, item);
     player.cw = FISTS;
+    this.dropStash(player);
     return item;
+  }
+
+  // Bar man kungens armborst och tappar det läggs ens gamla vapen också på marken
+  dropStash(player) {
+    if (player.stash === null || player.stash === undefined || player.stash === FISTS) {
+      player.stash = null;
+      return null;
+    }
+    const a = Math.random() * Math.PI * 2;
+    const item = {
+      id: "i" + randomId().slice(0, 4), w: player.stash, r: round2(Math.random() * Math.PI * 2),
+      p: [
+        round2(Math.max(-ARENA_RX + 0.5, Math.min(ARENA_RX - 0.5, player.p[0] + Math.sin(a) * 1.1))),
+        0,
+        round2(Math.max(-ARENA_RZ + 0.5, Math.min(ARENA_RZ - 0.5, player.p[2] + Math.cos(a) * 1.1))),
+      ],
+    };
+    player.stash = null;
+    this.items.set(item.id, item);
+    this.broadcast({ t: "stashDrop", id: player.id, item });
+    return item;
+  }
+
+  // ----- Kungens armborst -----
+
+  // Kungen reser sig och kastar in ett laddat armborst på en slumpad plats på planen
+  kingThrowsCrossbow(token) {
+    if (this.phase !== "round" || token !== this.phaseToken || this.kingBowRound === this.round) return;
+    this.kingBowRound = this.round; // bara en gång per runda
+    // En plats inne på planen, inte för nära kanten och helst inte rakt på någon
+    let p = [0, 0, 0];
+    for (let tries = 0; tries < 20; tries++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = Math.sqrt(Math.random()) * 0.72;
+      const x = Math.sin(a) * d * (ARENA_RX - 1);
+      const z = Math.cos(a) * d * (ARENA_RZ - 1);
+      p = [round2(x), 0, round2(z)];
+      const clear = [...this.players.values()].every((pl) => pl.dead || Math.hypot(pl.p[0] - x, pl.p[2] - z) > 1.5);
+      if (clear) break;
+    }
+    const item = { id: "k" + randomId().slice(0, 4), w: CROSSBOW, p, r: round2(Math.random() * Math.PI * 2) };
+    this.broadcast({ t: "kingbow", item, flight: KING_BOW.flight });
+    // Går att ta upp först när det har landat
+    this.later(KING_BOW.flight, token, () => this.items.set(item.id, item));
+  }
+
+  // Avfyra armborstet (vänster musknapp). msg.r = vart spelaren siktar (vinkel), annars dit man tittar.
+  handleShoot(ws, player, msg) {
+    const t = now();
+    if (!this.canFight(player) || this.busy(player, t) || player.cw !== CROSSBOW) return;
+    if (!jointAvailable(player, "wristR")) return;
+    if (t < player.nextQuick - TOLERANCE) return;
+    // Siktet får avvika lite från hållet man tittar (kameran), men inte hur mycket som helst
+    let r = player.r;
+    if (Number.isFinite(msg?.r)) {
+      let d = msg.r - player.r;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      r = player.r + Math.max(-0.6, Math.min(0.6, d));
+    }
+    const fx = Math.sin(r);
+    const fz = Math.cos(r);
+    // Skottet är avlossat: armborstet är förbrukat (det försvinner) och man tar fram sitt gamla vapen
+    const back = player.stash !== null && player.stash !== undefined ? player.stash : FISTS;
+    player.stash = null;
+    player.cw = back;
+    player.chargeStart = null;
+    player.nextQuick = Math.max(player.nextQuick, t + KING_BOW.recover);
+    player.nextHeavy = Math.max(player.nextHeavy, t + KING_BOW.recover);
+    player.nextThrust = Math.max(player.nextThrust, t + KING_BOW.recover);
+    const from = [player.p[0] + fx * 0.6, KING_BOW.height, player.p[2] + fz * 0.6];
+    // Hur långt innan pilen tar i den låga muren runt planen?
+    let range = KING_BOW.range;
+    for (let d = 0; d <= KING_BOW.range; d += 0.2) {
+      const x = from[0] + fx * d;
+      const z = from[2] + fz * d;
+      if ((x / (ARENA_RX + 0.6)) ** 2 + (z / (ARENA_RZ + 0.6)) ** 2 > 1) {
+        range = d;
+        break;
+      }
+    }
+    this.broadcast({ t: "bolt", id: player.id, from: from.map(round2), dir: [round2(fx), round2(fz)], speed: KING_BOW.speed, range: round2(range), w: back });
+    const shot = { owner: player.id, team: player.team, x: from[0], z: from[2], fx, fz, dist: 0, range, token: this.phaseToken };
+    this.flyBolt(shot);
+  }
+
+  flyBolt(shot) {
+    const STEP = 1 / 60;
+    const t = now();
+    const from = shot.dist;
+    const to = Math.min(shot.range, from + KING_BOW.speed * STEP);
+    let hit = null;
+    let hitAlong = Infinity;
+    for (const target of this.players.values()) {
+      if (target.id === shot.owner || target.dead || this.phase !== "round") continue;
+      if (this.mode === "team" && target.team === shot.team) continue;
+      const dx = target.p[0] - (shot.x + shot.fx * from);
+      const dz = target.p[2] - (shot.z + shot.fz * from);
+      const along = dx * shot.fx + dz * shot.fz;
+      if (along < -KING_BOW.radius || along > to - from + KING_BOW.radius) continue;
+      if (Math.abs(dx * shot.fz - dz * shot.fx) > KING_BOW.radius) continue;
+      // Pilen flyger i brösthöjd: den som hukar, ligger ner eller rullar slipper undan
+      const top = t < target.downUntil || target.legless ? 0.6 : target.crouch ? 1.2 : 1.95;
+      if (KING_BOW.height > top) continue;
+      if (invulnerable(target, t)) continue;
+      if (along < hitAlong) {
+        hit = target;
+        hitAlong = along;
+      }
+    }
+    if (hit) return this.endBolt(shot, hit, from + Math.max(0, hitAlong));
+    shot.dist = to;
+    if (to >= shot.range - 1e-6) return this.endBolt(shot, null, to);
+    this.later(STEP, shot.token, () => this.flyBolt(shot));
+  }
+
+  // Pilen tog i muren, i en sköld eller i någon (exakt 45 skada, bara en gång)
+  endBolt(shot, hit, dist) {
+    const t = now();
+    const at = [round2(shot.x + shot.fx * dist), round2(shot.z + shot.fz * dist)];
+    if (!hit) {
+      this.broadcast({ t: "boltEnd", by: shot.owner, how: "wall", p: at, id: null });
+      return;
+    }
+    // En sköld som är uppe och vänd rakt mot skottet tar emot pilen
+    const hs = weaponSpec(hit.cw);
+    const facing = -(Math.sin(hit.r) * shot.fx + Math.cos(hit.r) * shot.fz);
+    const hasShield = hit.cw !== FISTS && hit.cw !== CROSSBOW && !hs.twoHanded && !hs.noShield && jointAvailable(hit, "wristL");
+    const shieldUp = t >= hit.downUntil && !hit.holding && !hit.heldBy && hit.chargeStart === null && t >= (hit.swingUntil || 0);
+    if (hasShield && shieldUp && facing > KING_BOW.shieldFacing) {
+      hit.staggerUntil = Math.max(hit.staggerUntil, t + 0.3);
+      this.broadcast({ t: "boltEnd", by: shot.owner, how: "shield", p: at, id: hit.id });
+      return;
+    }
+    const attacker = this.players.get(shot.owner);
+    const damage = KING_BOW.damage;
+    hit.hp = Math.max(0, hit.hp - damage);
+    hit.lastAttacker = shot.owner;
+    if (attacker) attacker.stats.dmg += damage;
+    const dead = hit.hp === 0;
+    let drop = null;
+    if (dead && hit.cw !== FISTS) drop = this.dropWeapon(hit);
+    else if (dead) this.dropStash(hit);
+    if (hit.holding) this.releaseGrab(hit, "hit");
+    if (!dead) {
+      hit.staggerUntil = Math.max(hit.staggerUntil, t + 0.4);
+      hit.chargeStart = null;
+    } else {
+      hit.dead = true;
+      hit.chargeStart = null;
+      if (attacker) attacker.kills += 1;
+    }
+    this.broadcast({ t: "boltEnd", by: shot.owner, how: "hit", p: at, id: hit.id });
+    this.broadcast({
+      t: "hit", id: hit.id, by: shot.owner, k: "x", hp: hit.hp, dead, kills: attacker ? attacker.kills : 0,
+      sev: null, seg: null, hk: 0, drop, st: dead ? 0 : 1, kd: 0, ll: 0, sh: 0, bolt: 1,
+    });
+    this.checkRoundEnd();
   }
 
   // Plocka upp ett vapen från marken (E). Har man redan ett vapen läggs det ner i stället.
@@ -1728,9 +1895,13 @@ export class GameRoom extends DurableObject {
     if (Math.hypot(item.p[0] - player.p[0], item.p[2] - player.p[2]) > 2.2) return;
     this.items.delete(itemId);
     let drop = null;
-    if (player.cw !== FISTS) {
+    if (item.w === CROSSBOW && player.cw !== CROSSBOW) {
+      // Kungens armborst: det gamla vapnet behålls (på ryggen) och tas fram igen efter skottet
+      player.stash = player.cw;
+    } else if (player.cw !== FISTS) {
       drop = { id: "i" + randomId().slice(0, 4), w: player.cw, p: [...item.p], r: item.r };
       this.items.set(drop.id, drop);
+      if (player.cw === CROSSBOW) this.dropStash(player);
     }
     player.cw = item.w;
     player.chargeStart = null;
@@ -1815,6 +1986,33 @@ export class GameRoom extends DurableObject {
     }
     ai.holdT = 0;
 
+    // Kungens armborst: ligger det nära går boten och hämtar det, och har den det skjuter den
+    if (bot.cw !== CROSSBOW && jointAvailable(bot, "wristR")) {
+      for (const it of this.items.values()) {
+        if (it.w !== CROSSBOW) continue;
+        const d = Math.hypot(it.p[0] - bot.p[0], it.p[2] - bot.p[2]);
+        if (d < 1.8 && !this.busy(bot, t)) {
+          this.handlePickup(null, bot, it.id);
+          return;
+        }
+        if (d < 9 && d < best + 3) target = { p: it.p, item: true, id: null };
+      }
+    }
+    if (bot.cw === CROSSBOW && !this.busy(bot, t) && t >= bot.nextQuick && best < 14) {
+      ai.bowAim = (ai.bowAim || 0) + dt;
+      const want = Math.atan2(target.p[0] - bot.p[0], target.p[2] - bot.p[2]);
+      let diff = want - bot.r;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      bot.r = round2(bot.r + Math.max(-4 * dt, Math.min(4 * dt, diff)));
+      this.broadcast({ t: "s", id: bot.id, p: bot.p, r: bot.r, a: 0, c: 0, k: Date.now() % 10000000 });
+      // Siktar en stund (inte perfekt) och skjuter
+      if (Math.abs(diff) < 0.08 && ai.bowAim > 0.7) {
+        ai.bowAim = 0;
+        this.handleShoot(null, bot, { r: bot.r + (Math.random() - 0.5) * 0.08 });
+      }
+      return;
+    }
     // Utan vapen: gå och hämta det närmaste vapnet på marken
     if (bot.cw === FISTS && this.items.size && jointAvailable(bot, "wristR")) {
       let item = null;

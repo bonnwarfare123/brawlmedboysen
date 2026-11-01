@@ -896,6 +896,47 @@ export function makePodiumAttendants() {
   };
 }
 
+// En vakt som patrullerar (går längs path(t, ut) med t från 0 till 1, stannar ibland och spanar)
+export function makePatrol(path, start, speed, color) {
+  const f = makeGuard(color, Math.random() < 0.5, [0xe6b890, 0xd09a6c, 0xa86e48][Math.floor(Math.random() * 3)]);
+  f.mouth.userData.keep = true;
+  mergeFigure(f.group);
+  f.group.userData.noMerge = true;
+  let t = start;
+  let pause = 0;
+  let walk = 0;
+  const p0 = new THREE.Vector3();
+  const p1 = new THREE.Vector3();
+  return {
+    group: f.group,
+    update(dt) {
+      if (pause > 0) {
+        pause -= dt;
+        f.head.rotation.y = Math.sin(pause * 0.9) * 0.8; // spanar ut över gården
+        for (const s of ["L", "R"]) {
+          f["thigh" + s].rotation.x *= 0.9;
+          f["shin" + s].rotation.x *= 0.9;
+        }
+        return;
+      }
+      if (Math.random() < dt * 0.05) pause = 2 + Math.random() * 4;
+      f.head.rotation.y *= 0.95;
+      t = (t + speed * dt) % 1;
+      path(t, p0);
+      path((t + 0.003) % 1, p1);
+      f.group.position.copy(p0);
+      if (p0.distanceToSquared(p1) > 1e-8) f.group.rotation.y = Math.atan2(p1.x - p0.x, p1.z - p0.z);
+      walk += dt * 5;
+      f.thighL.rotation.x = Math.sin(walk) * 0.35;
+      f.thighR.rotation.x = -Math.sin(walk) * 0.35;
+      f.shinL.rotation.x = Math.max(0, -Math.sin(walk)) * 0.5;
+      f.shinR.rotation.x = Math.max(0, Math.sin(walk)) * 0.5;
+      f.root.position.y = 0.78 + Math.abs(Math.cos(walk)) * 0.025;
+      f.armL.rotation.x = -Math.sin(walk) * 0.25;
+    },
+  };
+}
+
 // Bygger kungaparet, två vakter och en härold. Placeras i kungalogen av arenan.
 export function makeRoyals() {
   const king = makeFigure({ robe: 0x7a1a2a, skin: 0xe6b890, hair: 0xb8b4ac, beard: true, crown: "king", ermine: true, sitting: true, dress: true });
@@ -927,9 +968,25 @@ export function makeRoyals() {
   herald.handR.add(trumpet);
   herald.trumpet = trumpet;
 
+  // Ett litet armborst som kungen håller upp innan han kastar in det (syns bara under kastet)
+  const bow = new THREE.Group();
+  {
+    const wood = figureMat(0x6a4426);
+    const steel = figureMat(0xb6bcc4, { metalness: 0.8, roughness: 0.35 });
+    addMesh(bow, new THREE.BoxGeometry(0.05, 0.6, 0.06), wood, [0, 0.1, 0]);
+    const arc = new THREE.TorusGeometry(0.3, 0.013, 5, 16, 1.8);
+    arc.rotateZ(Math.PI / 2 - 0.9);
+    addMesh(bow, arc, steel, [0, 0.4 - 0.3, 0]);
+    addMesh(bow, new THREE.CylinderGeometry(0.004, 0.004, 0.52, 4), figureMat(0xd8c890), [0, 0.18, 0], [1, 1, 1], [0, 0, Math.PI / 2]);
+  }
+  bow.position.set(0, -0.05, 0.05);
+  bow.scale.setScalar(1.6); // lite större än på riktigt, så att det syns från planen
+  bow.rotation.set(Math.PI / 2, 0, 0);
+  bow.visible = false;
+  king.handR.add(bow);
   for (const f of [king, queen, herald, ...guards]) mergeFigure(f.group);
 
-  const state = { reactT: -1, up: true, blowT: -1, time: 0 };
+  const state = { reactT: -1, up: true, blowT: -1, time: 0, throwT: -1, onRelease: null };
 
   const update = (dt) => {
     state.time += dt;
@@ -971,6 +1028,35 @@ export function makeRoyals() {
       queen.foreL.rotation.set(-0.9, 0, 0);
       queen.foreR.rotation.set(-0.9, 0, 0);
     }
+    // Kungen reser sig, höjer armborstet över huvudet och kastar in det på planen
+    if (state.throwT >= 0) {
+      state.throwT += dt;
+      const k = state.throwT;
+      stand = Math.max(stand, k < 0.35 ? k / 0.35 : k > 2.0 ? Math.max(0, 1 - (k - 2.0) / 0.5) : 1);
+      const raise = Math.min(1, Math.max(0, (k - 0.2) / 0.35));
+      const throwing = Math.min(1, Math.max(0, (k - 0.75) / 0.18));
+      const back = Math.max(0, Math.min(1, (k - 1.3) / 0.6));
+      // Armarna upp över huvudet, en paus (vifta lite), sedan ett kast framåt
+      const wave = k < 0.75 ? Math.sin(k * 14) * 0.15 * raise : 0;
+      const ax = lerp(lerp(-0.4, -3.0, raise), -1.2, throwing);
+      king.armR.rotation.set(lerp(ax, -0.4, back), 0, lerp(-0.25 + wave, -0.1, back));
+      king.foreR.rotation.set(lerp(lerp(-0.8, -0.4, raise), 0, throwing) * (1 - back) - 0.8 * back, 0, 0);
+      king.armL.rotation.set(lerp(lerp(-0.5, -2.6, raise) * (1 - throwing) - 0.6 * throwing, -0.5, back), 0, 0.2);
+      king.mouth.scale.y = 0.3 + (k < 1.3 ? Math.abs(Math.sin(k * 11)) * 1.1 : 0); // skrattar och ropar
+      king.head.rotation.x = -0.25 * raise * (1 - back);
+      bow.visible = k < 0.88;
+      if (k >= 0.88 && state.onRelease) {
+        const cb = state.onRelease;
+        state.onRelease = null;
+        king.handR.updateWorldMatrix(true, false);
+        cb(new THREE.Vector3(0, -0.1, 0.05).applyMatrix4(king.handR.matrixWorld));
+      }
+      if (k > 2.6) state.throwT = -1;
+      // Drottningen klappar
+      const clap = Math.abs(Math.sin(t * 11)) * 0.4;
+      queen.armL.rotation.set(-1.2, 0, 0.15 + clap);
+      queen.armR.rotation.set(-1.2, 0, -0.15 - clap);
+    }
     king.setSitting(1 - stand);
     // Härolden lyfter trumpeten till munnen och blåser
     if (state.blowT >= 0) {
@@ -999,6 +1085,12 @@ export function makeRoyals() {
     },
     blow() {
       state.blowT = 0;
+    },
+    // Kungen kastar in sitt armborst. onRelease(handens position) anropas när det lämnar handen.
+    throwBow(onRelease) {
+      state.throwT = 0;
+      state.reactT = -1;
+      state.onRelease = onRelease;
     },
   };
 }

@@ -852,3 +852,17 @@ button.primary:active:not(:disabled) { transform: translateY(1px); }
   #volume-panel { top: 10px; bottom: auto; right: 8px; }
   body[data-phase="lobby"] #perf { display: none; }
 }
+
+/* v0.27: banderoll för händelser (kungens armborst) – högt upp, liten, skymmer inte striden */
+#event-banner {
+  position: fixed; top: 54px; left: 50%; transform: translate(-50%, -12px);
+  padding: 7px 18px 8px; border-radius: 6px; text-align: center; pointer-events: none;
+  background: linear-gradient(#3a2614ee, #24170cee); border: 2px solid #c8a046; color: #f4e6c4;
+  box-shadow: 0 4px 14px #0008; opacity: 0; transition: opacity 0.4s, transform 0.4s; z-index: 30;
+  font-family: "Cinzel", serif; max-width: min(92vw, 560px);
+}
+#event-banner.show { opacity: 1; transform: translate(-50%, 0); }
+#event-banner b { display: block; font-size: 17px; letter-spacing: 0.06em; color: #ffd36a; text-shadow: 0 2px 0 #0008; }
+#event-banner span { display: block; font-family: "Alegreya", serif; font-style: italic; font-size: 14px; margin-top: 2px; }
+#event-banner span:empty { display: none; }
+body[data-phase="lobby"] #event-banner { display: none; }

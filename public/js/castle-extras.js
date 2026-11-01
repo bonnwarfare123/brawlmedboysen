@@ -150,9 +150,6 @@ export function makeWoodpile(rand) {
       }
     }
   }
-  const snow = mesh(new THREE.BoxGeometry(0.55, 0.06, 1.15), 0xf4f6fa, false);
-  snow.position.y = 0.84;
-  g.add(snow);
   // Huggkubbe och yxa
   const block = mesh(new THREE.CylinderGeometry(0.24, 0.27, 0.45, 10), 0x5a3c24);
   block.position.set(0.95, 0.225, 0.2);
@@ -198,10 +195,6 @@ export function makeSacks(rand, n = 4) {
       tie.rotation.x = Math.PI / 2;
       tie.position.set(x, 0.58, z);
       g.add(tie);
-      const cap = mesh(new THREE.SphereGeometry(0.11, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), 0xf4f6fa, false);
-      cap.scale.set(1, 0.35, 1);
-      cap.position.set(x, 0.55, z);
-      if (rand() < 0.6) g.add(cap);
     }
   }
   return g;
@@ -241,9 +234,6 @@ export function makeCart(rand) {
   sacks.position.set(0.15, 0.02, 0.15);
   sacks.scale.setScalar(0.85);
   bed.add(sacks);
-  const snow = mesh(new THREE.BoxGeometry(0.9, 0.04, 0.5), 0xf4f6fa, false);
-  snow.position.set(0, 0.33, 0.45);
-  bed.add(snow);
   // Hjulen
   for (const s of [1, -1]) {
     const wheel = new THREE.Group();
@@ -306,10 +296,6 @@ export function makeBench(rand) {
   bread.scale.set(1.3, 0.6, 0.9);
   bread.position.set(0.7, 0.53, -0.02);
   g.add(bread);
-  // Snö på ena änden av bänken
-  const snow = mesh(new THREE.BoxGeometry(0.5, 0.03, 0.34), 0xf4f6fa, false);
-  snow.position.set(-0.75, 0.51, 0);
-  if (rand() < 0.7) g.add(snow);
   return g;
 }
 
@@ -334,10 +320,6 @@ export function makeHay(rand) {
   bale(0, 0.21, 0, 0.1);
   bale(0.15, 0.21, 0.55, -0.15);
   bale(0.05, 0.63, 0.28, 0.3 + rand() * 0.2);
-  const snow = mesh(new THREE.BoxGeometry(0.85, 0.05, 0.45), 0xf4f6fa, false);
-  snow.position.set(0.05, 0.86, 0.28);
-  snow.rotation.y = 0.35;
-  g.add(snow);
   return g;
 }
 

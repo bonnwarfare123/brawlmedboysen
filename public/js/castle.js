@@ -6,8 +6,9 @@
 // marscherar ut genom när matchen börjar.
 
 import * as THREE from "three";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { ARENA_RX, ARENA_RZ } from "./shared.js";
-import { Crowd, makeRoyals } from "./crowd.js";
+import { Crowd, makeRoyals, makePatrol, makeVendor } from "./crowd.js";
 import {
   PALETTE, mat, mesh, box, ellipsePoint, seededRandom, makeBrazier, makePodium, makeQuintain, mergeStatic,
   makeCloud, makeStand, makeRoyalBox, makeBarrels, makeCrates, makeWeaponRack, makeFlag, waveFlag,
@@ -16,7 +17,7 @@ import {
 import { rakedSandTexture, sandGrainTexture, trampledTexture } from "./textures.js";
 import {
   tracksTexture, makeWoodpile, makeSacks, makeCart, makeBench, makeHay, makeGarlands, makeEmbers, makeWarmPool, makeSmoke,
-  makeColdHaze, makeFlurries,
+  makeFlurries,
 } from "./castle-extras.js";
 
 const STONE = 0xa8a29a;
@@ -133,8 +134,10 @@ function stoneTextures() {
     let x = -rand() * rh;
     while (x < size + rh) {
       const w = rh * (1.25 + rand() * 1.25);
-      const v = 150 + rand() * 70;
-      const warm = rand() * 14;
+      // Olika stenar: de flesta grå, några varmare (brunare), några kallare (blågrå), några mörka
+      const kind = rand();
+      const v = (kind < 0.12 ? 115 : 140) + rand() * (kind < 0.12 ? 40 : 80);
+      const warm = kind > 0.82 ? 14 + rand() * 18 : kind > 0.66 ? -10 - rand() * 8 : rand() * 10;
       const x0 = x + 4;
       const y0 = r * rh + 4;
       const ww = w - 8;
@@ -176,9 +179,43 @@ function stoneTextures() {
         c.fillStyle = `rgba(80,96,60,${0.18 + rand() * 0.15})`;
         c.fillRect(x0, y0 + hh * 0.6, ww * (0.3 + rand() * 0.6), hh * 0.4);
       }
-      if (rand() < 0.45) {
-        c.fillStyle = `rgba(245,248,252,${0.5 + rand() * 0.4})`;
-        c.fillRect(x0 + 2, y0, ww * (0.4 + rand() * 0.6), 3 + rand() * 3);
+      // Avslagna hörn och kanter (mörka hack), någon enstaka skadad sten, och sällan lite frost upptill
+      for (let k = 0; k < 2; k++) {
+        if (rand() < 0.35) {
+          const cx = rand() < 0.5 ? x0 + 3 : x0 + ww - 3;
+          const cy = rand() < 0.5 ? y0 + 3 : y0 + hh - 3;
+          c.fillStyle = "rgba(60,56,50,0.75)";
+          c.beginPath();
+          c.moveTo(cx, cy);
+          c.lineTo(cx + (cx < x0 + ww / 2 ? 1 : -1) * (6 + rand() * 12), cy);
+          c.lineTo(cx, cy + (cy < y0 + hh / 2 ? 1 : -1) * (5 + rand() * 9));
+          c.fill();
+        }
+      }
+      if (rand() < 0.05) {
+        // En sten med en bit som slagits loss: mörk, ojämn grop med ljus kant
+        const px = x0 + ww * (0.2 + rand() * 0.5);
+        const py = y0 + hh * (0.25 + rand() * 0.4);
+        c.fillStyle = "rgba(70,64,58,0.85)";
+        c.beginPath();
+        for (let k = 0; k < 7; k++) {
+          const a = (k / 7) * Math.PI * 2;
+          const rr = 8 + rand() * 12;
+          c.lineTo(px + Math.cos(a) * rr * 1.4, py + Math.sin(a) * rr * 0.8);
+        }
+        c.fill();
+        c.strokeStyle = "rgba(230,225,215,0.35)";
+        c.lineWidth = 1.5;
+        c.stroke();
+      }
+      if (rand() < 0.12) {
+        c.fillStyle = `rgba(236,240,246,${0.35 + rand() * 0.3})`;
+        c.fillRect(x0 + 2, y0, ww * (0.3 + rand() * 0.5), 2 + rand() * 2);
+      }
+      // ojämn fog: ibland urgröpt och mörkare, ibland ljusare kalkbruk
+      if (rand() < 0.3) {
+        c.fillStyle = rand() < 0.6 ? "rgba(40,36,32,0.5)" : "rgba(200,195,185,0.35)";
+        c.fillRect(x0 - 4, y0 + hh, ww + 8, 4);
       }
       // höjdkartan: stenen ljus (upphöjd), kanterna mjukt ner mot fogen
       const bv = 180 + rand() * 60;
@@ -223,8 +260,14 @@ const STONE_FRAG = `
   float fine = sNoise(q * 3.7 + 1.7);
   vec3 tint = mix(vec3(0.84, 0.86, 0.9), vec3(1.08, 1.02, 0.94), big);
   diffuseColor.rgb *= tint * (0.86 + mid * 0.2 + fine * 0.08);
-  float grime = 1.0 - smoothstep(0.0, 1.0 + mid * 1.1, w.y);
-  diffuseColor.rgb *= 1.0 - grime * 0.4;
+  float grime = 1.0 - smoothstep(0.0, 1.2 + mid * 1.3, w.y);
+  diffuseColor.rgb *= 1.0 - grime * 0.48;
+  // mossa och fukt i fläckar nära marken
+  float moss = smoothstep(0.62, 0.8, sNoise(q * 1.6 + 3.1)) * (1.0 - smoothstep(0.3, 1.6, w.y));
+  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.62, 0.72, 0.5), moss * 0.7);
+  // vädrade, ljusare och mörkare stråk (ålder)
+  float weather = sNoise(vec2((w.x + w.z) * 0.6, w.y * 0.12));
+  diffuseColor.rgb *= 0.9 + weather * 0.18;
   float streak = sNoise(vec2((w.x - w.z) * 2.4, w.y * 0.3));
   diffuseColor.rgb *= 1.0 - smoothstep(0.6, 0.95, streak) * 0.18 * smoothstep(0.8, 2.6, w.y);
   float up = smoothstep(0.45, 0.85, vStoneN.y);
@@ -290,20 +333,70 @@ function addIcicles(group, x, y, z, angle, width, rand, n = 4) {
     group.add(ice);
   }
 }
-// Fackla på väggen (järnhållare, eld och ett sken – inget riktigt ljus, det kostar för mycket)
+// Fackla på väggen. Inget riktigt ljus (det kostar för mycket per fackla): i stället en droppformad låga
+// som fladdrar, en liten gloria runt lågan, ett varmt sken som "faller" på stenen bakom och under
+// facklan, sot på muren ovanför och lite rök. Skenet på muren ritas samlat för alla facklor (se fackelSken).
 let torchGlow = null;
+let flameGeo = null;
+function torchFlameGeometry() {
+  if (flameGeo) return flameGeo;
+  // Droppform: bred nertill, spetsig upptill. Färgen går från gul kärna nertill till orange spets.
+  const pts = [];
+  for (let i = 0; i <= 8; i++) {
+    const t = i / 8;
+    const r = Math.sin(Math.min(1, t * 1.6) * Math.PI * 0.5) * (1 - t) ** 1.2 * 0.075;
+    pts.push(new THREE.Vector2(Math.max(0.001, r), t * 0.32));
+  }
+  const geo = new THREE.LatheGeometry(pts, 8);
+  const col = new Float32Array(geo.attributes.position.count * 3);
+  const low = new THREE.Color(0xffe6a0);
+  const high = new THREE.Color(0xff6a18);
+  const c = new THREE.Color();
+  for (let i = 0; i < geo.attributes.position.count; i++) {
+    c.copy(low).lerp(high, Math.min(1, geo.attributes.position.getY(i) / 0.26));
+    col.set([c.r, c.g, c.b], i * 3);
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  flameGeo = geo;
+  return geo;
+}
+const flameMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.92, blending: THREE.AdditiveBlending, depthWrite: false });
+const sootMat = (() => {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const x = c.getContext("2d");
+  const g = x.createRadialGradient(32, 40, 2, 32, 34, 32);
+  g.addColorStop(0, "rgba(0,0,0,0.6)");
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  x.fillStyle = g;
+  x.fillRect(0, 0, 64, 64);
+  return new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false, opacity: 0.55, polygonOffset: true, polygonOffsetFactor: -2 });
+})();
 function makeWallTorch() {
   const g = new THREE.Group();
   const iron = mat(0x2e2a28);
-  const arm = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.35), iron);
+  // Järnhållare: en platta mot muren, en arm ut och en korg runt facklan
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.22, 0.03), iron);
+  plate.position.set(0, 0, 0.015);
+  g.add(plate);
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.32), iron);
   arm.position.set(0, 0, 0.17);
   g.add(arm);
-  const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.03, 0.5, 6), mat(PALETTE.woodDark));
-  stick.position.set(0, 0.2, 0.33);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.012, 4, 10), iron);
+  ring.position.set(0, 0.05, 0.33);
+  ring.rotation.x = Math.PI / 2 - 0.3;
+  g.add(ring);
+  const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.026, 0.5, 6), mat(PALETTE.woodDark));
+  stick.position.set(0, 0.16, 0.36);
   stick.rotation.x = 0.3;
   g.add(stick);
-  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.24, 6), new THREE.MeshBasicMaterial({ color: 0xffb040 }));
-  flame.position.set(0, 0.52, 0.42);
+  // Facklans huvud: lindat, beckindränkt tyg (mörkt)
+  const head = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.042, 0.12, 7), mat(0x1e1814));
+  head.position.set(0, 0.42, 0.44);
+  head.rotation.x = 0.3;
+  g.add(head);
+  const flame = new THREE.Mesh(torchFlameGeometry(), flameMat);
+  flame.position.set(0, 0.47, 0.455);
   flame.userData.noMerge = true;
   g.add(flame);
   if (!torchGlow) {
@@ -311,24 +404,62 @@ function makeWallTorch() {
     c.width = c.height = 64;
     const x = c.getContext("2d");
     const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32);
-    gr.addColorStop(0, "rgba(255,190,110,0.9)");
-    gr.addColorStop(1, "rgba(255,150,60,0)");
+    gr.addColorStop(0, "rgba(255,170,80,0.55)");
+    gr.addColorStop(0.35, "rgba(255,130,50,0.18)");
+    gr.addColorStop(1, "rgba(255,110,40,0)");
     x.fillStyle = gr;
     x.fillRect(0, 0, 64, 64);
     torchGlow = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false });
   }
+  // En liten, svag gloria runt lågan (inte en stor lysande boll)
   const glow = new THREE.Sprite(torchGlow.clone());
-  glow.scale.setScalar(1.6);
-  glow.position.set(0, 0.5, 0.45);
+  glow.scale.setScalar(0.75);
+  glow.position.set(0, 0.6, 0.47);
   g.add(glow);
+  // Sot på muren ovanför facklan
+  const soot = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 1.1), sootMat);
+  soot.position.set(0, 1.0, 0.012);
+  g.add(soot);
   g.userData.flame = flame;
   g.userData.glow = glow;
   // Lite rök som stiger från facklan
-  const smoke = makeSmoke(1, 0x3a3634, 0.16);
-  smoke.group.position.set(0, 0.6, 0.42);
+  const smoke = makeSmoke(1, 0x3a3634, 0.14);
+  smoke.group.position.set(0, 0.7, 0.45);
   g.add(smoke.group);
   g.userData.smoke = smoke;
   return g;
+}
+
+// Det varma skenet från facklorna på muren: en platta per fackla, alla ihopslagna till en enda form
+// (ett ritanrop). Skenet fladdrar svagt i takt med lågorna.
+function torchSplash(torches) {
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const x = c.getContext("2d");
+  const gr = x.createRadialGradient(64, 58, 0, 64, 64, 64);
+  gr.addColorStop(0, "rgba(255,160,80,0.75)");
+  gr.addColorStop(0.3, "rgba(255,120,50,0.32)");
+  gr.addColorStop(0.7, "rgba(200,80,30,0.08)");
+  gr.addColorStop(1, "rgba(200,80,30,0)");
+  x.fillStyle = gr;
+  x.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const geos = [];
+  for (const t of torches) {
+    t.updateMatrixWorld(true);
+    const geo = new THREE.PlaneGeometry(2.6, 2.4);
+    geo.translate(0, 0.35, 0.02);
+    geo.applyMatrix4(t.matrixWorld);
+    geos.push(geo);
+  }
+  const m = new THREE.Mesh(mergeGeometries(geos), new THREE.MeshBasicMaterial({
+    map: tex, color: 0xffffff, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3,
+  }));
+  m.userData.noMerge = true;
+  m.userData.base = 0.7;
+  m.renderOrder = 3;
+  return m;
 }
 
 function snowCap(w, d, h = 0.08) {
@@ -650,6 +781,258 @@ function makeSnowPine(rand) {
   return g;
 }
 
+// Ett enkelt skjul av trä mot muren: stolpar, ett snett plankstak (med snö) och lite ved under
+function makeShed(rand) {
+  const g = new THREE.Group();
+  const W = 3.0;
+  const D = 1.7;
+  for (const x of [-W / 2, 0, W / 2]) {
+    const front = box(0.14, 2.1, 0.14, PALETTE.woodDark);
+    front.position.set(x, 1.05, 0);
+    g.add(front);
+    const back = box(0.14, 2.7, 0.14, PALETTE.woodDark);
+    back.position.set(x, 1.35, -D);
+    g.add(back);
+    const brace = box(0.08, 0.08, 0.9, PALETTE.wood);
+    brace.position.set(x, 1.8, -0.35);
+    brace.rotation.x = 0.6;
+    g.add(brace);
+  }
+  const roof = new THREE.Group();
+  roof.position.set(0, 2.45, -D / 2);
+  roof.rotation.x = -0.32;
+  g.add(roof);
+  for (let i = 0; i < 9; i++) {
+    const plank = box(W / 9 + 0.03, 0.06, D + 0.5, i % 2 ? PALETTE.wood : PALETTE.woodLight);
+    plank.position.set(-W / 2 + (i + 0.5) * (W / 9), (i % 3) * 0.006, 0);
+    roof.add(plank);
+  }
+  const snow = mesh(new THREE.BoxGeometry(W + 0.1, 0.07, D + 0.4), SNOW, false);
+  snow.position.y = 0.06;
+  roof.add(snow);
+  const beam = box(W + 0.2, 0.14, 0.14, PALETTE.woodDark);
+  beam.position.set(0, 2.1, 0);
+  g.add(beam);
+  // Ved och en tunna under taket
+  for (let r = 0; r < 3; r++) for (let i = 0; i < 6 - r; i++) {
+    const log = mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.8, 7), 0x4a3220);
+    log.rotation.z = Math.PI / 2;
+    log.position.set(-0.7 + (i - (5 - r) / 2) * 0.22, 0.1 + r * 0.18, -D + 0.45);
+    g.add(log);
+  }
+  const barrel = mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.7, 12), PALETTE.wood);
+  barrel.position.set(1.0, 0.35, -D + 0.5);
+  g.add(barrel);
+  return g;
+}
+
+// Resten av borgen runt arenan: en yttre ringmur med torn och ett porttorn, ett stort kärntorn,
+// en sal, ett kapell och hustak som sticker upp bakom ringmuren. Bara kuliss: enkla former,
+// som slås ihop med resten (få ritanrop). Rök stiger från några skorstenar.
+function makeOuterCastle(WX, WZ, rand) {
+  const g = new THREE.Group();
+  const OX = WX + 21; // långt ut: introts kamera sveper över gården innanför
+  const OZ = WZ + 21;
+  const far = 0xb2b6bc; // lite ljusare och blåare sten på håll (luftperspektiv)
+  const farDark = 0xa0a4aa;
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0x4e4a52, roughness: 0.9, flatShading: true });
+  const plaster = 0xd2c6ae;
+  const beam = 0x4a3424;
+  const smokes = [];
+  const pt = (t, rx, rz) => ellipsePoint(t, rx, rz);
+  // Yttre ringmur med tinnar (grövre än den inre)
+  const N = 56;
+  for (let i = 0; i < N; i++) {
+    const a = pt((i / N) * Math.PI * 2, OX, OZ);
+    const b = pt(((i + 1) / N) * Math.PI * 2, OX, OZ);
+    const t = ((i + 0.5) / N) * Math.PI * 2;
+    if (Math.abs(t - GATE_T) < 0.07) continue;
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    const angle = -Math.atan2(b.z - a.z, b.x - a.x);
+    const wall = stoneBox(len + 0.1, 8.5, 2.2, far);
+    wall.position.set((a.x + b.x) / 2, 4.25, (a.z + b.z) / 2);
+    wall.rotation.y = angle;
+    g.add(wall);
+    const merlon = stoneBox(len * 0.5, 0.8, 0.5, far);
+    const out = new THREE.Vector3(a.x + b.x, 0, a.z + b.z).normalize();
+    merlon.position.set((a.x + b.x) / 2 + out.x * 0.8, 8.9, (a.z + b.z) / 2 + out.z * 0.8);
+    merlon.rotation.y = angle;
+    g.add(merlon);
+    const sc = snowCap(len, 2.0, 0.08);
+    sc.position.set((a.x + b.x) / 2, 8.54, (a.z + b.z) / 2);
+    sc.rotation.y = angle;
+    g.add(sc);
+  }
+  // Torn på den yttre muren (enkla: stam, tinnkrans och snötäckt kon)
+  const towerAt = (t, r, h) => {
+    const p = pt(t, OX + 0.4, OZ + 0.4);
+    const body = stoneCylinder(r, r * 1.05, h, 14, farDark);
+    body.position.set(p.x, h / 2, p.z);
+    g.add(body);
+    const crown = stoneCylinder(r * 1.12, r * 1.05, 0.7, 14, far);
+    crown.position.set(p.x, h + 0.2, p.z);
+    g.add(crown);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(r * 1.2, r * 1.7, 14), roofMat);
+    roof.position.set(p.x, h + 0.55 + r * 0.85, p.z);
+    g.add(roof);
+    const snow = mesh(new THREE.ConeGeometry(r * 1.2, r * 1.7, 14), SNOW, false);
+    snow.position.set(p.x, h + 0.55 + r * 0.85 + 0.3, p.z); // ligger ovanpå: en mörk takfot syns nertill
+    g.add(snow);
+  };
+  for (let i = 0; i < 10; i++) {
+    const t = (i / 10) * Math.PI * 2 + 0.31;
+    if (Math.abs(((t - GATE_T + Math.PI * 3) % (Math.PI * 2)) - Math.PI) < 0.3) continue;
+    towerAt(t, 2.1, 13 + (i % 3));
+  }
+  // Det yttre porttornet (två torn och ett valv)
+  for (const dt of [-0.09, 0.09]) towerAt(GATE_T + dt, 2.4, 15);
+  {
+    const p = pt(GATE_T, OX, OZ);
+    const gh = stoneBox(7, 11, 3, farDark);
+    gh.position.set(p.x, 5.5, p.z);
+    g.add(gh);
+    const arch = box(3, 4, 3.2, 0x1a1816);
+    arch.position.set(p.x, 2, p.z);
+    g.add(arch);
+  }
+  // Kärntornet: stort och fyrkantigt med hörntorn, bakom kungens loge
+  {
+    const p = pt(0, WX + 14, WZ + 14);
+    const K = new THREE.Group();
+    K.position.copy(p);
+    K.lookAt(0, 0, 0);
+    g.add(K);
+    const body = stoneBox(10, 18, 9, far);
+    body.position.y = 9;
+    K.add(body);
+    const plinth = stoneBox(10.6, 1.4, 9.6, farDark);
+    plinth.position.y = 0.7;
+    K.add(plinth);
+    for (const [x, z] of [[-5, -4.5], [5, -4.5], [-5, 4.5], [5, 4.5]]) {
+      const tw = stoneCylinder(1.4, 1.5, 21, 12, farDark);
+      tw.position.set(x, 10.5, z);
+      K.add(tw);
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(1.75, 3.2, 12), roofMat);
+      roof.position.set(x, 22.6, z);
+      K.add(roof);
+      const snow = mesh(new THREE.ConeGeometry(1.75, 3.2, 12), SNOW, false);
+      snow.position.set(x, 22.9, z);
+      K.add(snow);
+    }
+    for (let i = 0; i < 7; i++) {
+      for (const z of [-4.75, 4.75]) {
+        const m = stoneBox(0.8, 0.9, 0.5, far);
+        m.position.set(-3.6 + i * 1.2, 18.45, z);
+        K.add(m);
+      }
+    }
+    // Fönster (mörka springor) i tre våningar
+    for (let fl = 0; fl < 3; fl++) for (let i = 0; i < 3; i++) {
+      const w = box(0.5, 1.2, 0.2, 0x1a1816);
+      w.position.set(-2.5 + i * 2.5, 6 + fl * 4, 4.55);
+      K.add(w);
+    }
+    const flag = makeFlag(PALETTE.red);
+    flag.scale.setScalar(2.4);
+    flag.position.set(5, 24.2, 4.5);
+    K.add(flag);
+    const flag2 = makeFlag(PALETTE.blue);
+    flag2.scale.setScalar(2.4);
+    flag2.position.set(-5, 24.2, 4.5);
+    K.add(flag2);
+  }
+  // Byggnader med branta, snötäckta tak som sticker upp bakom ringmuren
+  const building = (t, dist, w, d, wallH, roofH, stone, chimney = false) => {
+    const p = pt(t, WX + dist, WZ + dist);
+    const B = new THREE.Group();
+    B.position.copy(p);
+    B.lookAt(0, 0, 0);
+    B.rotateY(Math.PI / 2); // långsidan mot arenan
+    g.add(B);
+    if (stone) {
+      const body = stoneBox(w, wallH, d, farDark);
+      body.position.y = wallH / 2;
+      B.add(body);
+    } else {
+      const body = box(w, wallH, d, plaster);
+      body.position.y = wallH / 2;
+      B.add(body);
+      for (const x of [-w / 2, -w / 6, w / 6, w / 2]) {
+        const post = box(0.18, wallH, d + 0.04, beam);
+        post.position.set(x, wallH / 2, 0);
+        B.add(post);
+      }
+      const rail = box(w + 0.04, 0.16, d + 0.04, beam);
+      rail.position.y = wallH * 0.55;
+      B.add(rail);
+    }
+    // Sadeltak: ett prisma av två lutande plattor, med snö ovanpå
+    const slope = Math.hypot(d / 2 + 0.3, roofH);
+    const ang = Math.atan2(roofH, d / 2 + 0.3);
+    for (const s of [1, -1]) {
+      const r = new THREE.Mesh(new THREE.BoxGeometry(w + 0.6, 0.22, slope), roofMat);
+      r.position.set(0, wallH + roofH / 2, (s * (d / 2 + 0.3)) / 2);
+      r.rotation.x = s * ang;
+      B.add(r);
+      const sn = mesh(new THREE.BoxGeometry(w + 0.5, 0.1, slope * 0.92), SNOW, false);
+      sn.position.copy(r.position).add(new THREE.Vector3(0, 0.14, 0));
+      sn.rotation.copy(r.rotation);
+      B.add(sn);
+    }
+    // Gavlarna
+    const gable = new THREE.Shape();
+    gable.moveTo(-d / 2, 0);
+    gable.lineTo(d / 2, 0);
+    gable.lineTo(0, roofH);
+    gable.lineTo(-d / 2, 0);
+    for (const s of [1, -1]) {
+      const gm = stone ? stoneMat(farDark) : mat(plaster);
+      const gg = new THREE.Mesh(new THREE.ShapeGeometry(gable), gm);
+      gg.position.set((s * w) / 2, wallH, 0);
+      gg.rotation.y = s * Math.PI / 2;
+      B.add(gg);
+    }
+    if (chimney) {
+      const ch = stoneBox(0.7, 2.2, 0.7, farDark);
+      ch.position.set(w * 0.3, wallH + roofH * 0.8, 0.6);
+      B.add(ch);
+      const sm = makeSmoke(4, 0x6a6668, 0.22);
+      sm.group.position.set(w * 0.3, wallH + roofH * 0.8 + 1.1, 0.6);
+      sm.group.scale.setScalar(3.2);
+      B.add(sm.group);
+      smokes.push(sm);
+    }
+    return B;
+  };
+  building(0.78, 9, 13, 6.5, 6.5, 4.5, true, true);   // stora salen
+  building(-0.8, 9.5, 11, 6, 6, 4.2, true);            // kornbod och förråd
+  // Kapellet med ett litet klocktorn
+  {
+    const B = building(1.75, 9.5, 9, 5.5, 6.5, 4, true);
+    const tw = stoneBox(2, 4, 2, far);
+    tw.position.set(-3.2, 12.5, 0);
+    B.add(tw);
+    const spire = new THREE.Mesh(new THREE.ConeGeometry(1.5, 4.5, 4), roofMat);
+    spire.position.set(-3.2, 16.7, 0);
+    spire.rotation.y = Math.PI / 4;
+    B.add(spire);
+    const sn = mesh(new THREE.ConeGeometry(1.5, 4.5, 4), SNOW, false);
+    sn.position.set(-3.2, 17.0, 0);
+    sn.rotation.y = Math.PI / 4;
+    B.add(sn);
+  }
+  // Små korsvirkeshus i borgens yttre gård (bara taken syns över muren)
+  [[-1.7, 8], [2.35, 8], [-2.4, 8.5], [1.25, 11], [-1.25, 11.5], [2.75, 11], [-2.8, 11.5], [0.35, 12], [-0.35, 12.5]].forEach(([t, dist], i) => {
+    building(t, dist, 4.5 + (i % 3), 3.6, 4.2 + (i % 2) * 0.8, 2.8 + (i % 3) * 0.4, false, i % 3 === 0);
+  });
+  return {
+    group: g,
+    update(time) {
+      for (const [i, sm] of smokes.entries()) sm.update(time + i * 3, 0.12, 1.4, 1.3);
+    },
+  };
+}
+
 export function buildCastleArena() {
   const group = new THREE.Group();
   const colliders = [];
@@ -843,6 +1226,7 @@ export function buildCastleArena() {
   // ---------- Ringmuren med tinnar och en gångbana där publiken står ----------
   const WALL_H = 5.2;
   const torches = [];
+  const swayBanners = [];
   const WSEGS = 72;
   const wpts = [];
   for (let i = 0; i < WSEGS; i++) wpts.push(ellipsePoint((i / WSEGS) * Math.PI * 2, WX, WZ));
@@ -925,6 +1309,13 @@ export function buildCastleArena() {
       banner.position.set(mx - out.x * 0.82, WALL_H - 0.25, mz - out.z * 0.82);
       banner.lookAt(center.x, WALL_H - 0.25, center.z);
       group.add(banner);
+      if (i % 9 === 4) {
+        // De stora fanorna gungar lite i vinden
+        banner.userData.noMerge = true;
+        banner.userData.base = banner.quaternion.clone();
+        banner.userData.phase = i * 0.77;
+        swayBanners.push(banner);
+      }
     }
     // Små dörrar i muren
     if (i % 18 === 9) {
@@ -938,6 +1329,14 @@ export function buildCastleArena() {
       group.add(archTop);
     }
   }
+
+  // Facklornas varma sken på muren (alla i en form)
+  const splash = torchSplash(torches);
+  group.add(splash);
+
+  // ---------- Resten av borgen (kuliss bakom ringmuren, inte spelbar) ----------
+  const outer = makeOuterCastle(WX, WZ, rand);
+  group.add(outer.group);
 
   // ---------- Porttornet ----------
   const gate = makeGatehouse();
@@ -985,8 +1384,10 @@ export function buildCastleArena() {
     pool.position.set(p.x, 0.03, p.z);
     group.add(pool);
     fire.pool = pool;
-    fire.light.color.set(0xff7a30);
-    fire.light.distance = 10;
+    fire.light.color.set(0xff6a20);
+    fire.light.distance = 6;
+    fire.light.decay = 2;
+    fire.boost = 0.5;
   });
   const embers = makeEmbers(fires.map((f) => new THREE.Vector3(f.group.position.x, 1.35, f.group.position.z)));
   group.add(embers.points);
@@ -1015,12 +1416,22 @@ export function buildCastleArena() {
     prop.position.copy(p);
     prop.lookAt(center);
     group.add(prop);
-    // Snö ovanpå
-    const s = mesh(new THREE.CylinderGeometry(0.75, 0.85, 0.08, 10), SNOW, false);
-    s.position.set(p.x, i % 3 === 2 ? 1.45 : 0.86, p.z);
-    s.scale.set(1, 1, 0.7);
-    if (i % 3 !== 2) group.add(s);
   });
+  // Tunnor, lådor och ett vapenställ vid porten (där riddarna kommer in), och ett skjul mot muren
+  [[GATE_T - 0.62, makeBarrels], [GATE_T + 0.62, makeCrates], [GATE_T + 0.5, makeWeaponRack]].forEach(([t, make], i) => {
+    const prop = make();
+    const p = ellipsePoint(t, FX + 2.3 + (i === 2 ? 0.9 : 0), FZ + 2.3 + (i === 2 ? 0.9 : 0));
+    prop.position.copy(p);
+    prop.lookAt(center);
+    group.add(prop);
+  });
+  {
+    const shed = makeShed(rand);
+    const p = ellipsePoint(2.0, WX - 1.65, WZ - 1.65);
+    shed.position.copy(p);
+    shed.lookAt(center);
+    group.add(shed);
+  }
   // Ställningar med stegar längs muren, med publik på
   [1.3, -1.3, 2.75, -2.75].forEach((t) => {
     const sc = makeScaffold(rand);
@@ -1103,15 +1514,13 @@ export function buildCastleArena() {
   }
   for (let i = 0; i < 110; i++) {
     const t = rand() * Math.PI * 2;
-    const r = 32 + rand() * 50;
+    const r = 47 + rand() * 38; // utanför den yttre muren
     const tree = makeSnowPine(rand);
     tree.position.set(Math.sin(t) * r * 1.1, 0, Math.cos(t) * r);
     group.add(tree);
   }
 
-  // Kall dis vid murarnas fot och lätta snöflingor i luften
-  const haze = makeColdHaze(WX - 1.0, WZ - 1.0, 2.6);
-  group.add(haze);
+  // Lätta snöflingor i luften (diset vid murarnas fot är borttaget: det gjorde murarna vita)
   const flurries = makeFlurries(WX, WZ, 320);
   group.add(flurries.points);
 
@@ -1120,6 +1529,23 @@ export function buildCastleArena() {
 
   const crowd = new Crowd(crowdSpots, 21, { winter: true });
   group.add(crowd.group);
+  // Vakter som går fram och tillbaka på muren, och en tjänare som bär öl längs gården
+  const walkers = [];
+  const pingPong = (a0, a1, rx, rz, y) => (t, out) => {
+    const k = t < 0.5 ? t * 2 : 2 - t * 2;
+    const a = a0 + (a1 - a0) * k;
+    return out.set(Math.sin(a) * rx, y, Math.cos(a) * rz);
+  };
+  [[0.95, 2.0, PALETTE.blue, 0.1], [-2.0, -0.95, PALETTE.red, 0.6], [-0.62, 0.62, PALETTE.blue, 0.35]].forEach(([a0, a1, color, start]) => {
+    const w = makePatrol(pingPong(a0, a1, WX - 0.3, WZ - 0.3, WALL_H + 0.06), start, 0.012, color);
+    group.add(w.group);
+    walkers.push(w);
+  });
+  {
+    const v = makeVendor("ale", pingPong(-0.3, 0.3, FX + 1.7, FZ + 1.7, 0), 0.2, 0.02);
+    group.add(v.group);
+    walkers.push(v);
+  }
   const podium = makePodium();
   podium.group.rotation.y = Math.PI; // samma håll som på tornerplatsen (kameran vid prisceremonin står där)
   group.add(podium.group);
@@ -1141,9 +1567,10 @@ export function buildCastleArena() {
     quintain.update(dt);
     for (const fire of fires) {
       fire.update(dt, time);
-      if (fire.pool) fire.pool.material.opacity = (0.3 + Math.sin(time * 11 + fire.group.position.x) * 0.03 + (fire.light.intensity / fire.boost - 4) * 0.025) * Math.min(1.6, fire.boost);
+      if (fire.pool) fire.pool.material.opacity = (0.3 + Math.sin(time * 11 + fire.group.position.x) * 0.03 + (fire.light.intensity / fire.boost - 4) * 0.025) * (fire.boost > 0.8 ? 1.4 : 1);
     }
     embers.update(dt, time);
+    splash.material.opacity = splash.userData.base * (0.88 + Math.sin(time * 9.3) * 0.06 + Math.sin(time * 21.7) * 0.05);
     if (flurries.points.visible) flurries.update(dt, time);
     // Facklorna fladdrar och ryker
     for (const torch of torches) {
@@ -1152,11 +1579,18 @@ export function buildCastleArena() {
       const flame = torch.userData.flame;
       flame.scale.set(1 - fl * 0.08, 1 + fl * 0.22, 1 - fl * 0.08);
       flame.rotation.z = Math.sin(time * 3 + s) * 0.12;
-      if (torch.userData.glow) torch.userData.glow.material.opacity = 0.85 + fl * 0.15;
+      if (torch.userData.glow) torch.userData.glow.material.opacity = 0.8 + fl * 0.2;
       torch.userData.smoke?.update(time + s, 0.32, 1.6, 0.9);
     }
     forge.light.intensity = 2.2 + Math.sin(time * 9) * 0.3 + Math.sin(time * 23) * 0.2;
     for (const flag of flags) waveFlag(flag, time);
+    for (const w of walkers) w.update(dt);
+    outer.update(time);
+    for (const b of swayBanners) {
+      b.quaternion.copy(b.userData.base);
+      b.rotateX(Math.sin(time * 1.1 + b.userData.phase) * 0.06);
+      b.rotateZ(Math.sin(time * 0.7 + b.userData.phase * 1.3) * 0.03);
+    }
     updateClouds(dt);
     // Fällgallret går upp långsamt (skramlar) och slår igen snabbt
     const speed = gateWant > gateOpen ? 0.45 : 2.5;
@@ -1178,12 +1612,12 @@ export function buildCastleArena() {
     group, colliders, update, cheer, quintain, podium,
     royalReact: (up) => royals.react(up),
     heraldBlow: () => royals.blow(),
+    kingThrow: (onRelease) => royals.throwBow(onRelease),
     setQuality: (low) => {
       fires.forEach((f) => (f.light.visible = !low));
       forge.light.visible = !low;
       embers.points.visible = !low;
       flurries.points.visible = !low;
-      haze.visible = !low;
     },
     // Snöfall: lite mer snö på marken (stridsytan blir ljusare)
     setWet(wet) {
@@ -1208,9 +1642,10 @@ export function buildCastleArena() {
       const cm = getCloudMaterial();
       if (cm) cm.color.set(evening ? 0xf0b090 : 0xffffff);
       for (const f of fires) {
-        f.boost = evening ? 2.6 : 1;
-        f.light.distance = evening ? 15 : 8;
+        f.boost = evening ? 1.1 : 0.5;
+        f.light.distance = evening ? 8.5 : 6;
       }
+      splash.userData.base = evening ? 1 : 0.7;
     },
     openGate() {
       gateWant = 1;

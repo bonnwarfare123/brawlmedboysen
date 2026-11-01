@@ -22,7 +22,7 @@
 
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { COMBAT, JOINT_SEGMENT, LEG_JOINTS, weaponSpec, FISTS } from "./shared.js";
+import { COMBAT, JOINT_SEGMENT, LEG_JOINTS, weaponSpec, FISTS, CROSSBOW } from "./shared.js";
 import { Ragdoll } from "./ragdoll.js";
 import { FootPlanner, solveLeg, solveArm, gaitStride } from "./ik.js";
 import { Cloth, Chain } from "./cloth.js";
@@ -414,6 +414,14 @@ MOVES.shortspear = MOVES.spear;
 MOVES.glaive = MOVES.halberd;
 MOVES.poleaxe = MOVES.daneaxe;
 MOVES.goedendag = { q: MOVES.maul.q, h: MOVES.maul.h, t: MOVES.spear.t };
+// Kungens armborst: hålls mot axeln och siktas framåt. "Slaget" är avfyrningen: en kort rekyl.
+const AIM_XBOW = [-0.78, 0.36, -0.98, 0.04, 0.05];
+const XBOW_RECOIL = {
+  arm: [at(0, AIM_XBOW), [0.05, -1.08, 0.36, -1.25, 0.04, -0.35], [0.22, -0.9, 0.36, -1.08, 0.04, -0.08], at(0.55, AIM_XBOW)],
+  body: [[0, ...BODY0], [0.05, -0.14, -0.1, 0, 0], [0.25, -0.04, -0.03, 0, 0], [0.55, ...BODY0]],
+};
+MOVES.crossbow = { q: [XBOW_RECOIL], h: XBOW_RECOIL, t: XBOW_RECOIL };
+const XBOW_ROT = Math.PI; // armborstet ligger längs underarmen och pekar framåt
 // Kasta vapnet: upp bakom axeln, sedan släpps det vid tiden 0,22 (COMBAT.throw.windup)
 const THROW_MOVE = {
   arm: [at(0, S), [0.14, -2.9, -0.35, -1.6, -0.55, -0.4], [0.22, -1.5, 0.1, -0.2, 0.55, 0.3], [0.36, -0.9, 0.35, -0.2, 0.6, 0.2], at(0.6, S)],
@@ -796,7 +804,7 @@ export class Knight {
     // Vapen och sköld
     const weapon = this.buildWeapon(look.w, m, gilded);
     weapon.position.set(0, -0.069, 0.01);
-    weapon.rotation.x = 2.0;
+    weapon.rotation.x = look.w === CROSSBOW ? XBOW_ROT : 2.0;
     weapon.userData.equipment = true; // siktet ska inte räkna vapnet som kroppsdel
     this.seg.handR.add(weapon);
     this.weapon = weapon;
@@ -1831,6 +1839,7 @@ export class Knight {
       g.userData.kind = kind;
       return g;
     }
+    if (kind === CROSSBOW) return this.buildCrossbow(g, add, m);
     if (kind === 7) {
       // Spjut: långt askskaft, lövformat blad med mittås, holk, tvärstång och en doppsko nertill
       add(new THREE.CylinderGeometry(0.017, 0.02, 2.0, 8), m.wood, [0, 0.45, 0]);
@@ -2319,6 +2328,59 @@ export class Knight {
   }
 
   // Parerstång: böjd lite nedåt och smalare ut mot ändarna, med knoppar i ändarna
+  // Kungens armborst (1300-tal): trästock med kolv, stålbåge surrad med rep, sträng spänd bakåt till
+  // nöten, en laddad pil (bult) i skåran, långt avtryckarjärn under, stigbygel framtill och mässingsbeslag.
+  // Greppet (höger hand) vid avtryckaren i origo, pilen pekar längs +Y, ovansidan är -Z.
+  buildCrossbow(g, add, m) {
+    const brass = m.brass;
+    const iron = m.iron;
+    // Stocken: smal framtill, kolv baktill
+    add(new THREE.BoxGeometry(0.05, 0.62, 0.058), m.wood, [0, 0.13, 0]);
+    add(new THREE.BoxGeometry(0.056, 0.22, 0.082), m.wood, [0, -0.25, 0.006], [1, 1, 1], [-0.12, 0, 0]);
+    add(new THREE.BoxGeometry(0.062, 0.03, 0.09), m.leatherDark, [0, -0.36, 0.01], [1, 1, 1], [-0.12, 0, 0]); // kolvens ände
+    add(new THREE.BoxGeometry(0.016, 0.5, 0.008), m.leatherDark, [0, 0.17, -0.031]); // skåran för pilen
+    // Bågen i stål, surrad med rep vid stocken
+    const R = 0.34;
+    const arc = 1.8;
+    const bow = new THREE.TorusGeometry(R, 0.013, 6, 24, arc);
+    bow.rotateZ(Math.PI / 2 - arc / 2);
+    add(bow, m.steel, [0, 0.43 - R, 0], [1, 1, 1.6]);
+    for (let i = 0; i < 4; i++) add(new THREE.TorusGeometry(0.035, 0.007, 4, 8), m.rope, [0, 0.425, 0], [1, 1, 1], [0, Math.PI / 2, 0.5 * (i - 1.5)]);
+    // Strängen: från bågens ändar bakåt till nöten (spänd = laddad)
+    const tipX = R * Math.sin(arc / 2);
+    const tipY = 0.43 - R + R * Math.cos(arc / 2);
+    const nutY = 0.06;
+    for (const s of [1, -1]) {
+      const dx = tipX * s;
+      const dy = nutY - tipY;
+      const len = Math.hypot(dx, dy);
+      add(new THREE.CylinderGeometry(0.0035, 0.0035, len, 4), m.rope, [dx / 2, (tipY + nutY) / 2, -0.012], [1, 1, 1], [0, 0, Math.atan2(-dx, -dy)]);
+      add(new THREE.SphereGeometry(0.01, 5, 4), m.steelDark, [dx, tipY, 0]);
+    }
+    add(new THREE.CylinderGeometry(0.016, 0.016, 0.03, 8), m.white, [0, nutY, -0.026], [1, 1, 1], [0, 0, Math.PI / 2]); // nöten (av ben)
+    // Stigbygel framtill (att sätta foten i när man spänner)
+    add(new THREE.TorusGeometry(0.05, 0.008, 4, 12), iron, [0, 0.5, 0.0]);
+    // Avtryckarjärnet under stocken och beslag
+    add(new THREE.BoxGeometry(0.012, 0.24, 0.012), iron, [0, -0.08, 0.05], [1, 1, 1], [0.12, 0, 0]);
+    for (const y of [-0.13, 0.03, 0.3]) {
+      add(new THREE.BoxGeometry(0.058, 0.014, 0.064), brass, [0, y, 0]);
+      for (const sx of [1, -1]) add(new THREE.SphereGeometry(0.0055, 4, 3), brass, [0.03 * sx, y + 0.03, 0]);
+    }
+    // Den laddade pilen (egen grupp, så den kan döljas när den skjutits)
+    const bolt = new THREE.Group();
+    bolt.add(this.shape(new THREE.CylinderGeometry(0.0075, 0.0075, 0.36, 6), m.wood, [0, 0.24, -0.04]));
+    bolt.add(this.shape(new THREE.ConeGeometry(0.014, 0.05, 4), iron, [0, 0.445, -0.04]));
+    for (const a of [0, Math.PI / 2]) bolt.add(this.shape(new THREE.BoxGeometry(0.035, 0.06, 0.002), m.white, [0, 0.1, -0.04], [1, 1, 1], [0, a, 0]));
+    g.add(bolt);
+    g.userData.bolt = bolt;
+    g.userData.grip2 = [0, 0.24, 0.02];
+    g.userData.gripForward = true;
+    g.userData.trail = { tip: [0, 0.45, 0], base: [0, 0.2, 0] };
+    g.userData.blood = { w: 0.05, len: 0.3, y: 0.15 };
+    g.userData.kind = CROSSBOW;
+    return g;
+  }
+
   addGuard(add, mat, width, y, r, droop = 0.012) {
     const w = width / 2;
     const curve = new THREE.CatmullRomCurve3([
@@ -3025,7 +3087,7 @@ export class Knight {
     this.twoHanded = !!spec.twoHanded;
     const weapon = this.buildWeapon(kind, this.m, this.gilded);
     weapon.position.set(0, -0.06, 0.01);
-    weapon.rotation.x = 2.0;
+    weapon.rotation.x = kind === CROSSBOW ? XBOW_ROT : 2.0;
     weapon.userData.equipment = true;
     this.mergeChildren(weapon);
     this.seg.handR.add(weapon);
@@ -3950,6 +4012,10 @@ export class Knight {
     const dragging = this.weaponKey === "zweihander" && !this.attack && !this.charging && this.parryT < 0 && !this.emote && !this.victory;
     this.dragAmount = (this.dragAmount ?? 0) + (((dragging ? moving : 0)) - (this.dragAmount ?? 0)) * Math.min(1, dt * 5);
     if (this.dragAmount > 0.01) pose = pose.map((v, i) => lerp(v, DRAG_R[i], this.dragAmount));
+    if (this.weaponKey === "crossbow") {
+      // Armborstet hålls uppe mot axeln och siktar framåt (lite gung när man går)
+      pose = AIM_XBOW.map((v, i) => v + (i === 0 ? swing * 0.08 * dirFwd : 0));
+    }
     let armK = k;
     let lunge = 0;     // extra lutning framåt från slaget
     let attackBend = 0; // kroppen lutar åt sidan i breda svep
@@ -3984,7 +4050,7 @@ export class Knight {
       }
     }
     // Tvåhandsvapen hålls en bit längre ut från kroppen (så armarna får plats framför bröstplåten)
-    if (this.twoHanded && !this.attack && this.parryT < 0 && this.dragAmount < 0.5) {
+    if (this.twoHanded && !this.attack && this.parryT < 0 && this.dragAmount < 0.5 && this.weaponKey !== "crossbow") {
       pose = [pose[0] - 0.12, pose[1] + 0.32, Math.min(-0.45, pose[2] + 0.15), pose[3], pose[4]];
     }
     set("upperArmR", pose[0], 0, pose[1], armK);
@@ -4398,7 +4464,7 @@ export class Knight {
     const reach = this.armLen[0] + this.armLen[1] - 0.005;
     // Handen kan glida längs skaftet: närmare höger hand (når lättare) eller längre bort (armen går fri från kroppen)
     for (const slide of [0, 0.08, 0.16, -0.1, -0.2]) {
-      if (grip[1] + slide > -0.13) continue;
+      if (!this.weapon.userData.gripForward && grip[1] + slide > -0.13) continue; // armborstet: vänster hand framför höger
       this.group.updateMatrixWorld(true);
       _v.set(grip[0], grip[1] + slide, grip[2]).applyMatrix4(this.weapon.matrixWorld);
       _inv.copy(torso.matrixWorld).invert();
@@ -4421,6 +4487,7 @@ export class Knight {
       }
       if (best && best.pen === 0 && best.miss === 0) break;
     }
+    if (!best) return;
     upper.quaternion.copy(best.q);
     fore.rotation.set(best.elbow, 0, 0);
   }

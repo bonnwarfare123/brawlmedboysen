@@ -5,7 +5,7 @@ import { CONFIG } from "./config.js";
 import {
   COLORS, ARENA_RX, ARENA_RZ, ROOM_CODE_RE, VERSION, COMBAT, MATCH, ARMORS, HELMETS, SHIELDS, WEAPONS, CAPES, MODE_NAMES, TEAMS,
   attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, TIME_NAMES, MAX_BOTS, WEATHERS, AWARDS,
-  MAPS, MAP_NAMES, INTRO_SECONDS,
+  MAPS, MAP_NAMES, INTRO_SECONDS, CROSSBOW, KING_BOW, weaponName,
 } from "./shared.js";
 import { buildArena, makeSky } from "./arena.js";
 import { buildCastleArena } from "./castle.js";
@@ -1276,6 +1276,71 @@ const net = new Net({
     sound.roll(other.knight.group.position);
   },
 
+  // Kungen reser sig och kastar in sitt armborst på planen
+  kingbow(msg) {
+    eventBanner("KUNGEN KASTAR IN ETT ARMBORST!", "”HAHA! LÅT OSS GÖRA DET INTRESSANT!”", 3800);
+    sound.laugh(null, 0.1);
+    sound.crowd(1);
+    arena.cheer(1.2);
+    const windup = 0.88;
+    const fly = Math.max(0.6, msg.flight - windup);
+    let done = false;
+    const launch = (from) => {
+      if (done) return;
+      done = true;
+      spawnItem(msg.item, null, from, CROSSBOW, { fly, arc: 4.5, king: true });
+    };
+    if (arena.kingThrow) arena.kingThrow(launch);
+    // Om kungen inte syns (eller inte hinner): kastet kommer ändå från logen
+    setTimeout(() => launch(new THREE.Vector3(0, 4, ARENA_RZ + 3)), (windup + 0.25) * 1000);
+  },
+
+  // Någon avfyrade kungens armborst: pilen flyger, armborstet är förbrukat
+  bolt(msg) {
+    const p = playerById(msg.id);
+    spawnBolt(msg);
+    arena.cheer(0.4);
+    if (!p) return;
+    const knight = p.knight;
+    if (p !== me) {
+      knight.playAttack("q");
+      if (knight.weapon?.userData.bolt) knight.weapon.userData.bolt.visible = false;
+      sound.crossbow(positionOf(p));
+    }
+    p.cw = msg.w;
+    // Efter rekylen försvinner det tomma armborstet och det gamla vapnet tas fram
+    setTimeout(() => {
+      if (knight.disposed || p.knight !== knight || p.dead) return;
+      knight.setWeapon(p.cw ?? FISTS);
+    }, 600);
+  },
+
+  // Var pilen tog: muren, en sköld eller en riddare (skadan kommer i "hit")
+  boltEnd(msg) {
+    const b = bolts.get(msg.by);
+    if (b) b.end = { how: msg.how, dist: Math.max(0, Math.hypot(msg.p[0] - b.from.x, msg.p[1] - b.from.z)) };
+    const shooter = playerById(msg.by);
+    const victim = msg.id ? playerById(msg.id) : null;
+    if (msg.how === "hit") {
+      sound.crowd(1);
+      arena.cheer(1.3);
+      if (shooter === me) callout(`Träff! ${KING_BOW.damage} i skada`, 1300);
+      if (victim === me) callout(`Träffad av kungens armborst! (−${KING_BOW.damage})`, 1500);
+    } else if (msg.how === "shield") {
+      arena.cheer(0.5);
+      if (victim === me) callout("Pilen fastnade i skölden!", 1200);
+      else if (shooter === me) callout("Pilen tog i skölden", 1100);
+    } else if (shooter === me) {
+      callout("Bom! Pilen tog i muren", 1100);
+    }
+  },
+
+  // Den som tappade kungens armborst tappar också sitt gamla vapen
+  stashDrop(msg) {
+    const p = playerById(msg.id);
+    spawnItem(msg.item, p?.knight, p ? positionOf(p) : null, msg.item.w);
+  },
+
   // Någon plockade upp ett vapen från marken (och lade kanske ner sitt gamla)
   pick(msg) {
     const player = playerById(msg.id);
@@ -1285,8 +1350,14 @@ const net = new Net({
     player.cw = msg.w;
     player.knight.setWeapon(msg.w);
     sound.pickup(positionOf(player));
+    if (msg.w === CROSSBOW) {
+      arena.cheer(0.6);
+      if (player !== me) eventBanner(`${player.name} har Kungens armborst!`, "Akta dig – ett skott, 45 i skada", 2600);
+    }
     if (player === me) {
-      callout("Du tog upp: " + (WEAPONS[msg.w] ?? "vapen"), 1200);
+      me.boltFired = false;
+      if (msg.w === CROSSBOW) callout("Kungens armborst! Vänsterklicka för att skjuta (ett skott)", 2200);
+      else callout("Du tog upp: " + (weaponName(msg.w) ?? "vapen"), 1200);
       me.nextQuick = me.nextHeavy = me.nextThrust = seconds() + 0.3;
     }
   },
@@ -2090,11 +2161,38 @@ function spawnItem(item, builder, from, kind = item.w, opts = {}) {
     fly: opts.fly ?? 0.5,
     thrown: !!opts.flight,
     flight: opts.flight ?? null,
+    arc: opts.arc ?? 0.6,
+    king: !!opts.king,
     flown: 0,
     warned: false,
   };
   group.position.copy(entry.from);
   items.set(item.id, entry);
+  if (entry.king) {
+    // Kungens armborst: landar en halvmeter före och glider sista biten
+    const a = Math.random() * Math.PI * 2;
+    entry.slideV = [Math.sin(a) * 0.5, Math.cos(a) * 0.5];
+  }
+}
+
+// En gyllene ring på marken där kungens armborst ligger, och en ljuspelare en stund efter landningen
+function addKingMarker(item) {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.5, 0.66, 40),
+    new THREE.MeshBasicMaterial({ color: 0xffc94a, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.03 - item.lift;
+  ring.renderOrder = 2;
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.12, 0.45, 5, 16, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xffd070, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+  );
+  beam.position.y = 2.5 - item.lift;
+  item.group.add(ring, beam);
+  item.marker = ring;
+  item.beam = beam;
+  item.beamT = 4;
 }
 
 function getArmory() {
@@ -2111,6 +2209,7 @@ function removeItem(id) {
 
 function clearItems() {
   pendingThrowEnds.clear();
+  clearBolts();
   for (const id of [...items.keys()]) removeItem(id);
 }
 
@@ -2121,8 +2220,31 @@ function throwHeight(f) {
 }
 
 function updateItems(dt) {
+  const now = seconds();
   for (const item of items.values()) {
     const g = item.group;
+    if (item.marker) {
+      const s = 1 + Math.sin(now * 4) * 0.1;
+      item.marker.scale.set(s, s, 1);
+      item.marker.material.opacity = 0.55 + Math.sin(now * 4) * 0.15;
+      if (item.beam) {
+        item.beamT -= dt;
+        item.beam.material.opacity = 0.22 * Math.min(1, Math.max(0, item.beamT / 1.5));
+        if (item.beamT <= 0) {
+          item.beam.removeFromParent();
+          item.beam = null;
+        }
+      }
+    }
+    // Kungens armborst glider och studsar lite efter landningen
+    if (item.sliding !== undefined && item.sliding < 0.45) {
+      item.sliding += dt;
+      const k = Math.min(1, item.sliding / 0.45);
+      const e = 1 - (1 - k) ** 2;
+      g.position.set(item.p[0] - item.slideV[0] * (1 - e), item.lift + Math.sin(k * Math.PI) * 0.12 * (1 - k * 0.5), item.p[2] - item.slideV[1] * (1 - e));
+      g.children[0].rotation.z = (1 - e) * 0.6;
+      continue;
+    }
     if (item.flight) {
       const F = item.flight;
       item.flown = Math.min(F.range, item.flown + F.speed * dt);
@@ -2165,12 +2287,23 @@ function updateItems(dt) {
       );
       g.children[0].rotation.x += dt * (item.bounced ? 16 : 6) * (1 - f);
     } else {
+      const tx = item.p[0] - (item.slideV ? item.slideV[0] : 0);
+      const tz = item.p[2] - (item.slideV ? item.slideV[1] : 0);
       g.position.set(
-        item.from.x + (item.p[0] - item.from.x) * f,
-        item.from.y * (1 - f) + item.lift * f + Math.sin(f * Math.PI) * 0.6,
-        item.from.z + (item.p[2] - item.from.z) * f,
+        item.from.x + (tx - item.from.x) * f,
+        item.from.y * (1 - f) + item.lift * f + Math.sin(f * Math.PI) * item.arc,
+        item.from.z + (tz - item.from.z) * f,
       );
-      g.children[0].rotation.z = (1 - f) * 5;
+      g.children[0].rotation.z = (1 - f) * (item.king ? 9 : 5);
+    }
+    if (f >= 1 && item.king) {
+      // Landar med en duns och ett dammoln, publiken jublar, en gyllen ring visar var det ligger
+      effects.dust(g.position, 16, 1.6);
+      sound.fall(g.position);
+      arena.cheer(0.6);
+      addKingMarker(item);
+      item.sliding = 0;
+      continue;
     }
     if (f >= 1) {
       g.children[0].rotation.z = 0;
@@ -2184,7 +2317,7 @@ function updateItems(dt) {
   if (me && phase === "round" && !me.dead && !me.knight.seg.handR.userData.detached) {
     let best = 2.0;
     for (const item of items.values()) {
-      if (item.flight) continue;
+      if (item.flight || (item.king && item.t < item.fly)) continue;
       const d = Math.hypot(item.p[0] - me.pos.x, item.p[2] - me.pos.z);
       if (d < best) {
         best = d;
@@ -2195,7 +2328,9 @@ function updateItems(dt) {
   nearItem = near;
   const hint = $("pickup-hint");
   if (near) {
-    hint.textContent = `${K("pickup")} – ${weaponOf(me) === FISTS ? "ta upp" : "byt till"} ${WEAPONS[near.w] ?? "vapen"}`;
+    hint.textContent = near.w === CROSSBOW
+      ? `Tryck ${K("pickup")} för att plocka upp Kungens armborst`
+      : `${K("pickup")} – ${weaponOf(me) === FISTS ? "ta upp" : "byt till"} ${WEAPONS[near.w] ?? "vapen"}`;
     hint.hidden = false;
   } else {
     hint.hidden = true;
@@ -3113,6 +3248,7 @@ function releaseAttack() {
 // Anropas varje bildruta: håller man inne tillräckligt länge börjar laddningen
 function updateCharging() {
   if (!mouseDown || charging || !canAct()) return;
+  if (weaponOf(me) === CROSSBOW) return; // armborstet skjuter direkt vid klick
   if (seconds() - mouseDownAt < CONFIG.holdForHeavy) return;
   if (seconds() < me.nextHeavy) return;
   charging = true;
@@ -3140,6 +3276,7 @@ function tryAttack(kind) {
     net.send({ t: "atk", k: "q" });
     return;
   }
+  if (weaponOf(me) === CROSSBOW) return shootCrossbow();
   if (kind === "h" ? t < me.nextHeavy : kind === "t" ? t < me.nextThrust : t < me.nextQuick) {
     if (kind === "t") callout("Stöten är inte redo än", 600);
     return;
@@ -3161,6 +3298,104 @@ function tryAttack(kind) {
   const msg = { t: "atk", k: kind };
   if (aim) msg.aim = { id: aim.id, seg: aim.seg }; // kroppsdelen under siktet
   net.send(msg);
+}
+
+// Kungens armborst: ett enda skott dit kameran tittar. Rekylen och ljudet visas direkt,
+// servern avgör var pilen tar (se "bolt" och "boltEnd").
+function shootCrossbow() {
+  const t = seconds();
+  if (me.boltFired || t < me.nextQuick) return;
+  me.boltFired = true; // inget dubbelklick: ett skott
+  me.nextQuick = me.nextHeavy = me.nextThrust = t + KING_BOW.recover;
+  me.attackUntil = t + 0.4;
+  me.knight.playAttack("q");
+  if (me.knight.weapon?.userData.bolt) me.knight.weapon.userData.bolt.visible = false;
+  sound.crossbow(me.pos);
+  shake = 0.12;
+  sendStateNow();
+  net.send({ t: "shoot", r: me.yaw });
+}
+
+// Pilar i luften (synliga, snabba). Servern bestämmer var de tar; här flyger de bara fram.
+const bolts = new Map();
+let boltGeo = null;
+function spawnBolt(msg) {
+  if (!boltGeo) {
+    const shaft = new THREE.CylinderGeometry(0.009, 0.009, 0.42, 5);
+    shaft.rotateX(Math.PI / 2);
+    const head = new THREE.ConeGeometry(0.018, 0.06, 4);
+    head.rotateX(Math.PI / 2);
+    head.translate(0, 0, 0.24);
+    boltGeo = { shaft, head };
+  }
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(boltGeo.shaft, new THREE.MeshStandardMaterial({ color: 0x8a6a40, roughness: 0.8 })));
+  g.add(new THREE.Mesh(boltGeo.head, new THREE.MeshStandardMaterial({ color: 0x55585e, metalness: 0.7, roughness: 0.4 })));
+  // En svag strimma efter pilen så att man ser den flyga
+  const streak = new THREE.Mesh(new THREE.PlaneGeometry(0.03, 1.4), new THREE.MeshBasicMaterial({ color: 0xfff2d0, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide }));
+  streak.rotation.x = Math.PI / 2;
+  streak.position.z = -0.75;
+  g.add(streak);
+  g.position.set(...msg.from);
+  g.lookAt(msg.from[0] + msg.dir[0], msg.from[1], msg.from[2] + msg.dir[1]);
+  scene.add(g);
+  bolts.set(msg.id, { g, from: new THREE.Vector3(...msg.from), dir: msg.dir, speed: msg.speed, range: msg.range, flown: 0, end: null, stuck: 0 });
+}
+
+function updateBolts(dt) {
+  for (const [id, b] of bolts) {
+    if (b.stuck > 0) {
+      b.stuck -= dt;
+      if (b.stuck <= 0) {
+        b.g.removeFromParent();
+        bolts.delete(id);
+      }
+      continue;
+    }
+    const limit = b.end ? b.end.dist : b.range;
+    b.flown = Math.min(limit, b.flown + b.speed * dt);
+    b.g.position.set(b.from.x + b.dir[0] * b.flown, b.from.y - b.flown * 0.004, b.from.z + b.dir[1] * b.flown);
+    if (b.end && b.flown >= limit - 1e-4) finishBolt(id, b);
+  }
+}
+
+function finishBolt(id, b) {
+  const how = b.end.how;
+  const pos = b.g.position.clone();
+  b.g.children[2].visible = false; // strimman
+  if (how === "hit") {
+    // Pilen försvinner in i riddaren (blodet visas av "hit")
+    b.g.removeFromParent();
+    bolts.delete(id);
+    return;
+  }
+  sound.thunk(pos, how === "shield");
+  if (how === "shield") {
+    effects.sparks(pos);
+    b.g.removeFromParent();
+    bolts.delete(id);
+  } else {
+    // Fastnar i muren en stund och dammar
+    effects.dust(pos.clone().setY(0.4), 4, 0.6);
+    b.stuck = 4;
+  }
+}
+
+function clearBolts() {
+  for (const b of bolts.values()) b.g.removeFromParent();
+  bolts.clear();
+}
+
+// Banderoll överst på skärmen (stör inte striden)
+let eventTimer = null;
+function eventBanner(title, sub, ms = 3200) {
+  const el = $("event-banner");
+  if (!el) return;
+  el.querySelector("b").textContent = title;
+  el.querySelector("span").textContent = sub;
+  el.classList.add("show");
+  clearTimeout(eventTimer);
+  eventTimer = setTimeout(() => el.classList.remove("show"), ms);
 }
 
 // Träningsdockan snurrar om slaget träffar den (bara på riktigt hos varje spelare, servern bryr sig inte)
@@ -3220,6 +3455,7 @@ function tryParry() {
 // G: kasta vapnet rakt fram
 function tryThrow() {
   if (!canAct() || me.holding || weaponOf(me) === FISTS || me.knight.seg.handR.userData.detached) return;
+  if (weaponOf(me) === CROSSBOW) return callout("Kungens armborst kastar man inte – skjut med det!", 1200);
   stopCharging(true);
   me.knight.playAttack("x");
   me.attackUntil = seconds() + 0.5;
@@ -3871,6 +4107,7 @@ function frame() {
   }
   updateCeremony(dt);
   updateItems(dt);
+  updateBolts(dt);
   weather.update(dt, camera.position);
   motes.update(dt);
   if (!replaying) {

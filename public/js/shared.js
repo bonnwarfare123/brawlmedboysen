@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.25";
+export const VERSION = "0.27";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -94,8 +94,21 @@ export const WEAPON_SPECS = [
 export const FISTS = -1;
 export const FIST_SPEC = { key: "fists", damage: 0.3, speed: 0.8, recover: 0.8, reach: -0.7, arc: 1, sever: 0, thrust: 0.5, blunt: true };
 
+// KUNGENS ARMBORST: ett specialvapen som kungen kastar in en gång per runda (finns inte i lobbyn).
+// Ett enda laddat skott som gör exakt 45 i skada. Det går inte att ladda om.
+export const CROSSBOW = 99;
+export const CROSSBOW_SPEC = { key: "crossbow", damage: 0.35, speed: 1, recover: 1, reach: -0.4, arc: 1, sever: 0, thrust: 0.5, twoHanded: true, blunt: true };
+// minDelay/maxDelay = när i rundan kungen kastar (sekunder), flight = hur länge armborstet flyger,
+// speed = pilens fart (m/s), range = hur långt pilen flyger, height = pilens höjd, radius = hur nära den måste passera
+export const KING_BOW = { damage: 45, speed: 38, range: 26, minDelay: 20, maxDelay: 60, flight: 1.9, height: 1.35, radius: 0.4, recover: 0.8, shieldFacing: 0.866 };
+
+export function weaponName(w) {
+  return w === CROSSBOW ? "Kungens armborst" : WEAPONS[w];
+}
+
 export function weaponSpec(w) {
   if (w === FISTS) return FIST_SPEC;
+  if (w === CROSSBOW) return CROSSBOW_SPEC;
   return WEAPON_SPECS[w] || WEAPON_SPECS[0];
 }
 

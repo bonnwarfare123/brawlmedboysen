@@ -955,6 +955,26 @@ export class Sound {
     for (let i = 0; i < 4; i++) this.tone({ volume: 0.04 * v, type: "triangle", freq: 1800 + Math.random() * 1500, decay: 0.06, start: t + 0.22 + i * 0.05 });
   }
 
+  // Armborstet avfyras: strängen smäller (ett kort, lågt "tvang") och pilen visslar iväg
+  crossbow(pos) {
+    if (!this.ready()) return;
+    const v = this.volumeAt(pos);
+    const t = this.ctx.currentTime;
+    this.tone({ volume: 0.55 * v, type: "triangle", freq: 210, freqEnd: 70, decay: 0.22 });
+    this.tone({ volume: 0.25 * v, type: "sawtooth", freq: 420, freqEnd: 140, decay: 0.08 });
+    this.noiseBurst({ volume: 0.45 * v, decay: 0.06, type: "bandpass", freq: 1400, q: 2 });
+    this.noiseBurst({ volume: 0.2 * v, attack: 0.02, decay: 0.25, type: "bandpass", freq: 3000, freqEnd: 1200, q: 4, start: t + 0.03 });
+  }
+
+  // Pilen tar i trä, sten eller en sköld: en torr smäll
+  thunk(pos, shield = false) {
+    if (!this.ready()) return;
+    const v = this.volumeAt(pos);
+    this.tone({ volume: 0.5 * v, freq: shield ? 160 : 120, freqEnd: 60, decay: 0.12 });
+    this.noiseBurst({ volume: 0.4 * v, decay: 0.05, type: "lowpass", freq: shield ? 2000 : 1100 });
+    if (shield) this.tone({ volume: 0.08 * v, type: "triangle", freq: 900, decay: 0.2 });
+  }
+
   // Plockar upp ett vapen: klirr
   pickup(pos) {
     if (!this.ready()) return;

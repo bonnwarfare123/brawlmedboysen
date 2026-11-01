@@ -765,6 +765,7 @@ export function buildArena() {
     podium,
     royalReact: (up) => royals.react(up),
     heraldBlow: () => royals.blow(),
+    kingThrow: (onRelease) => royals.throwBow(onRelease),
     setQuality: (low) => fires.forEach((f) => (f.light.visible = !low)),
     // Regn: sanden blir mörk och lerig, med blanka vattenpölar
     setWet(wet) {
