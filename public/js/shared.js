@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.27";
+export const VERSION = "0.28";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -100,7 +100,12 @@ export const CROSSBOW = 99;
 export const CROSSBOW_SPEC = { key: "crossbow", damage: 0.35, speed: 1, recover: 1, reach: -0.4, arc: 1, sever: 0, thrust: 0.5, twoHanded: true, blunt: true };
 // minDelay/maxDelay = när i rundan kungen kastar (sekunder), flight = hur länge armborstet flyger,
 // speed = pilens fart (m/s), range = hur långt pilen flyger, height = pilens höjd, radius = hur nära den måste passera
-export const KING_BOW = { damage: 45, speed: 38, range: 26, minDelay: 20, maxDelay: 60, flight: 1.9, height: 1.35, radius: 0.4, recover: 0.8, shieldFacing: 0.866 };
+export const KING_BOW = { damage: 45, speed: 55, range: 26, minDelay: 20, maxDelay: 60, flight: 1.9, height: 1.35, radius: 0.65, recover: 0.8, shieldFacing: 0.866 };
+
+// GOBLINEN: i Alla mot alla springer en goblin in och jagar den som leder med mer än två rundvinster.
+// lead = hur många rundor ledaren måste leda med, hits = hur många slag som dödar den, damage = skada per knivhugg,
+// every = tid mellan huggen, windup = hur länge den tar sats, speed = fart (m/s), delay = sekunder in i rundan
+export const GOBLIN = { lead: 3, hits: 2, damage: 6, every: 1.0, windup: 0.28, reach: 1.25, speed: 4.6, delay: 3, scale: 0.5, look: { a: 15, h: 19, s: 0, w: 10, c: 1 }, color: 0x9a2a1e };
 
 export function weaponName(w) {
   return w === CROSSBOW ? "Kungens armborst" : WEAPONS[w];

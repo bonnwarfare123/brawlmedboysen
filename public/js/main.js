@@ -5,7 +5,7 @@ import { CONFIG } from "./config.js";
 import {
   COLORS, ARENA_RX, ARENA_RZ, ROOM_CODE_RE, VERSION, COMBAT, MATCH, ARMORS, HELMETS, SHIELDS, WEAPONS, CAPES, MODE_NAMES, TEAMS,
   attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, TIME_NAMES, MAX_BOTS, WEATHERS, AWARDS,
-  MAPS, MAP_NAMES, INTRO_SECONDS, CROSSBOW, KING_BOW, weaponName,
+  MAPS, MAP_NAMES, INTRO_SECONDS, CROSSBOW, KING_BOW, weaponName, GOBLIN,
 } from "./shared.js";
 import { buildArena, makeSky } from "./arena.js";
 import { buildCastleArena } from "./castle.js";
@@ -395,6 +395,7 @@ function allPlayers() {
 
 function playerById(id) {
   if (me && me.id === id) return me;
+  if (id === "gob") return gob;
   return others.get(id) || null;
 }
 
@@ -1274,6 +1275,69 @@ const net = new Net({
     const yaw = other.knight.group.rotation.y;
     other.knight.playRoll(localDir(msg.dir, yaw));
     sound.roll(other.knight.group.position);
+  },
+
+  // En goblin springer in och jagar ledaren
+  goblin(msg) {
+    const g = spawnGoblin(msg.p);
+    eventBanner("EN GOBLIN HAR SMUGIT IN!", `Den är ute efter ${msg.name}, som leder för mycket`, 3500);
+    sound.laugh(g.knight.group.position, 0.98);
+    sound.crowd(0.8);
+    arena.cheer(0.9);
+    if (me && msg.target === me.id) callout("En goblin är ute efter dig! Två slag dödar den", 2400);
+  },
+
+  // Goblinens läge (skickas tio gånger i sekunden)
+  gs(msg) {
+    if (!gob) spawnGoblin(msg.p);
+    if (gob.dead) return;
+    gob.target.set(msg.p[0], 0, msg.p[2]);
+    gob.yaw = msg.r;
+  },
+
+  // Goblinen hugger med en av knivarna
+  gobAtk(msg) {
+    if (!gob || gob.dead) return;
+    gob.knight.playAttack("q");
+    sound.swing(gob.knight.group.position, false, "q", SWING_SOUND[10] ?? 0);
+    if (Math.random() < 0.4) sound.laugh(gob.knight.group.position, 0.98);
+  },
+
+  // Någon träffade goblinen (andra slaget dödar den)
+  gobHit(msg) {
+    if (!gob || gob.dead) return;
+    const attacker = playerById(msg.by);
+    const knight = gob.knight;
+    const spot = knight.chestPosition(new THREE.Vector3());
+    const dir = new THREE.Vector3(msg.dir[0], 0, msg.dir[1]);
+    if (dir.lengthSq() < 0.001) dir.set(1, 0, 0);
+    dir.normalize();
+    effects.blood(spot, msg.dead ? 22 : 10, dir, 1);
+    sound.hit(spot, msg.k === "h", soundWeapon(attacker));
+    if (attacker?.knight) attacker.knight.bloodySword();
+    if (!msg.dead) {
+      knight.flash();
+      const yaw = knight.group.rotation.y;
+      const c = Math.cos(yaw), s = Math.sin(yaw);
+      knight.playHit([-(dir.x * c - dir.z * s), -(dir.x * s + dir.z * c)]);
+      sound.hurt(spot, 0.98, 0.8);
+      arena.cheer(0.5);
+      if (attacker === me) callout("Goblinen: ett slag till!", 1100);
+      return;
+    }
+    // Död: flyger iväg som en ragdoll, publiken jublar
+    gob.dead = true;
+    sound.scream(spot, 0.98);
+    sound.crowd(1);
+    arena.cheer(1.4);
+    // (ingen ragdoll: den fungerar inte på en förminskad figur) – goblinen flyger i en båge och voltar
+    const force = msg.k === "h" ? 5 : 3.5;
+    gob.dying = { vel: new THREE.Vector3(dir.x * force, 3.2, dir.z * force), spin: (Math.random() < 0.5 ? -1 : 1) * 9, t: 0, landed: false };
+    knight.label?.removeFromParent();
+    knight.removeTrail?.();
+    addKill(attacker ? attacker.name : "?", "Goblinen");
+    eventBanner("GOBLINEN ÄR DÖD!", attacker ? `${attacker.name} gjorde slut på den` : "", 2400);
+    if (attacker === me) callout("Du dräpte goblinen!", 1400);
   },
 
   // Kungen reser sig och kastar in sitt armborst på planen
@@ -2209,6 +2273,7 @@ function removeItem(id) {
 
 function clearItems() {
   pendingThrowEnds.clear();
+  clearGoblin();
   clearBolts();
   for (const id of [...items.keys()]) removeItem(id);
 }
@@ -3321,20 +3386,20 @@ const bolts = new Map();
 let boltGeo = null;
 function spawnBolt(msg) {
   if (!boltGeo) {
-    const shaft = new THREE.CylinderGeometry(0.009, 0.009, 0.42, 5);
+    const shaft = new THREE.CylinderGeometry(0.015, 0.015, 0.62, 6);
     shaft.rotateX(Math.PI / 2);
-    const head = new THREE.ConeGeometry(0.018, 0.06, 4);
+    const head = new THREE.ConeGeometry(0.03, 0.1, 4);
     head.rotateX(Math.PI / 2);
-    head.translate(0, 0, 0.24);
+    head.translate(0, 0, 0.36);
     boltGeo = { shaft, head };
   }
   const g = new THREE.Group();
   g.add(new THREE.Mesh(boltGeo.shaft, new THREE.MeshStandardMaterial({ color: 0x8a6a40, roughness: 0.8 })));
   g.add(new THREE.Mesh(boltGeo.head, new THREE.MeshStandardMaterial({ color: 0x55585e, metalness: 0.7, roughness: 0.4 })));
   // En svag strimma efter pilen så att man ser den flyga
-  const streak = new THREE.Mesh(new THREE.PlaneGeometry(0.03, 1.4), new THREE.MeshBasicMaterial({ color: 0xfff2d0, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide }));
+  const streak = new THREE.Mesh(new THREE.PlaneGeometry(0.06, 2.2), new THREE.MeshBasicMaterial({ color: 0xfff2d0, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide }));
   streak.rotation.x = Math.PI / 2;
-  streak.position.z = -0.75;
+  streak.position.z = -1.15;
   g.add(streak);
   g.position.set(...msg.from);
   g.lookAt(msg.from[0] + msg.dir[0], msg.from[1], msg.from[2] + msg.dir[1]);
@@ -3384,6 +3449,77 @@ function finishBolt(id, b) {
 function clearBolts() {
   for (const b of bolts.values()) b.g.removeFromParent();
   bolts.clear();
+}
+
+// ---------------------------------------------------------------------------
+// GOBLINEN: servern styr den, här ritas och animeras den. Den beter sig som en spelare i
+// meddelandena (id "gob"), så att träffar, pareringar och blod fungerar som vanligt.
+// ---------------------------------------------------------------------------
+let gob = null;
+function spawnGoblin(p) {
+  clearGoblin();
+  const knight = new Knight(GOBLIN.color, "Goblinen", GOBLIN.look, { goblin: true, seed: 77 });
+  knight.group.scale.setScalar(GOBLIN.scale);
+  knight.crouching = true;
+  knight.group.position.set(p[0], 0, p[2]);
+  scene.add(knight.group);
+  gob = {
+    id: "gob", name: "Goblinen", knight, cw: 10, look: { ...GOBLIN.look }, kills: 0, dead: false,
+    target: new THREE.Vector3(p[0], 0, p[2]), yaw: 0, vel: new THREE.Vector3(), prev: new THREE.Vector3(p[0], 0, p[2]), laughT: 2,
+  };
+  return gob;
+}
+
+function clearGoblin() {
+  if (gob) gob.knight.group.removeFromParent();
+  gob = null;
+}
+
+function updateGoblin(dt) {
+  if (gob?.dying) {
+    // Död: flyger, studsar en gång och blir liggande; försvinner efter en stund
+    const d = gob.dying;
+    const g = gob.knight.group;
+    d.t += dt;
+    if (!d.landed) {
+      d.vel.y -= 9.8 * dt;
+      g.position.addScaledVector(d.vel, dt);
+      g.rotation.x += d.spin * dt;
+      if (g.position.y <= 0 && d.vel.y < 0) {
+        g.position.y = 0;
+        effects.dust(g.position, 8, 1.2);
+        sound.fall(g.position);
+        if (Math.abs(d.vel.y) > 2.5) {
+          d.vel.y *= -0.35;
+          d.vel.x *= 0.5;
+          d.vel.z *= 0.5;
+        } else {
+          d.landed = true;
+          g.rotation.x = -Math.PI / 2;
+          g.position.y = 0.06;
+        }
+      }
+    }
+    gob.knight.animate(dt, { speed: 0, forward: 0, side: 0, airborne: !d.landed });
+    if (d.t > 8) clearGoblin();
+    return;
+  }
+  if (!gob || gob.dead) return;
+  const g = gob.knight.group;
+  gob.prev.copy(g.position);
+  g.position.lerp(gob.target, 1 - Math.exp(-dt * 12));
+  const v = g.position.clone().sub(gob.prev).divideScalar(Math.max(dt, 0.001));
+  v.y = 0;
+  gob.vel.lerp(v, 1 - Math.exp(-dt * 10));
+  g.rotation.y = angleLerp(g.rotation.y, gob.yaw, 1 - Math.exp(-dt * 14));
+  gob.knight.animate(dt, motionOf(gob.vel, g.rotation.y, false));
+  gob.knight.updateTrail(scene);
+  // Fnissar och gnäller då och då
+  gob.laughT -= dt;
+  if (gob.laughT <= 0) {
+    gob.laughT = 2.5 + Math.random() * 3;
+    sound.laugh(g.position, 0.98);
+  }
 }
 
 // Banderoll överst på skärmen (stör inte striden)
@@ -4108,6 +4244,7 @@ function frame() {
   updateCeremony(dt);
   updateItems(dt);
   updateBolts(dt);
+  updateGoblin(dt);
   weather.update(dt, camera.position);
   motes.update(dt);
   if (!replaying) {

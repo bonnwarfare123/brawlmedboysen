@@ -638,6 +638,14 @@ export class Knight {
     const rand = seededRandom(opts.seed ?? colorHex + 7);
     const features = rollFeatures(rand);
     this.features = features;
+    // Goblinen: grön, flintskallig, stora öron, lång orange näsa, vassa tänder och ett elakt flin
+    this.goblin = !!opts.goblin;
+    if (this.goblin) {
+      Object.assign(features, {
+        skin: 0x8cab3c, hairStyle: 3, beard: 0, scar: 0, patch: 0, paint: 0, headband: 0, bandage: 0, blackEye: 0,
+        freckles: 0, stubble: 0, mood: 2, teeth: 2, gap: 0, smirk: 0.8, browRaise: 0.1, mole: null, wrinkles: 0.5, eyes: 0x6a4a10,
+      });
+    }
     this.faceRand = seededRandom((opts.seed ?? colorHex) * 7 + 3);
 
     // ---------- Material ----------
@@ -818,12 +826,21 @@ export class Knight {
     shield.visible = !wspec.noShield;
     this.seg.handL.add(shield);
     this.shield = shield;
-    this.knuckle = this.buildKnuckle(m);
+    // Goblinen har en kniv i vänster hand i stället för knogjärn
+    const savedBlood = [this.weaponBloodGeo, this.weaponBloodPos];
+    this.knuckle = opts.goblin ? this.buildWeapon(10, m, false) : this.buildKnuckle(m);
+    if (opts.goblin) {
+      [this.weaponBloodGeo, this.weaponBloodPos] = savedBlood;
+      this.mergeChildren(this.knuckle);
+      this.knuckle.position.set(0, -0.06, 0.01);
+      this.knuckle.rotation.x = 2.0;
+    }
     this.knuckle.visible = !!wspec.noShield;
     this.seg.handL.add(this.knuckle);
 
     // Slå ihop småbitarna i varje kroppsdel (färre ritanrop = högre FPS)
     for (const seg of Object.values(this.seg)) this.mergeChildren(seg);
+    if (this.goblin) this.seg.head.scale.setScalar(1.32); // goblinen: stort huvud på en liten kropp
     this.mergeChildren(weapon);
     this.mergeChildren(shield);
     this.mergeChildren(this.helmet);
@@ -1225,7 +1242,25 @@ export class Knight {
       H(new THREE.TorusGeometry(0.012, 0.0045, 4, 7), m.faceSolid, [(0.088 + 0.004 * ek) * s, 0.13, -0.002], [0.5, 1.4, 1].map((v) => v * ek), [0, Math.PI / 2, 0.15 * s * (ek - 0.9)]); // örats kant
     }
     // Näsa: rak, kantig näsrygg (stor, liten eller sned)
-    H(wedgeNose(f.nose, f.broken, f.noseType), m.faceSolid);
+    if (this.goblin) {
+      // Lång, böjd orange näsa och stora spetsiga öron (gröna med orange insida)
+      const noseMat = this.mat(0xd8784a, 0.7, 0);
+      const nose = new THREE.ConeGeometry(0.022, 0.11, 8);
+      nose.rotateX(Math.PI / 2 + 0.35);
+      H(nose, noseMat, [0, 0.1, 0.15]);
+      H(new THREE.SphereGeometry(0.024, 8, 6), noseMat, [0, 0.112, 0.11]);
+      const inner = this.mat(0xd8884a, 0.8, 0);
+      for (const s of [1, -1]) {
+        const ear = new THREE.ConeGeometry(0.045, 0.24, 6);
+        ear.scale(1, 1, 0.35);
+        ear.rotateZ(-s * (Math.PI / 2 - 0.35));
+        H(ear, m.faceSolid, [0.17 * s, 0.17, -0.01]);
+        const ein = new THREE.ConeGeometry(0.03, 0.17, 6);
+        ein.scale(1, 1, 0.2);
+        ein.rotateZ(-s * (Math.PI / 2 - 0.35));
+        H(ein, inner, [0.165 * s, 0.168, 0.0]);
+      }
+    } else H(wedgeNose(f.nose, f.broken, f.noseType), m.faceSolid);
     const up = f.noseType === 3 ? 0.004 : f.noseType === 1 ? -0.004 : 0;
     const wide = f.noseType === 2 || f.noseType === 4 ? 1.35 : 1;
     for (const s of [1, -1]) H(new THREE.SphereGeometry(0.0034 * (f.noseType === 3 ? 1.3 : 1), 4, 3), m.mouth, [0.0075 * s * wide, 0.0985 + up, 0.0985 + 0.006 * f.nose - up * 0.6]); // näsborrar

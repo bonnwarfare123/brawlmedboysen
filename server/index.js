@@ -20,7 +20,7 @@ import {
   MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, MATCH, ARENA_RX, ARENA_RZ,
   JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS, AIM_JOINT, ARMORS, HELMETS, SHIELDS,
   WEAPONS, CAPES, MODES, attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, MAX_BOTS, BOT_NAMES, WEATHERS, AWARDS,
-  MAPS, INTRO_SECONDS, CROSSBOW, KING_BOW,
+  MAPS, INTRO_SECONDS, CROSSBOW, KING_BOW, GOBLIN,
 } from "../public/js/shared.js";
 
 export default {
@@ -897,6 +897,9 @@ export class GameRoom extends DurableObject {
       const roundToken = this.setPhase("round");
       this.broadcast({ t: "round", round: this.round });
       if (this.bots().length) this.botTick(roundToken);
+      // Leder någon för mycket i Alla mot alla kommer en goblin och jagar den
+      this.goblin = null;
+      this.later(GOBLIN.delay, roundToken, () => this.maybeGoblin(roundToken));
       // Kungen kastar in sitt armborst en gång, någon gång mitt i rundan
       const delay = this.kingBowDelay ?? KING_BOW.minDelay + Math.random() * (KING_BOW.maxDelay - KING_BOW.minDelay);
       this.later(delay, roundToken, () => this.kingThrowsCrossbow(roundToken));
@@ -1249,6 +1252,10 @@ export class GameRoom extends DurableObject {
 
     // Vilka står inom räckhåll och framför den som slår? (den som rullar just nu går inte att träffa)
     const targets = this.inCone(attacker, spec.reach, spec.arc).filter((p) => !invulnerable(p, t));
+    // Goblinen kan också träffas (två slag och den är död)
+    const hitGob = this.goblinInCone(attacker, spec.reach, spec.arc);
+    if (hitGob) this.hitGoblin(attacker, kind);
+    if (hitGob && targets.length === 0) return;
 
     // Zweihändern: ett tungt slag som missar får riddaren att snurra runt och vingla
     if (targets.length === 0 && kind === "h" && ws.whiffStagger) {
@@ -1749,6 +1756,118 @@ export class GameRoom extends DurableObject {
     return item;
   }
 
+  // ----- Goblinen -----
+
+  // Leder någon med mer än två rundvinster (bara i Alla mot alla) springer en goblin in och jagar den
+  maybeGoblin(token) {
+    if (this.phase !== "round" || token !== this.phaseToken || this.mode !== "ffa") return;
+    const ranked = [...this.players.values()].sort((a, b) => b.wins - a.wins);
+    if (ranked.length < 2) return;
+    const [leader, second] = ranked;
+    if (leader.dead || leader.wins - second.wins < GOBLIN.lead) return;
+    // Kommer in genom porten (borggården) eller från kanten bortom kungen
+    const p = [0, 0, -(ARENA_RZ - 0.6)];
+    this.goblin = { id: "gob", target: leader.id, p, r: 0, hits: 0, dead: false, nextAtk: now() + 1.2, staggerUntil: 0, moving: 0, token };
+    this.broadcast({ t: "goblin", p, target: leader.id, name: leader.name });
+    this.later(0.1, token, () => this.goblinTick(token));
+  }
+
+  goblinTick(token) {
+    const g = this.goblin;
+    if (!g || g.dead || token !== this.phaseToken || this.phase !== "round") return;
+    const t = now();
+    const DT = 0.1;
+    const target = this.players.get(g.target);
+    g.moving = 0;
+    if (target && !target.dead && t >= g.staggerUntil) {
+      const dx = target.p[0] - g.p[0];
+      const dz = target.p[2] - g.p[2];
+      const dist = Math.hypot(dx, dz);
+      g.r = Math.atan2(dx, dz);
+      if (dist > GOBLIN.reach * 0.8) {
+        // Springer mot ledaren i små sicksackhopp
+        const step = Math.min(dist - GOBLIN.reach * 0.7, GOBLIN.speed * DT);
+        const wob = Math.sin(t * 9) * 0.25;
+        g.p[0] += (dx / dist) * step + (dz / dist) * wob * step;
+        g.p[2] += (dz / dist) * step - (dx / dist) * wob * step;
+        g.moving = 1;
+      }
+      // Håll den inne på planen
+      const e = (g.p[0] / (ARENA_RX - 0.4)) ** 2 + (g.p[2] / (ARENA_RZ - 0.4)) ** 2;
+      if (e > 1) {
+        g.p[0] /= Math.sqrt(e);
+        g.p[2] /= Math.sqrt(e);
+      }
+      if (dist < GOBLIN.reach && t >= g.nextAtk) {
+        g.nextAtk = t + GOBLIN.every + Math.random() * 0.3;
+        g.side = g.side === "L" ? "R" : "L";
+        this.broadcast({ t: "gobAtk", side: g.side });
+        this.later(GOBLIN.windup, token, () => this.goblinStrike(token));
+      }
+    }
+    g.p = g.p.map(round2);
+    g.r = round2(g.r);
+    this.broadcast({ t: "gs", p: g.p, r: g.r, m: g.moving });
+    this.later(DT, token, () => this.goblinTick(token));
+  }
+
+  // Knivhugget landar (om ledaren fortfarande står nära och inte parerar eller rullar undan)
+  goblinStrike(token) {
+    const g = this.goblin;
+    if (!g || g.dead || token !== this.phaseToken || this.phase !== "round") return;
+    const t = now();
+    if (t < g.staggerUntil) return;
+    const target = this.players.get(g.target);
+    if (!target || target.dead || invulnerable(target, t)) return;
+    const dist = Math.hypot(target.p[0] - g.p[0], target.p[2] - g.p[2]);
+    if (dist > GOBLIN.reach + 0.35) return;
+    // Parerade ledaren åt rätt håll? Då vinglar goblinen
+    const sinceParry = t - target.lastParry;
+    const facing = Math.sin(target.r) * (g.p[0] - target.p[0]) + Math.cos(target.r) * (g.p[2] - target.p[2]);
+    if (sinceParry >= 0 && sinceParry < COMBAT.parry.window + COMBAT.parry.lag && facing > 0) {
+      g.staggerUntil = t + 1.0;
+      g.nextAtk = Math.max(g.nextAtk, t + 1.2);
+      this.broadcast({ t: "parried", id: target.id, by: "gob" });
+      return;
+    }
+    target.hp = Math.max(0, target.hp - GOBLIN.damage);
+    if (target.holding) this.releaseGrab(target, "hit");
+    const dead = target.hp === 0;
+    let drop = null;
+    if (dead && target.cw !== FISTS) drop = this.dropWeapon(target);
+    if (dead) {
+      target.dead = true;
+      target.chargeStart = null;
+    }
+    this.broadcast({ t: "hit", id: target.id, by: "gob", k: "q", hp: target.hp, dead, kills: 0, sev: null, seg: "torso", hk: 0, drop, st: 0, kd: 0, ll: 0, sh: 0 });
+    if (dead) this.checkRoundEnd();
+  }
+
+  // Står goblinen framför den som slår, inom räckhåll?
+  goblinInCone(attacker, reach, arc) {
+    const g = this.goblin;
+    if (!g || g.dead) return false;
+    const dx = g.p[0] - attacker.p[0];
+    const dz = g.p[2] - attacker.p[2];
+    const dist = Math.hypot(dx, dz);
+    if (dist > reach + BODY_RADIUS) return false;
+    if (dist < 0.5) return true;
+    const bodyAngle = Math.atan(BODY_RADIUS / dist);
+    const allowed = Math.cos(Math.min(Math.PI, (arc * Math.PI) / 180 + bodyAngle));
+    return (Math.sin(attacker.r) * dx + Math.cos(attacker.r) * dz) / dist >= allowed;
+  }
+
+  // Två slag, oavsett vapen, och goblinen är död
+  hitGoblin(attacker, kind) {
+    const g = this.goblin;
+    g.hits += 1;
+    g.staggerUntil = now() + 0.5;
+    g.nextAtk = Math.max(g.nextAtk, now() + 0.8);
+    const dead = g.hits >= GOBLIN.hits;
+    if (dead) g.dead = true;
+    this.broadcast({ t: "gobHit", by: attacker.id, k: kind, dead, dir: [round2(g.p[0] - attacker.p[0]), round2(g.p[2] - attacker.p[2])] });
+  }
+
   // ----- Kungens armborst -----
 
   // Kungen reser sig och kastar in ett laddat armborst på en slumpad plats på planen
@@ -1986,6 +2105,17 @@ export class GameRoom extends DurableObject {
     }
     ai.holdT = 0;
 
+    // Goblinen hugger på boten: vänd dig om och slå tillbaka
+    const gob = this.goblin;
+    if (gob && !gob.dead && gob.target === bot.id && bot.cw !== CROSSBOW) {
+      const gd = Math.hypot(gob.p[0] - bot.p[0], gob.p[2] - bot.p[2]);
+      if (gd < 1.8) {
+        bot.r = round2(Math.atan2(gob.p[0] - bot.p[0], gob.p[2] - bot.p[2]));
+        this.broadcast({ t: "s", id: bot.id, p: bot.p, r: bot.r, a: 0, c: 0, k: Date.now() % 10000000 });
+        if (!this.busy(bot, t) && t >= bot.nextQuick && Math.random() < 0.5) this.handleAttack(null, bot, "q", null);
+        return;
+      }
+    }
     // Kungens armborst: ligger det nära går boten och hämtar det, och har den det skjuter den
     if (bot.cw !== CROSSBOW && jointAvailable(bot, "wristR")) {
       for (const it of this.items.values()) {

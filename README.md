@@ -1,4 +1,4 @@
-# Brawlmedboysen – v0.27
+# Brawlmedboysen – v0.28
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
@@ -15,6 +15,8 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 **Arenan:** tornerbarriär av plankor med järnband, lera nedtill, hängande tygdraperier och vapensköldar, upptrampad lerig sand där blodet sjunker in, eldkorgar med eld och rök, träningsdocka som snurrar när man slår på den, torn byggda av riktiga plankor (med stege, fönsterluckor och tinnar), krattad sand med småsten och halmstrån, läktare med plankbänkar, snidade räcken, tak med fransar och ståplats längst bak, levande publik (axlar, armbågar, kläder med veck, smala och runda, tydligare ansikten) med barn, gamla med käpp, damer och adelsmän (reser sig, jublar, klappar, pekar, dricker, äter, dunkar grannen i ryggen och viftar med hatten), försäljare som går runt, folk som går på marknaden, en lägereld med gryta och rök vid tälten, tätare gräs med blommor, damm som svävar i luften, hundar, fåglar och flugor runt elden, kungapar som visar tummen upp eller ner, vakter och en härold med trumpet.
 
 **Grafik:** på hög grafik (F2) får ljusa saker ett mjukt glöd-sken, och färgtonen anpassas efter dag, kväll, regn och dimma (varmare på kvällen, gråare i regn, mörka hörn). Mjuka, fluffiga moln driver sakta över himlen på båda banorna (och blir ett grått molntäcke när det regnar eller snöar). På låg grafik stängs glöd, skuggor och dammet av. **F3** visar bilder per sekund, ritanrop och hur många millisekunder varje bild tar. Alla shaders byggs när banan laddas (inga ryck första gången något syns), bara de 4 eldarna närmast det du tittar på lyser upp omgivningen, och molnen och tyget kostar mindre.
+
+**Goblinen (v0.28):** i Alla mot alla, när någon leder med mer än två rundvinster, springer en goblin (hälften så lång som en riddare) in på planen några sekunder in i rundan och jagar ledaren med två knivar (6 i skada per hugg). Den dör av två slag, med vilket vapen som helst, och vem som helst får slå den. Går att parera. Inställningar i `GOBLIN` i `shared.js`. Armborstets pil är nu snabbare (55 m/s) och lättare att träffa med (träffar inom 0,65 m).
 
 **Kungens armborst (v0.27):** någon gång 20–60 sekunder in i varje runda reser sig kungen, skrattar, håller upp ett laddat armborst och kastar in det på planen ("KUNGEN KASTAR IN ETT ARMBORST!"). Det landar med ett dammoln och en gyllene ring. Tryck E för att ta upp det (ditt vanliga vapen följer med på ryggen). Vänsterklick skjuter: ett enda skott, exakt 45 i skada, och sedan tar du fram ditt gamla vapen igen. Pilen flyger i brösthöjd: huka, rulla eller ligg ner så flyger den över, och en sköld som är uppe och vänd rakt mot skottet tar emot den. Tappar man armborstet innan man skjutit kan någon annan ta det. Servern bestämmer allt (kast, landning, vem som tar det, träff och skada), och bottarna kan också hämta och skjuta med det. Inställningar i `KING_BOW` i `shared.js`.
 

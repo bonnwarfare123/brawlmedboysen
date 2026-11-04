@@ -9,11 +9,13 @@ import {
 } from "./textures.js";
 
 // Rustningarnas nycklar (läggs efter de gamla i ARMOR_STYLES, i samma ordning som ARMORS i shared.js)
-export const KIT_STYLES = ["gambeson", "surcoat", "coatplates", "brigandine", "guard", "mercenary", "halfplate", "crusader"];
+export const KIT_STYLES = ["gambeson", "surcoat", "coatplates", "brigandine", "guard", "mercenary", "halfplate", "crusader", "goblin"];
+// Goblinen (inte valbar i lobbyn: finns inte i ARMORS). Hjälm 19 = goblinens röda huva.
+export const GOBLIN_HOOD = 19;
 
 // Hjälmar: 11–18. Vilka som döljer hår och skägg (se updateHairVisibility)
 export const CLOSED_HELMETS = [0, 1, 4, 18];
-export const HOOD_HELMETS = [7, 8, 12, 15, 17];
+export const HOOD_HELMETS = [7, 8, 12, 15, 17, 19];
 
 const PI = Math.PI;
 const col = (a, b, t) => new THREE.Color(a).lerp(new THREE.Color(b), t).getHex();
@@ -70,6 +72,12 @@ export function kitMaterials(k, m, style, colorHex) {
     Object.assign(out, { limbL: m.jack, limbR: m.chain, legL: m.hoseStripe, legR: m.wool, hips: m.jack, chest: { rx: 0.188, rz: 0.132, ar: 0.062 } });
   } else if (style === "halfplate") {
     Object.assign(out, { chest: { rx: 0.205, rz: 0.145, ar: 0.066 }, metal: true });
+  } else if (style === "goblin") {
+    // Goblin: lappad säckvävstunika, röda trasor, bruna byxor, bara gröna armar
+    m.burlap = k.mat(0xc8b088, 0.97, 0, { map: wrapTexture() });
+    m.gobRed = k.mat(0x9a2a1e, 0.92, 0, { map: linenTexture(), side: THREE.DoubleSide });
+    m.gobPants = k.mat(0x4a3424, 0.95, 0, { map: wrapTexture() });
+    Object.assign(out, { limbL: m.skin, limbR: m.skin, legL: m.gobPants, legR: m.gobPants, hips: m.gobPants, chest: { rx: 0.17, rz: 0.12, ar: 0.05 } });
   } else if (style === "crusader") {
     // Vit vapenrock med kors i spelarens färg (lite smutsig av resan)
     m.surWhite = k.mat(0xe8e1cf, 0.92, 0, { map: linenTexture(), side: THREE.DoubleSide });
@@ -272,6 +280,30 @@ export function buildKitTorso(k, style, pelvis, torso, m, look, H) {
     }
     belt(0.19, -0.045, 0.8, m.brass);
     if (look.w === 0) k.addScabbard(pelvis, m, m.steelDark);
+  } else if (style === "goblin") {
+    // Lappad säckvävstunika med grova stygn, bälte med stort järnspänne, pung och säck,
+    // röda trasiga skörtflikar och en buckig järnplåt på vänster axel
+    T(sculptTorso(new THREE.CapsuleGeometry(0.15, 0.2, 8, 16), 0.25), m.burlap, [0, 0.24, 0], [1.18, 1, 0.8]);
+    T(new THREE.BoxGeometry(0.09, 0.08, 0.01), m.leather, [0.07, 0.3, 0.12], [1, 1, 1], [0, 0.3, 0.2]);
+    T(new THREE.BoxGeometry(0.08, 0.1, 0.01), m.gobRed, [-0.08, 0.15, 0.115], [1, 1, 1], [0, -0.35, -0.15]);
+    T(new THREE.BoxGeometry(0.1, 0.07, 0.01), m.leatherDark, [0.02, 0.2, -0.12], [1, 1, 1], [0, 0, 0.3]);
+    for (let i = 0; i < 4; i++) T(new THREE.BoxGeometry(0.004, 0.022, 0.004), m.rope, [0.045 + i * 0.016, 0.345, 0.126], [1, 1, 1], [0, 0.3, 0.6]); // stygn
+    for (let i = 0; i < 5; i++) T(new THREE.BoxGeometry(0.004, 0.022, 0.004), m.rope, [-0.115 + i * 0.016, 0.21, 0.108], [1, 1, 1], [0, -0.35, 0.5]);
+    T(new THREE.CylinderGeometry(1, 1, 0.034, 24, 1, true), m.strap, [0, 0.25, 0.004], [0.198, 1, 0.152], [0, 0, 0.62]); // axelrem
+    // Järnplåt på vänster axel, med nitar
+    T(new THREE.SphereGeometry(0.085, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), m.iron, [0.16, 0.41, 0], [1.1, 0.55, 1.1], [0, 0, -0.35]);
+    for (const z of [0.05, -0.05]) T(new THREE.SphereGeometry(0.01, 5, 4), m.steel, [0.19, 0.43, z]);
+    // Bälte med stort fyrkantigt spänne, pung och knuten säck
+    P(new THREE.CylinderGeometry(0.168, 0.168, 0.05, 18, 1, true), m.strap, [0, 0.0, 0], [1.04, 1, 0.82]);
+    P(new THREE.BoxGeometry(0.07, 0.06, 0.012), m.steel, [0, 0.0, 0.142]);
+    P(new THREE.BoxGeometry(0.04, 0.03, 0.014), m.strap, [0, 0.0, 0.145]);
+    P(new THREE.BoxGeometry(0.06, 0.06, 0.035), m.leather, [0.1, -0.04, 0.12], [1, 1, 1], [0, 0.4, 0]);
+    P(new THREE.SphereGeometry(0.06, 8, 6), m.burlap, [-0.17, -0.07, 0.06], [1, 1.1, 0.9]);
+    P(new THREE.CylinderGeometry(0.015, 0.025, 0.04, 6), m.rope, [-0.17, -0.0, 0.06]);
+    // Skörtflikar: säckväv och röda trasor, olika långa
+    [[-0.09, 0.13, m.gobRed, 0.2], [0.03, 0.15, m.burlap, 0.24], [0.12, 0.13, m.leather, 0.17], [0.0, -0.14, m.gobRed, 0.22], [-0.12, -0.12, m.burlap, 0.18]].forEach(([x, z, mat, len]) => {
+      P(new THREE.BoxGeometry(0.1, len, 0.01), mat, [x, -0.03 - len / 2, z], [1, 1, 1], [z > 0 ? 0.12 : -0.12, 0, x * 0.6]);
+    });
   } else if (style === "crusader") {
     // Korsriddare: brynja från topp till tå, vit vapenrock med ett stort kors i spelarens färg
     mailBody();
@@ -457,6 +489,16 @@ export function buildKitLimbs(k, style, side, s, upper, fore, hand, thigh, shin,
     poleyn();
     greave();
     k.addPointedShoe(FT, m.leatherDark, m.strap, 0.18, false);
+  } else if (style === "goblin") {
+    // Bara gröna armar med lindade handleder och läderarmskydd, lindade ben och stora läderstövlar
+    F(new THREE.CylinderGeometry(0.05, 0.044, 0.09, 10, 1, true), m.leather, [0, -0.17, 0]);
+    F(new THREE.TorusGeometry(0.046, 0.01, 4, 10), m.burlap, [0, -0.225, 0], [1, 1, 1], [Math.PI / 2, 0, 0]);
+    U(new THREE.CylinderGeometry(0.066, 0.06, 0.1, 10, 1, true), m.burlap, [0, -0.04, 0]);   // kort ärm
+    k.addHand(Hd, m.skin, s, 1.12);
+    SH(new THREE.CylinderGeometry(0.08, 0.07, 0.07, 10, 1, true), m.leather, [0, -0.2, 0]);  // stövelns uppvik
+    SH(new THREE.CylinderGeometry(0.066, 0.06, 0.18, 10, 1, true), m.leatherDark, [0, -0.32, 0]);
+    for (let i = 0; i < 3; i++) SH(new THREE.TorusGeometry(0.065, 0.012, 4, 10), m.burlap, [0, -0.06 - i * 0.045, 0], [1, 1, 1], [Math.PI / 2 + (i % 2 ? 0.2 : -0.2), 0, 0]);
+    k.addPointedShoe(FT, m.leather, m.strap, 0.06, false);
   } else if (style === "crusader") {
     // Brynja från topp till tå: brynjevantar, brynjehosor med läderremmar under knät, enkla skor
     mailEdge();
@@ -594,6 +636,34 @@ export function buildKitHelmet(k, helmet, kind, m, gilded) {
     add(new THREE.TorusGeometry(0.125, 0.008, 4, 24), m.leather, [0, 0.174, -0.004], [1, 1.04, 1], [PI / 2, 0, 0]);
     for (const a of [0, PI / 2]) add(new THREE.TorusGeometry(0.1, 0.0035, 3, 18, PI), m.strap, [0, 0.174, -0.004], [a ? 1.31 : 1.255, 1.05, 1], [0, a, 0]); // sömmar över hättan
     ring(m.brass, 0.126, 0.19, 6, 0, 0.0065);
+  } else if (kind === GOBLIN_HOOD) {
+    // Goblinens röda, lappade huva med grova stygn och en hängande spets bak
+    const red = m.gobRed || k.mat(0x9a2a1e, 0.92, 0, { side: THREE.DoubleSide });
+    const geo = new THREE.SphereGeometry(1, 18, 12);
+    const pos = geo.attributes.position;
+    const dirs = [];
+    const d = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      d.fromBufferAttribute(pos, i);
+      dirs.push(d.clone());
+      const tip = Math.max(0, d.y) ** 3 * 0.06; // lite spetsig upptill
+      pos.setXYZ(i, d.x * 0.128, d.y * 0.14 + 0.14 + tip, d.z * 0.132 - tip * 0.6);
+    }
+    const open = (v) => v.z > 0.35 && v.y > -0.7 && v.y < 0.55;
+    const ind = geo.index?.array || [];
+    const idx = [];
+    for (let t = 0; t < ind.length; t += 3) {
+      if (open(dirs[ind[t]]) || open(dirs[ind[t + 1]]) || open(dirs[ind[t + 2]])) continue;
+      if (dirs[ind[t]].y < -0.85 && dirs[ind[t + 1]].y < -0.85 && dirs[ind[t + 2]].y < -0.85) continue;
+      idx.push(ind[t], ind[t + 1], ind[t + 2]);
+    }
+    if (ind.length) geo.setIndex(idx);
+    geo.computeVertexNormals();
+    add(geo, red);
+    add(new THREE.CylinderGeometry(0.09, 0.2, 0.12, 14, 1, true), red, [0, -0.01, -0.006]);
+    add(new THREE.ConeGeometry(0.05, 0.22, 6), red, [0, 0.2, -0.16], [1, 1, 0.7], [-2.2, 0, 0]);
+    add(new THREE.BoxGeometry(0.07, 0.06, 0.006), m.leather, [0.07, 0.24, 0.07], [1, 1, 1], [-0.6, 0.6, 0]); // lapp
+    for (let i = 0; i < 5; i++) add(new THREE.BoxGeometry(0.03, 0.005, 0.005), m.rope, [0, 0.275 - i * 0.02, 0.05 + i * 0.016], [1, 1, 1], [-0.9, 0, 0]); // stygn
   } else if (kind === 18) {
     // Bucklig hjälm: en gammal tunnhjälm som fått ta emot många slag – bucklor, en lagning och sned
     const R = 0.122;
