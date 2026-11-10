@@ -258,8 +258,8 @@ function drawCharge(ctx, kind, cx, cy, r, color) {
   ctx.stroke();
 }
 
-export function heraldryTexture(colorHex, variant = 0) {
-  const key = `herald-${colorHex}-${variant}`;
+export function heraldryTexture(colorHex, variant = 0, planks = false) {
+  const key = `herald-${colorHex}-${variant}${planks ? "-p" : ""}`;
   return makeTexture(key, 256, (ctx, n) => {
     const base = "#" + colorHex.toString(16).padStart(6, "0");
     const light = "#f2ecdc";
@@ -323,7 +323,176 @@ export function heraldryTexture(colorHex, variant = 0) {
       ctx.ellipse(rand() * n, rand() * n, 2 + rand() * 7, 2 + rand() * 4, rand() * 3, 0, Math.PI * 2);
       ctx.fill();
     }
+    // Smuts och väta: mörka fläckar, mest nertill
+    for (let i = 0; i < 9; i++) {
+      const y = n * (0.35 + rand() * 0.65);
+      const g = ctx.createRadialGradient(rand() * n, y, 2, rand() * n, y, 30 + rand() * 50);
+      g.addColorStop(0, "rgba(40,30,20,0.22)");
+      g.addColorStop(1, "rgba(40,30,20,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, n, n);
+    }
+    ctx.fillStyle = "rgba(60,50,40,0.1)";
+    ctx.fillRect(0, 0, n, n);
+    if (planks) {
+      // Sköldens plankor: varje planka lite olika ljus, med en mörk springa emellan och fina ådror
+      const count = 7;
+      for (let i = 0; i < count; i++) {
+        const x = (i * n) / count;
+        ctx.fillStyle = `rgba(${rand() < 0.5 ? "0,0,0" : "255,240,210"},${0.03 + rand() * 0.07})`;
+        ctx.fillRect(x, 0, n / count, n);
+        for (let k = 0; k < 5; k++) {
+          ctx.strokeStyle = "rgba(40,25,10,0.1)";
+          ctx.lineWidth = 0.7;
+          const gx = x + rand() * (n / count);
+          ctx.beginPath();
+          ctx.moveTo(gx, 0);
+          ctx.bezierCurveTo(gx + 3, n * 0.3, gx - 3, n * 0.7, gx + 1, n);
+          ctx.stroke();
+        }
+        if (i) {
+          ctx.fillStyle = "rgba(30,18,8,0.55)";
+          ctx.fillRect(x - 1, 0, 2, n);
+          ctx.fillStyle = "rgba(255,245,220,0.18)";
+          ctx.fillRect(x + 1, 0, 1, n);
+        }
+      }
+    }
   });
+}
+
+// Plankornas springor som höjdkarta (till sköldens framsida)
+export function plankBumpTexture() {
+  return makeTexture("plankbump", 128, (ctx, n) => {
+    ctx.fillStyle = "#b0b0b0";
+    ctx.fillRect(0, 0, n, n);
+    const rand = seeded(77);
+    for (let i = 0; i < 7; i++) {
+      const x = (i * n) / 7;
+      const v = 150 + Math.floor(rand() * 60);
+      ctx.fillStyle = `rgb(${v},${v},${v})`;
+      ctx.fillRect(x, 0, n / 7, n);
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(x - 1.5, 0, 3, n);
+    }
+  }, [1, 1], false);
+}
+
+// ---------- Bondens kläder ----------
+// Vadderad tunika: rutor på snedden med mjuka kuddar emellan. height = true ger höjdkartan.
+function paddedDraw(height) {
+  return (ctx, n) => {
+    const cell = n / 4; // fyra rutor på bredden
+    ctx.fillStyle = height ? "#000000" : "#ffffff";
+    ctx.fillRect(0, 0, n, n);
+    // Kuddar: ljus mitt, mörkare ner mot sömmen. Rutorna ligger på snedden (romber).
+    for (let j = -1; j <= 8; j++) {
+      for (let i = -1; i <= 4; i++) {
+        const cx = (i + (j % 2 ? 0.5 : 0) + 0.5) * cell;
+        const cy = (j * 0.5 + 0.5) * cell;
+        const g = ctx.createRadialGradient(cx, cy, 1, cx, cy, cell * 0.56);
+        if (height) {
+          g.addColorStop(0, "rgba(255,255,255,1)");
+          g.addColorStop(0.6, "rgba(200,200,200,1)");
+          g.addColorStop(1, "rgba(0,0,0,1)");
+        } else {
+          g.addColorStop(0, "rgba(255,255,255,1)");
+          g.addColorStop(0.65, "rgba(236,228,214,1)");
+          g.addColorStop(1, "rgba(150,128,100,1)");
+        }
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - cell / 2);
+        ctx.lineTo(cx + cell / 2, cy);
+        ctx.lineTo(cx, cy + cell / 2);
+        ctx.lineTo(cx - cell / 2, cy);
+        ctx.fill();
+      }
+    }
+    if (height) return;
+    // Sömmar och lite smuts
+    ctx.strokeStyle = "rgba(110,85,55,0.55)";
+    ctx.lineWidth = 1.4;
+    for (let i = -8; i <= 8; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * cell, 0);
+      ctx.lineTo(i * cell + n, n);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(i * cell, n);
+      ctx.lineTo(i * cell + n, 0);
+      ctx.stroke();
+    }
+    const rand = seeded(41);
+    for (let i = 0; i < 14; i++) {
+      ctx.fillStyle = `rgba(90,65,35,${0.04 + rand() * 0.07})`;
+      ctx.beginPath();
+      ctx.ellipse(rand() * n, rand() * n, 8 + rand() * 28, 6 + rand() * 18, rand() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (let i = 0; i < 900; i++) {
+      ctx.fillStyle = `rgba(${rand() < 0.5 ? "0,0,0" : "255,255,255"},${rand() * 0.05})`;
+      ctx.fillRect(rand() * n, rand() * n, 1.5, 1.5);
+    }
+  };
+}
+export function paddedTexture() {
+  return makeTexture("padded", 256, paddedDraw(false), [2, 2]);
+}
+export function paddedBumpTexture() {
+  return makeTexture("paddedbump", 128, paddedDraw(true), [2, 2], false);
+}
+
+// Stickat (ärmar): ribbor på längden med små maskor
+export function knitTexture() {
+  return makeTexture("knit", 128, (ctx, n) => {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, n, n);
+    const ribs = 8;
+    for (let i = 0; i < ribs; i++) {
+      const x = (i * n) / ribs;
+      const g = ctx.createLinearGradient(x, 0, x + n / ribs, 0);
+      g.addColorStop(0, "rgba(70,50,30,0.5)");
+      g.addColorStop(0.3, "rgba(255,255,255,0)");
+      g.addColorStop(0.7, "rgba(255,255,255,0)");
+      g.addColorStop(1, "rgba(70,50,30,0.5)");
+      ctx.fillStyle = g;
+      ctx.fillRect(x, 0, n / ribs, n);
+      ctx.strokeStyle = "rgba(80,60,35,0.22)";
+      ctx.lineWidth = 1;
+      for (let y = 0; y < n; y += 6) {
+        ctx.beginPath();
+        ctx.moveTo(x + 3, y);
+        ctx.lineTo(x + n / ribs / 2, y + 3);
+        ctx.lineTo(x + n / ribs - 3, y);
+        ctx.stroke();
+      }
+    }
+  }, [1, 2]);
+}
+
+// Grovt ylle (sjal, byxor): ruggig yta med fibrer åt alla håll
+export function coarseWoolTexture() {
+  return makeTexture("coarsewool", 128, (ctx, n) => {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, n, n);
+    const rand = seeded(63);
+    for (let i = 0; i < 1400; i++) {
+      ctx.strokeStyle = rand() < 0.55 ? `rgba(0,0,0,${0.06 + rand() * 0.16})` : `rgba(255,240,215,${0.05 + rand() * 0.14})`;
+      ctx.lineWidth = 0.8 + rand();
+      const x = rand() * n, y = rand() * n, a = rand() * Math.PI;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.cos(a) * 5, y + Math.sin(a) * 5);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 10; i++) {
+      ctx.fillStyle = `rgba(0,0,0,${0.05 + rand() * 0.06})`;
+      ctx.beginPath();
+      ctx.ellipse(rand() * n, rand() * n, 10 + rand() * 20, 8 + rand() * 14, rand() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }, [3, 3]);
 }
 
 // ---------- Blodstänk på marken (flera varianter) ----------

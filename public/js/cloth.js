@@ -268,7 +268,7 @@ export class Cloth {
     const { pos } = this;
     for (let i = 0; i < pos.length; i += 3) transform(e, pos[i], pos[i + 1], pos[i + 2], out, i);
     this.positionAttr.needsUpdate = true;
-    this.mesh.geometry.computeVertexNormals(); // (ingen gränssfär behövs: tyget ritas alltid)
+    fastNormals(this.mesh.geometry); // (ingen gränssfär behövs: tyget ritas alltid)
   }
 
   // Sluta röra sig och följ med en kroppsdel (t.ex. när riddaren dör och blir ragdoll)
@@ -356,4 +356,36 @@ export class Chain {
   point(k, target) {
     return target.set(this.pos[k * 3], this.pos[k * 3 + 1], this.pos[k * 3 + 2]);
   }
+}
+
+// Räknar om ytans normaler (ljusets riktning) utan att skapa några nya objekt.
+// Samma resultat som three.js computeVertexNormals, men utan skräpminne varje bildruta.
+export function fastNormals(geo) {
+  const pos = geo.attributes.position.array;
+  const nAttr = geo.attributes.normal;
+  if (!nAttr) return geo.computeVertexNormals();
+  const n = nAttr.array;
+  n.fill(0);
+  const idx = geo.index ? geo.index.array : null;
+  const count = idx ? idx.length : pos.length / 3;
+  for (let t = 0; t < count; t += 3) {
+    const a = (idx ? idx[t] : t) * 3;
+    const b = (idx ? idx[t + 1] : t + 1) * 3;
+    const c = (idx ? idx[t + 2] : t + 2) * 3;
+    const e1x = pos[b] - pos[a], e1y = pos[b + 1] - pos[a + 1], e1z = pos[b + 2] - pos[a + 2];
+    const e2x = pos[c] - pos[a], e2y = pos[c + 1] - pos[a + 1], e2z = pos[c + 2] - pos[a + 2];
+    const nx = e1y * e2z - e1z * e2y;
+    const ny = e1z * e2x - e1x * e2z;
+    const nz = e1x * e2y - e1y * e2x;
+    n[a] += nx; n[a + 1] += ny; n[a + 2] += nz;
+    n[b] += nx; n[b + 1] += ny; n[b + 2] += nz;
+    n[c] += nx; n[c + 1] += ny; n[c + 2] += nz;
+  }
+  for (let i = 0; i < n.length; i += 3) {
+    const l = Math.sqrt(n[i] * n[i] + n[i + 1] * n[i + 1] + n[i + 2] * n[i + 2]) || 1;
+    n[i] /= l;
+    n[i + 1] /= l;
+    n[i + 2] /= l;
+  }
+  nAttr.needsUpdate = true;
 }

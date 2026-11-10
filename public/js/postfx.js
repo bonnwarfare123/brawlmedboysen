@@ -83,12 +83,13 @@ const FINAL_FRAG = /* glsl */ `
 
 // Färgtoner för tid på dygnet och väder
 const GRADES = {
-  day: { saturation: 1.1, contrast: 1.05, tint: [1.02, 1.0, 0.965], lift: [0.0, 0.004, 0.012], vignette: 0.24, bloom: 0.3, threshold: 1.2 },
-  evening: { saturation: 1.06, contrast: 1.07, tint: [1.07, 0.98, 0.9], lift: [0.02, 0.006, 0.03], vignette: 0.34, bloom: 0.6, threshold: 0.9 },
-  rain: { saturation: 0.82, contrast: 1.04, tint: [0.95, 0.985, 1.03], lift: [0.012, 0.018, 0.03], vignette: 0.3, bloom: 0.3, threshold: 1.0 },
-  snow: { saturation: 0.96, contrast: 1.09, tint: [0.97, 0.99, 1.04], lift: [0.01, 0.014, 0.024], vignette: 0.3, bloom: 0.42, threshold: 1.0 },
-  winter: { saturation: 1.0, contrast: 1.05, tint: [0.97, 0.995, 1.04], lift: [0.008, 0.012, 0.025], vignette: 0.24, bloom: 0.32, threshold: 1.15 },
-  fog: { saturation: 0.86, contrast: 0.97, tint: [0.99, 1.0, 1.02], lift: [0.03, 0.03, 0.035], vignette: 0.2, bloom: 0.4, threshold: 1.0 },
+  // Mörk medeltid: dämpade färger, hårdare kontrast, kall grågrön ton och mörka hörn
+  day: { saturation: 0.8, contrast: 1.12, tint: [1.0, 0.995, 0.955], lift: [0.0, 0.004, 0.008], vignette: 0.36, bloom: 0.26, threshold: 1.2 },
+  evening: { saturation: 0.86, contrast: 1.14, tint: [1.06, 0.97, 0.88], lift: [0.012, 0.004, 0.02], vignette: 0.44, bloom: 0.62, threshold: 0.9 },
+  rain: { saturation: 0.66, contrast: 1.1, tint: [0.95, 0.985, 1.02], lift: [0.008, 0.012, 0.022], vignette: 0.44, bloom: 0.28, threshold: 1.0 },
+  snow: { saturation: 0.74, contrast: 1.12, tint: [0.96, 0.985, 1.03], lift: [0.008, 0.012, 0.02], vignette: 0.42, bloom: 0.4, threshold: 1.0 },
+  winter: { saturation: 0.78, contrast: 1.1, tint: [0.965, 0.99, 1.03], lift: [0.006, 0.01, 0.02], vignette: 0.4, bloom: 0.3, threshold: 1.15 },
+  fog: { saturation: 0.68, contrast: 1.02, tint: [0.985, 1.0, 1.01], lift: [0.024, 0.024, 0.028], vignette: 0.36, bloom: 0.38, threshold: 1.0 },
 };
 
 const LEVELS = 5;

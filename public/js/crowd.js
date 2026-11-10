@@ -97,83 +97,83 @@ function buildShapes() {
   // Bål: tunika med axlar, krage och bälte (mörkare)
   S.torso = merge([
     part(folds(new THREE.CylinderGeometry(0.13, 0.155, 0.32, 16, 3), 7, 0.06, 0.4, 0.05), 1, [0, 0.27, 0], [1.1, 1, 0.82]),
-    part(new THREE.SphereGeometry(0.14, 12, 6), 1, [0, 0.41, 0], [1.25, 0.45, 0.8]),
+    part(new THREE.SphereGeometry(0.14, 8, 4), 1, [0, 0.41, 0], [1.25, 0.45, 0.8]),
     // axlar (rundade) och nacke
-    part(new THREE.SphereGeometry(0.06, 8, 6), 0.95, [0.155, 0.385, 0], [1.1, 0.9, 1]),
-    part(new THREE.SphereGeometry(0.06, 8, 6), 0.95, [-0.155, 0.385, 0], [1.1, 0.9, 1]),
+    part(new THREE.SphereGeometry(0.06, 6, 4), 0.95, [0.155, 0.385, 0], [1.1, 0.9, 1]),
+    part(new THREE.SphereGeometry(0.06, 6, 4), 0.95, [-0.155, 0.385, 0], [1.1, 0.9, 1]),
     // tunikans kjol med veck nedanför bältet
     part(folds(new THREE.CylinderGeometry(0.168, 0.205, 0.17, 18, 2, true), 9, 0.09, 0.11, -0.06), 0.92, [0, 0.03, 0], [1.1, 1, 0.9]),
-    part(new THREE.CylinderGeometry(0.172, 0.172, 0.04, 14), 0.35, [0, 0.12, 0], [1.1, 1, 0.84]),
+    part(new THREE.CylinderGeometry(0.172, 0.172, 0.04, 10), 0.35, [0, 0.12, 0], [1.1, 1, 0.84]),
     part(new THREE.BoxGeometry(0.04, 0.035, 0.01), [0.75, 0.62, 0.3], [0, 0.12, 0.148]), // bältesspänne
     part(new THREE.TorusGeometry(0.062, 0.02, 5, 12), 0.7, [0, 0.455, 0.01], [1, 1, 1], [Math.PI / 2, 0, 0]),
     part(new THREE.BoxGeometry(0.012, 0.09, 0.008), 0.6, [0, 0.4, 0.122], [1, 1, 1], [-0.25, 0, 0]),   // halsslits
   ]);
   // Klänning upptill (snörliv med urringning)
   S.bodice = merge([
-    part(new THREE.CylinderGeometry(0.115, 0.13, 0.3, 14), 1, [0, 0.28, 0], [1.1, 1, 0.85]),
-    part(new THREE.SphereGeometry(0.13, 12, 6), 1, [0, 0.4, 0], [1.22, 0.45, 0.82]),
-    part(new THREE.SphereGeometry(0.052, 8, 6), 0.95, [0.14, 0.38, 0], [1.1, 0.9, 1]),
-    part(new THREE.SphereGeometry(0.052, 8, 6), 0.95, [-0.14, 0.38, 0], [1.1, 0.9, 1]),
-    part(new THREE.SphereGeometry(0.075, 10, 6), 1, [0, 0.31, 0.06], [1.5, 0.75, 0.9]), // byst
+    part(new THREE.CylinderGeometry(0.115, 0.13, 0.3, 10), 1, [0, 0.28, 0], [1.1, 1, 0.85]),
+    part(new THREE.SphereGeometry(0.13, 8, 4), 1, [0, 0.4, 0], [1.22, 0.45, 0.82]),
+    part(new THREE.SphereGeometry(0.052, 6, 4), 0.95, [0.14, 0.38, 0], [1.1, 0.9, 1]),
+    part(new THREE.SphereGeometry(0.052, 6, 4), 0.95, [-0.14, 0.38, 0], [1.1, 0.9, 1]),
+    part(new THREE.SphereGeometry(0.075, 7, 4), 1, [0, 0.31, 0.06], [1.5, 0.75, 0.9]), // byst
     part(folds(new THREE.CylinderGeometry(0.145, 0.2, 0.18, 18, 2, true), 10, 0.08, 0.13, -0.05), 0.92, [0, 0.05, 0], [1.1, 1, 0.92]),
     part(new THREE.BoxGeometry(0.012, 0.2, 0.01), 0.35, [0, 0.27, 0.125]), // snörning
     part(new THREE.TorusGeometry(0.085, 0.012, 4, 14, Math.PI), [0.93, 0.9, 0.84], [0, 0.44, 0.02], [1.2, 1, 1], [Math.PI / 2 + 0.25, 0, Math.PI]), // linnekant i urringningen
   ]);
   // Huvud med näsa och öron (hudfärg)
   S.head = merge([
-    part(new THREE.CylinderGeometry(0.04, 0.045, 0.08, 8), 0.92, [0, 0.0, 0]),
-    part(new THREE.SphereGeometry(0.1, 12, 10), 1, [0, 0.1, 0], [1, 1.1, 1.02]),
-    part(new THREE.SphereGeometry(0.068, 10, 8), 1, [0, 0.058, 0.03], [1.05, 0.8, 1]),
+    part(new THREE.CylinderGeometry(0.04, 0.045, 0.08, 6), 0.92, [0, 0.0, 0]),
+    part(new THREE.SphereGeometry(0.1, 10, 8), 1, [0, 0.1, 0], [1, 1.1, 1.02]),
+    part(new THREE.SphereGeometry(0.068, 7, 6), 1, [0, 0.058, 0.03], [1.05, 0.8, 1]),
     part(new THREE.ConeGeometry(0.019, 0.05, 5), 0.93, [0, 0.093, 0.108], [1, 1, 0.9], [-0.35, 0, 0]),
-    part(new THREE.SphereGeometry(0.014, 6, 5), 0.93, [0, 0.074, 0.11], [1.3, 0.8, 0.9]),           // nästipp
-    part(new THREE.SphereGeometry(0.026, 6, 5), [1.04, 0.9, 0.88], [0.048, 0.082, 0.078], [1, 0.8, 0.6]), // kinder (lite rosiga)
-    part(new THREE.SphereGeometry(0.026, 6, 5), [1.04, 0.9, 0.88], [-0.048, 0.082, 0.078], [1, 0.8, 0.6]),
-    part(new THREE.SphereGeometry(0.03, 8, 5), 0.97, [0, 0.025, 0.07], [1.2, 0.8, 0.9]),             // haka
-    part(new THREE.SphereGeometry(0.02, 6, 5), 0.9, [0.098, 0.1, 0], [0.5, 1, 0.8]),
-    part(new THREE.SphereGeometry(0.02, 6, 5), 0.9, [-0.098, 0.1, 0], [0.5, 1, 0.8]),
+    part(new THREE.SphereGeometry(0.014, 5, 4), 0.93, [0, 0.074, 0.11], [1.3, 0.8, 0.9]),           // nästipp
+    part(new THREE.SphereGeometry(0.026, 5, 4), [1.04, 0.9, 0.88], [0.048, 0.082, 0.078], [1, 0.8, 0.6]), // kinder (lite rosiga)
+    part(new THREE.SphereGeometry(0.026, 5, 4), [1.04, 0.9, 0.88], [-0.048, 0.082, 0.078], [1, 0.8, 0.6]),
+    part(new THREE.SphereGeometry(0.03, 6, 4), 0.97, [0, 0.025, 0.07], [1.2, 0.8, 0.9]),             // haka
+    part(new THREE.SphereGeometry(0.02, 5, 4), 0.9, [0.098, 0.1, 0], [0.5, 1, 0.8]),
+    part(new THREE.SphereGeometry(0.02, 5, 4), 0.9, [-0.098, 0.1, 0], [0.5, 1, 0.8]),
   ]);
   // Ögon och ögonbryn (mörk färg)
   S.face = merge([
-    part(new THREE.SphereGeometry(0.018, 8, 6), [0.9, 0.87, 0.8], [0.034, 0.117, 0.088], [1.15, 0.8, 0.55]),  // ögonvitor
-    part(new THREE.SphereGeometry(0.018, 8, 6), [0.9, 0.87, 0.8], [-0.034, 0.117, 0.088], [1.15, 0.8, 0.55]),
-    part(new THREE.SphereGeometry(0.011, 6, 5), [0.03, 0.02, 0.015], [0.034, 0.117, 0.097], [1, 1, 0.6]),
-    part(new THREE.SphereGeometry(0.011, 6, 5), [0.03, 0.02, 0.015], [-0.034, 0.117, 0.097], [1, 1, 0.6]),
+    part(new THREE.SphereGeometry(0.018, 6, 4), [0.9, 0.87, 0.8], [0.034, 0.117, 0.088], [1.15, 0.8, 0.55]),  // ögonvitor
+    part(new THREE.SphereGeometry(0.018, 6, 4), [0.9, 0.87, 0.8], [-0.034, 0.117, 0.088], [1.15, 0.8, 0.55]),
+    part(new THREE.SphereGeometry(0.011, 5, 4), [0.03, 0.02, 0.015], [0.034, 0.117, 0.097], [1, 1, 0.6]),
+    part(new THREE.SphereGeometry(0.011, 5, 4), [0.03, 0.02, 0.015], [-0.034, 0.117, 0.097], [1, 1, 0.6]),
     part(new THREE.BoxGeometry(0.034, 0.009, 0.012), [0.1, 0.065, 0.045], [0.035, 0.142, 0.094], [1, 1, 1], [0, 0, 0.12]),
     part(new THREE.BoxGeometry(0.034, 0.009, 0.012), [0.1, 0.065, 0.045], [-0.035, 0.142, 0.094], [1, 1, 1], [0, 0, -0.12]),
   ]);
-  S.mouth = part(new THREE.SphereGeometry(0.02, 8, 6), 1, [0, 0, 0], [1.3, 1, 0.5]);
+  S.mouth = part(new THREE.SphereGeometry(0.02, 6, 4), 1, [0, 0, 0], [1.3, 1, 0.5]);
   // Arm (ärm med mörkare mudd) och hand
   // Överarm (axel till armbåge) och underarm (armbåge till handled med mudd)
   S.arm = merge([
     part(new THREE.CapsuleGeometry(0.048, 0.08, 3, 8), 1, [0, -0.075, 0]),
-    part(new THREE.SphereGeometry(0.045, 8, 6), 0.9, [0, -0.15, 0]),
+    part(new THREE.SphereGeometry(0.045, 6, 4), 0.9, [0, -0.15, 0]),
   ]);
   S.fore = merge([
     part(folds(new THREE.CylinderGeometry(0.044, 0.05, 0.12, 10, 2), 5, 0.12, -0.17, -0.27), 1, [0, -0.215, 0]),
-    part(new THREE.CylinderGeometry(0.052, 0.052, 0.035, 8), 0.6, [0, -0.28, 0]),
+    part(new THREE.CylinderGeometry(0.052, 0.052, 0.035, 6), 0.6, [0, -0.28, 0]),
   ]);
-  S.hand = part(new THREE.SphereGeometry(0.038, 8, 6), 1, [0, -0.32, 0.005], [0.9, 1.1, 0.8]);
+  S.hand = part(new THREE.SphereGeometry(0.038, 6, 4), 1, [0, -0.32, 0.005], [0.9, 1.1, 0.8]);
   // Ben: lår (hosor) och underben med sko (skon blir mörk)
   S.thigh = part(limb([[0, 0.07], [0.2, 0.068], [0.7, 0.056], [1, 0.05]], 0.36, -0.1, 0.4), 1, [0, 0, 0]);
   S.shin = merge([
     part(limb([[0, 0.05], [0.25, 0.056], [0.55, 0.048], [0.92, 0.036], [1, 0.036]], 0.38, 0.3, 0.3), 1, [0, 0, 0]),
-    part(new THREE.SphereGeometry(0.06, 8, 6), 0.3, [0, -0.39, 0.04], [0.9, 0.6, 1.6]),
+    part(new THREE.SphereGeometry(0.06, 6, 4), 0.3, [0, -0.39, 0.04], [0.9, 0.6, 1.6]),
   ]);
   // Kjol (kvinnor): bredare lår och en klocka nedtill
   S.skirtThigh = part(new THREE.CapsuleGeometry(0.085, 0.24, 3, 8), 1, [0, -0.18, 0], [1.15, 1, 1]);
   S.skirtShin = merge([
-    part(new THREE.CylinderGeometry(0.08, 0.12, 0.4, 10, 1, true), 1, [0, -0.2, 0]),
-    part(new THREE.SphereGeometry(0.05, 8, 6), 0.3, [0, -0.4, 0.06], [0.9, 0.6, 1.4]),
+    part(new THREE.CylinderGeometry(0.08, 0.12, 0.4, 8, 1, true), 1, [0, -0.2, 0]),
+    part(new THREE.SphereGeometry(0.05, 6, 4), 0.3, [0, -0.4, 0.06], [0.9, 0.6, 1.4]),
   ]);
   // Hår: kort, långt (med fläta bak), krans runt flint (präster)
-  S.hairShort = part(new THREE.SphereGeometry(0.105, 12, 6, 0, Math.PI * 2, 0, 1.5), 1, [0, 0.11, -0.006], [1.02, 1.08, 1.06]);
+  S.hairShort = part(new THREE.SphereGeometry(0.105, 8, 4, 0, Math.PI * 2, 0, 1.5), 1, [0, 0.11, -0.006], [1.02, 1.08, 1.06]);
   S.hairLong = merge([
-    part(new THREE.SphereGeometry(0.106, 12, 6, 0, Math.PI * 2, 0, 1.6), 1, [0, 0.11, -0.006], [1.03, 1.1, 1.08]),
+    part(new THREE.SphereGeometry(0.106, 8, 4, 0, Math.PI * 2, 0, 1.6), 1, [0, 0.11, -0.006], [1.03, 1.1, 1.08]),
     part(new THREE.BoxGeometry(0.17, 0.2, 0.05), 1, [0, 0.03, -0.075], [1, 1, 1], [0.12, 0, 0]),
   ]);
   S.tonsure = part(new THREE.TorusGeometry(0.09, 0.02, 6, 14), 1, [0, 0.13, 0], [1.05, 1.08, 1], [Math.PI / 2, 0, 0]);
   S.beard = merge([
-    part(new THREE.SphereGeometry(0.06, 10, 6), 1, [0, 0.035, 0.05], [1.15, 0.9, 0.85]),
+    part(new THREE.SphereGeometry(0.06, 7, 4), 1, [0, 0.035, 0.05], [1.15, 0.9, 0.85]),
     part(new THREE.BoxGeometry(0.06, 0.012, 0.014), 1, [0, 0.075, 0.098]),
   ]);
   // Huvudbonader
@@ -182,17 +182,17 @@ function buildShapes() {
     part(new THREE.TorusGeometry(0.1, 0.04, 6, 12), 0.8, [0, 0.0, 0], [1.1, 1.1, 1], [Math.PI / 2, 0, 0]),
   ]);
   S.brim = merge([
-    part(new THREE.CylinderGeometry(0.2, 0.2, 0.015, 14), 1, [0, 0.19, 0]),
-    part(new THREE.CylinderGeometry(0.09, 0.11, 0.1, 12), 1, [0, 0.24, 0]),
-    part(new THREE.CylinderGeometry(0.112, 0.112, 0.025, 12, 1, true), 0.4, [0, 0.205, 0]),
+    part(new THREE.CylinderGeometry(0.2, 0.2, 0.015, 10), 1, [0, 0.19, 0]),
+    part(new THREE.CylinderGeometry(0.09, 0.11, 0.1, 9), 1, [0, 0.24, 0]),
+    part(new THREE.CylinderGeometry(0.112, 0.112, 0.025, 9, 1, true), 0.4, [0, 0.205, 0]),
   ]);
-  S.cap = part(new THREE.SphereGeometry(0.112, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), 1, [0, 0.13, 0], [1, 0.9, 1.05]);
+  S.cap = part(new THREE.SphereGeometry(0.112, 7, 4, 0, Math.PI * 2, 0, Math.PI / 2), 1, [0, 0.13, 0], [1, 0.9, 1.05]);
   S.beret = merge([
-    part(new THREE.CylinderGeometry(0.14, 0.11, 0.05, 14), 0.6, [0.02, 0.21, 0], [1, 1, 1], [0, 0, -0.15]),
+    part(new THREE.CylinderGeometry(0.14, 0.11, 0.05, 10), 0.6, [0.02, 0.21, 0], [1, 1, 1], [0, 0, -0.15]),
     part(new THREE.ConeGeometry(0.02, 0.22, 5), 1, [-0.07, 0.3, -0.04], [1, 1, 1], [0.2, 0, 0.7]),     // fjäder
   ]);
   S.wimple = merge([
-    part(new THREE.SphereGeometry(0.115, 12, 8, 0, Math.PI * 2, 0, 1.7), 1, [0, 0.11, -0.01], [1.04, 1.1, 1.06]),
+    part(new THREE.SphereGeometry(0.115, 8, 6, 0, Math.PI * 2, 0, 1.7), 1, [0, 0.11, -0.01], [1.04, 1.1, 1.06]),
     part(new THREE.BoxGeometry(0.2, 0.22, 0.04), 1, [0, 0.04, -0.09], [1, 1, 1], [0.15, 0, 0]),
     part(new THREE.TorusGeometry(0.075, 0.02, 5, 12, Math.PI), 1, [0, 0.07, 0.01], [1, 1, 1.1], [Math.PI, 0, 0]), // hakband
   ]);
@@ -326,7 +326,7 @@ export class Crowd {
     const inst = (geo, count, mat = material()) => {
       const m = new THREE.InstancedMesh(geo, mat, Math.max(1, count));
       m.count = count;
-      m.castShadow = true;
+      m.castShadow = false; // publikens skuggor syns knappt (under läktartaken) men kostade mycket
       m.receiveShadow = true;
       m.frustumCulled = false;
       this.group.add(m);
@@ -454,200 +454,212 @@ export class Crowd {
     this.focus.copy(v);
   }
 
+  // Uppdateras varje bildruta. Varje person räknas i en egen, liten funktion: då kan webbläsaren
+  // optimera koden ordentligt och slipper skapa skräpminne för varje tal (det gav små hack).
   update(dt, time, excitement) {
-    const d = this.d;
     const cheer = Math.min(1, excitement);
+    const people = this.people;
+    for (let n = 0; n < people.length; n++) this.updatePerson(people[n], dt, time, cheer);
     const M = this.mesh;
-    const handPos = new THREE.Vector3();
-    for (const p of this.people) {
+    if (!this.allMeshes) this.allMeshes = [...Object.values(M), ...this.extras.map((e) => e.mesh)];
+    for (let n = 0; n < this.allMeshes.length; n++) this.allMeshes[n].instanceMatrix.needsUpdate = true;
+  }
+
+  updatePerson(p, dt, time, cheer) {
+    const d = this.d;
+    const M = this.mesh;
+    const handPos = _handPos;
+    {
       const i = p.index;
-      const t = time * p.speed + p.phase;
-      const spot = p.spot;
-      // Reser sig vid häftiga händelser (de ivrigaste först)
-      const wantStand = spot.standing || cheer > 0.25 + p.eager * 0.6 ? 1 : 0; // ståplats längst bak: står alltid
-      p.stand += (wantStand - p.stand) * Math.min(1, dt * (wantStand ? 6 : 2.5));
-      const stand = p.stand;
-      const sit = 1 - stand;
-      // Tittar mot striden (med lite eget huvudvridande)
-      const dx = this.focus.x - spot.pos.x;
-      const dz = this.focus.z - spot.pos.z;
-      let rel = Math.atan2(dx, dz) - spot.yaw;
-      rel = Math.atan2(Math.sin(rel), Math.cos(rel));
-      const lookTarget = Math.max(-1.1, Math.min(1.1, rel)) + Math.sin(t * 0.37) * 0.12;
-      p.look += (lookTarget - p.look) * Math.min(1, dt * 3);
+    const t = time * p.speed + p.phase;
+    const spot = p.spot;
+    // Reser sig vid häftiga händelser (de ivrigaste först)
+    const wantStand = spot.standing || cheer > 0.25 + p.eager * 0.6 ? 1 : 0; // ståplats längst bak: står alltid
+    p.stand += (wantStand - p.stand) * Math.min(1, dt * (wantStand ? 6 : 2.5));
+    const stand = p.stand;
+    const sit = 1 - stand;
+    // Tittar mot striden (med lite eget huvudvridande)
+    const dx = this.focus.x - spot.pos.x;
+    const dz = this.focus.z - spot.pos.z;
+    let rel = Math.atan2(dx, dz) - spot.yaw;
+    rel = Math.atan2(Math.sin(rel), Math.cos(rel));
+    const lookTarget = Math.max(-1.1, Math.min(1.1, rel)) + Math.sin(t * 0.37) * 0.12;
+    p.look += (lookTarget - p.look) * Math.min(1, dt * 3);
 
-      const hop = cheer > 0.05 ? Math.max(0, Math.sin(time * 8 * (0.7 + p.eager * 0.6) + p.phase)) * 0.08 * cheer * stand : 0;
-      d.root.position.set(spot.pos.x, spot.pos.y + stand * 0.72 * p.scale + hop, spot.pos.z);
-      d.root.rotation.set(0, spot.yaw + p.look * 0.25, 0);
-      d.root.scale.setScalar(p.scale);
-      d.body.scale.set(p.girth, 1, 0.9 + p.girth * 0.1 + (p.girth - 1) * 0.6);
-      d.armL.position.x = 0.18 * (0.35 + p.girth * 0.65);
-      d.armR.position.x = -d.armL.position.x;
-      d.torso.rotation.set(0.12 * cheer * sit + Math.sin(t) * 0.03 - stand * 0.05 + p.hunch, p.look * 0.25, Math.sin(t * 0.7) * 0.04);
-      d.head.rotation.set(Math.sin(t * 0.9) * 0.06 - cheer * 0.25, p.look * 0.5, Math.sin(t * 0.5) * 0.05);
-      d.mouth.scale.set(1, 0.25 + cheer * (0.8 + Math.abs(Math.sin(time * 6 + p.phase)) * 0.6) + (p.throwT >= 0 ? 0.6 : 0), 1);
-      // Benen: sittande lår framåt och underben rakt ner; stående: raka ben
-      const spread = 0.06 + cheer * 0.05;
-      d.thighL.rotation.set(-Math.PI / 2 * sit, 0, spread);
-      d.thighR.rotation.set(-Math.PI / 2 * sit, 0, -spread);
-      d.shinL.rotation.set(Math.PI / 2 * sit + (sit > 0.5 ? Math.sin(t * 1.3) * 0.08 : 0), 0, -spread);
-      d.shinR.rotation.set(Math.PI / 2 * sit, 0, spread);
+    const hop = cheer > 0.05 ? Math.max(0, Math.sin(time * 8 * (0.7 + p.eager * 0.6) + p.phase)) * 0.08 * cheer * stand : 0;
+    d.root.position.set(spot.pos.x, spot.pos.y + stand * 0.72 * p.scale + hop, spot.pos.z);
+    d.root.rotation.set(0, spot.yaw + p.look * 0.25, 0);
+    d.root.scale.setScalar(p.scale);
+    d.body.scale.set(p.girth, 1, 0.9 + p.girth * 0.1 + (p.girth - 1) * 0.6);
+    d.armL.position.x = 0.18 * (0.35 + p.girth * 0.65);
+    d.armR.position.x = -d.armL.position.x;
+    d.torso.rotation.set(0.12 * cheer * sit + Math.sin(t) * 0.03 - stand * 0.05 + p.hunch, p.look * 0.25, Math.sin(t * 0.7) * 0.04);
+    d.head.rotation.set(Math.sin(t * 0.9) * 0.06 - cheer * 0.25, p.look * 0.5, Math.sin(t * 0.5) * 0.05);
+    d.mouth.scale.set(1, 0.25 + cheer * (0.8 + Math.abs(Math.sin(time * 6 + p.phase)) * 0.6) + (p.throwT >= 0 ? 0.6 : 0), 1);
+    // Benen: sittande lår framåt och underben rakt ner; stående: raka ben
+    const spread = 0.06 + cheer * 0.05;
+    d.thighL.rotation.set(-Math.PI / 2 * sit, 0, spread);
+    d.thighR.rotation.set(-Math.PI / 2 * sit, 0, -spread);
+    d.shinL.rotation.set(Math.PI / 2 * sit + (sit > 0.5 ? Math.sin(t * 1.3) * 0.08 : 0), 0, -spread);
+    d.shinR.rotation.set(Math.PI / 2 * sit, 0, spread);
 
-      // Armarna efter personens sätt att jubla
-      const rest = 0.12;
-      let lx = -0.2 * sit, lz = rest, rx = -0.2 * sit, rz = -rest;
-      const restE = -0.75 * sit - 0.12; // armbågen: händerna i knät när man sitter
-      let le = restE, re = restE;
-      if (p.style === "clap") {
-        const clap = Math.abs(Math.sin(time * 12 + p.phase)) * 0.45;
-        const c = Math.max(cheer, 0.15 * (Math.sin(t * 0.4) > 0.9 ? 1 : 0));
-        lx = lerp(lx, -1.05, c); lz = lerp(rest, 0.12 + clap, c);
-        rx = lerp(rx, -1.05, c); rz = lerp(-rest, -0.12 - clap, c);
-        le = lerp(restE, -0.75, c); re = le;
-      } else if (p.style === "kerchief" || p.style === "wave") {
-        const wave = Math.sin(time * 10 + p.phase) * 0.4;
-        rx = lerp(rx, -2.8 + wave * 0.3, cheer); rz = lerp(-rest, -0.3 + wave, cheer);
-        re = lerp(restE, -0.35 + wave * 0.4, cheer);
-        if (p.style === "wave") { lx = lerp(lx, -2.6, cheer); lz = lerp(rest, 0.4 - wave, cheer); le = lerp(restE, -0.3, cheer); }
-      } else if (p.style === "mug" || p.style === "eat") {
-        // Sejdeln eller kycklinglåret i handen. Då och då en klunk/tugga (handen till munnen), vid jubel höjs den
-        const cycle = (time + p.snackAt) % 7;
-        const sip = cycle < 1.2 ? Math.sin((cycle / 1.2) * Math.PI) : 0;
-        rx = lerp(-0.55 - sip * 0.55, -2.9, cheer);
-        rz = lerp(-0.2 + sip * 0.35, -0.15, cheer);
-        re = lerp(-0.9 - sip * 1.1, -0.25, cheer);
-        if (sip > 0.5) d.head.rotation.x -= 0.15 * sip;
-      } else if (p.style === "point") {
-        // Pekar mot striden och skrattar
-        const jab = Math.max(0, Math.sin(time * 6 + p.phase)) * 0.15;
-        rx = lerp(-0.4 * sit - 0.2, -1.5 - jab, Math.max(cheer, 0.3)); rz = lerp(-rest, -0.05, cheer);
-        re = lerp(restE, -0.1 + jab, Math.max(cheer, 0.3));
-      } else if (p.style === "slap") {
-        // Dunkar grannen i ryggen (höger arm ut åt sidan)
-        const slap = Math.max(0, Math.sin(time * 7 + p.phase));
-        rx = lerp(rx, -1.1, cheer); rz = lerp(-rest, -1.1 + slap * 0.6, cheer);
-        lx = lerp(lx, -2.4, cheer * 0.7);
-        re = lerp(restE, -0.4 - slap * 0.5, cheer); le = lerp(restE, -0.4, cheer * 0.7);
-      } else if (p.style === "flag") {
-        // Vimpeln hålls uppe och viftas fram och tillbaka (mer ju mer det händer)
-        const sway = Math.sin(time * (3 + cheer * 7) + p.phase);
-        const up = Math.max(cheer, 0.35);
-        rx = lerp(-0.6, -2.7 + sway * 0.25, up); rz = lerp(-0.25, -0.2 + sway * 0.35 * up, up);
-        re = lerp(-0.9, -0.3 + sway * 0.2, up);
-      } else if (p.style === "hatwave") {
-        // Viftar med hatten över huvudet
-        const wave = Math.sin(time * 9 + p.phase) * 0.5;
-        rx = lerp(-0.9, -2.9 + wave * 0.2, Math.max(cheer, 0.1)); rz = lerp(-0.2, -0.25 + wave, cheer);
-        re = lerp(-0.5, -0.3, cheer);
-      } else {
-        const pump = Math.max(0, Math.sin(time * 9 + p.phase)) * 0.5;
-        rx = lerp(rx, -2.6 - pump, cheer); rz = lerp(-rest, -0.2, cheer);
-        re = lerp(restE, -0.25 - (0.5 - pump) * 0.8, cheer);
-      }
-      // Lugnt på planen: ibland en liten egen rörelse
-      if (cheer < 0.25 && p.throwT < 0) {
-        p.idleT -= dt;
-        if (!p.idle && p.idleT <= 0) {
-          const kinds = ["scratch", "chat", "chat", "stretch", "shift", "rub"];
-          p.idle = { kind: kinds[Math.floor(((p.phase * 997 + time * 13) % 1) * kinds.length)], t: 0, side: Math.sin(p.phase * 31 + time) > 0 ? 1 : -1 };
-        }
-      }
-      if (p.idle) {
-        const I = p.idle;
-        I.t += dt;
-        const dur = I.kind === "chat" ? 3.2 : I.kind === "shift" ? 2.5 : 1.8;
-        const k = Math.sin(Math.min(1, I.t / dur) * Math.PI); // in och ut mjukt
-        const calm = 1 - Math.min(1, cheer * 4);
-        const w = k * calm;
-        if (I.kind === "scratch") {
-          // Kliar sig i huvudet (vänster hand)
-          const rub = Math.sin(I.t * 18) * 0.12;
-          lx = lerp(lx, -2.6, w); lz = lerp(lz, 0.55 + rub, w); le = lerp(le, -1.9, w);
-          d.head.rotation.z += 0.12 * w;
-        } else if (I.kind === "chat") {
-          // Vänder sig mot grannen och pratar (huvudet och lite gester med vänster hand)
-          d.head.rotation.y += I.side * 0.9 * w;
-          d.torso.rotation.y += I.side * 0.25 * w;
-          d.mouth.scale.y += Math.abs(Math.sin(I.t * 9)) * 0.8 * w;
-          lx = lerp(lx, -0.9 + Math.sin(I.t * 4) * 0.2, w * 0.8); le = lerp(le, -1.2, w * 0.8);
-        } else if (I.kind === "stretch") {
-          lx = lerp(lx, -2.9, w); rx = lerp(rx, -2.9, w); lz = lerp(lz, 0.3, w); rz = lerp(rz, -0.3, w);
-          le = lerp(le, -0.2, w); re = lerp(re, -0.2, w);
-          d.head.rotation.x -= 0.25 * w;
-          d.mouth.scale.y += 0.9 * w; // gäspar
-        } else if (I.kind === "shift") {
-          d.torso.rotation.z += I.side * 0.09 * w;
-          d.root.position.x += Math.cos(spot.yaw) * I.side * 0.03 * w;
-        } else {
-          // Gnuggar händerna mot kylan
-          const rub = Math.sin(I.t * 14) * 0.1;
-          lx = lerp(lx, -1.2, w); rx = lerp(rx, -1.2, w); lz = lerp(lz, 0.35 + rub, w); rz = lerp(rz, -0.35 + rub, w);
-          le = lerp(le, -1.4, w); re = lerp(re, -1.4, w);
-        }
-        if (I.t >= dur) {
-          p.idle = null;
-          p.idleT = 6 + ((p.phase * 7.7 + time) % 1) * 14;
-        }
-      }
-      // De gamla stödjer sig på käppen med vänster hand
-      if (p.type === "elder") {
-        lx = -0.25 * sit - 0.15;
-        lz = 0.15;
-        le = -0.1;
-      }
-      // Kast: armen bakåt, sedan snabbt framåt
-      if (p.throwT >= -1 && p.throwKind) {
-        p.throwT += dt;
-        if (p.throwT >= 0) {
-          const k = p.throwT;
-          if (k < 0.25) { rx = lerp(rx, -3.2, k / 0.25); re = lerp(re, -1.3, k / 0.25); }
-          else if (k < 0.4) { rx = lerp(-3.2, -0.9, (k - 0.25) / 0.15); re = lerp(-1.3, 0, (k - 0.25) / 0.15); }
-          else { rx = lerp(-0.9, rx, Math.min(1, (k - 0.4) / 0.3)); re = lerp(0, re, Math.min(1, (k - 0.4) / 0.3)); }
-          if (k >= 0.33 && !p.thrown) {
-            p.thrown = true;
-            d.root.updateMatrixWorld(true);
-            handPos.set(0, -0.32, 0.05).applyMatrix4(d.wristR.matrixWorld);
-            p.throwables?.launch(p.throwKind, handPos, p.throwTarget);
-          }
-          if (k > 0.8) {
-            p.throwT = -1;
-            p.throwKind = null;
-          }
-        }
-      }
-      d.armL.rotation.set(lx, 0, lz);
-      d.armR.rotation.set(rx, 0, rz);
-      d.foreL.rotation.set(le, 0, 0);
-      d.foreR.rotation.set(re, 0, 0);
-
-      d.root.updateMatrixWorld(true);
-      if (p.female) M.bodice.setMatrixAt(p.wi, d.body.matrixWorld);
-      else M.torso.setMatrixAt(p.mi, d.body.matrixWorld);
-      M.head.setMatrixAt(i, d.head.matrixWorld);
-      M.face.setMatrixAt(i, d.head.matrixWorld);
-      M.mouth.setMatrixAt(i, d.mouth.matrixWorld);
-      M.arm.setMatrixAt(i * 2, d.armL.matrixWorld);
-      M.arm.setMatrixAt(i * 2 + 1, d.armR.matrixWorld);
-      M.fore.setMatrixAt(i * 2, d.wristL.matrixWorld);
-      M.fore.setMatrixAt(i * 2 + 1, d.wristR.matrixWorld);
-      M.hand.setMatrixAt(i * 2, d.wristL.matrixWorld);
-      M.hand.setMatrixAt(i * 2 + 1, d.wristR.matrixWorld);
-      if (p.female) {
-        M.skirtThigh.setMatrixAt(p.wi * 2, d.thighL.matrixWorld);
-        M.skirtThigh.setMatrixAt(p.wi * 2 + 1, d.thighR.matrixWorld);
-        M.skirtShin.setMatrixAt(p.wi * 2, d.shinL.matrixWorld);
-        M.skirtShin.setMatrixAt(p.wi * 2 + 1, d.shinR.matrixWorld);
-      } else {
-        M.thigh.setMatrixAt(p.mi * 2, d.thighL.matrixWorld);
-        M.thigh.setMatrixAt(p.mi * 2 + 1, d.thighR.matrixWorld);
-        M.shin.setMatrixAt(p.mi * 2, d.shinL.matrixWorld);
-        M.shin.setMatrixAt(p.mi * 2 + 1, d.shinR.matrixWorld);
-      }
-      for (const e of p.extras || []) e.mesh.setMatrixAt(e.k, d[e.attach].matrixWorld);
+    // Armarna efter personens sätt att jubla
+    const rest = 0.12;
+    let lx = -0.2 * sit, lz = rest, rx = -0.2 * sit, rz = -rest;
+    const restE = -0.75 * sit - 0.12; // armbågen: händerna i knät när man sitter
+    let le = restE, re = restE;
+    if (p.style === "clap") {
+      const clap = Math.abs(Math.sin(time * 12 + p.phase)) * 0.45;
+      const c = Math.max(cheer, 0.15 * (Math.sin(t * 0.4) > 0.9 ? 1 : 0));
+      lx = lerp(lx, -1.05, c); lz = lerp(rest, 0.12 + clap, c);
+      rx = lerp(rx, -1.05, c); rz = lerp(-rest, -0.12 - clap, c);
+      le = lerp(restE, -0.75, c); re = le;
+    } else if (p.style === "kerchief" || p.style === "wave") {
+      const wave = Math.sin(time * 10 + p.phase) * 0.4;
+      rx = lerp(rx, -2.8 + wave * 0.3, cheer); rz = lerp(-rest, -0.3 + wave, cheer);
+      re = lerp(restE, -0.35 + wave * 0.4, cheer);
+      if (p.style === "wave") { lx = lerp(lx, -2.6, cheer); lz = lerp(rest, 0.4 - wave, cheer); le = lerp(restE, -0.3, cheer); }
+    } else if (p.style === "mug" || p.style === "eat") {
+      // Sejdeln eller kycklinglåret i handen. Då och då en klunk/tugga (handen till munnen), vid jubel höjs den
+      const cycle = (time + p.snackAt) % 7;
+      const sip = cycle < 1.2 ? Math.sin((cycle / 1.2) * Math.PI) : 0;
+      rx = lerp(-0.55 - sip * 0.55, -2.9, cheer);
+      rz = lerp(-0.2 + sip * 0.35, -0.15, cheer);
+      re = lerp(-0.9 - sip * 1.1, -0.25, cheer);
+      if (sip > 0.5) d.head.rotation.x -= 0.15 * sip;
+    } else if (p.style === "point") {
+      // Pekar mot striden och skrattar
+      const jab = Math.max(0, Math.sin(time * 6 + p.phase)) * 0.15;
+      rx = lerp(-0.4 * sit - 0.2, -1.5 - jab, Math.max(cheer, 0.3)); rz = lerp(-rest, -0.05, cheer);
+      re = lerp(restE, -0.1 + jab, Math.max(cheer, 0.3));
+    } else if (p.style === "slap") {
+      // Dunkar grannen i ryggen (höger arm ut åt sidan)
+      const slap = Math.max(0, Math.sin(time * 7 + p.phase));
+      rx = lerp(rx, -1.1, cheer); rz = lerp(-rest, -1.1 + slap * 0.6, cheer);
+      lx = lerp(lx, -2.4, cheer * 0.7);
+      re = lerp(restE, -0.4 - slap * 0.5, cheer); le = lerp(restE, -0.4, cheer * 0.7);
+    } else if (p.style === "flag") {
+      // Vimpeln hålls uppe och viftas fram och tillbaka (mer ju mer det händer)
+      const sway = Math.sin(time * (3 + cheer * 7) + p.phase);
+      const up = Math.max(cheer, 0.35);
+      rx = lerp(-0.6, -2.7 + sway * 0.25, up); rz = lerp(-0.25, -0.2 + sway * 0.35 * up, up);
+      re = lerp(-0.9, -0.3 + sway * 0.2, up);
+    } else if (p.style === "hatwave") {
+      // Viftar med hatten över huvudet
+      const wave = Math.sin(time * 9 + p.phase) * 0.5;
+      rx = lerp(-0.9, -2.9 + wave * 0.2, Math.max(cheer, 0.1)); rz = lerp(-0.2, -0.25 + wave, cheer);
+      re = lerp(-0.5, -0.3, cheer);
+    } else {
+      const pump = Math.max(0, Math.sin(time * 9 + p.phase)) * 0.5;
+      rx = lerp(rx, -2.6 - pump, cheer); rz = lerp(-rest, -0.2, cheer);
+      re = lerp(restE, -0.25 - (0.5 - pump) * 0.8, cheer);
     }
-    for (const m of [...Object.values(M), ...this.extras.map((e) => e.mesh)]) m.instanceMatrix.needsUpdate = true;
+    // Lugnt på planen: ibland en liten egen rörelse
+    if (cheer < 0.25 && p.throwT < 0) {
+      p.idleT -= dt;
+      if (!p.idle && p.idleT <= 0) {
+        const kinds = ["scratch", "chat", "chat", "stretch", "shift", "rub"];
+        p.idle = { kind: kinds[Math.floor(((p.phase * 997 + time * 13) % 1) * kinds.length)], t: 0, side: Math.sin(p.phase * 31 + time) > 0 ? 1 : -1 };
+      }
+    }
+    if (p.idle) {
+      const I = p.idle;
+      I.t += dt;
+      const dur = I.kind === "chat" ? 3.2 : I.kind === "shift" ? 2.5 : 1.8;
+      const k = Math.sin(Math.min(1, I.t / dur) * Math.PI); // in och ut mjukt
+      const calm = 1 - Math.min(1, cheer * 4);
+      const w = k * calm;
+      if (I.kind === "scratch") {
+        // Kliar sig i huvudet (vänster hand)
+        const rub = Math.sin(I.t * 18) * 0.12;
+        lx = lerp(lx, -2.6, w); lz = lerp(lz, 0.55 + rub, w); le = lerp(le, -1.9, w);
+        d.head.rotation.z += 0.12 * w;
+      } else if (I.kind === "chat") {
+        // Vänder sig mot grannen och pratar (huvudet och lite gester med vänster hand)
+        d.head.rotation.y += I.side * 0.9 * w;
+        d.torso.rotation.y += I.side * 0.25 * w;
+        d.mouth.scale.y += Math.abs(Math.sin(I.t * 9)) * 0.8 * w;
+        lx = lerp(lx, -0.9 + Math.sin(I.t * 4) * 0.2, w * 0.8); le = lerp(le, -1.2, w * 0.8);
+      } else if (I.kind === "stretch") {
+        lx = lerp(lx, -2.9, w); rx = lerp(rx, -2.9, w); lz = lerp(lz, 0.3, w); rz = lerp(rz, -0.3, w);
+        le = lerp(le, -0.2, w); re = lerp(re, -0.2, w);
+        d.head.rotation.x -= 0.25 * w;
+        d.mouth.scale.y += 0.9 * w; // gäspar
+      } else if (I.kind === "shift") {
+        d.torso.rotation.z += I.side * 0.09 * w;
+        d.root.position.x += Math.cos(spot.yaw) * I.side * 0.03 * w;
+      } else {
+        // Gnuggar händerna mot kylan
+        const rub = Math.sin(I.t * 14) * 0.1;
+        lx = lerp(lx, -1.2, w); rx = lerp(rx, -1.2, w); lz = lerp(lz, 0.35 + rub, w); rz = lerp(rz, -0.35 + rub, w);
+        le = lerp(le, -1.4, w); re = lerp(re, -1.4, w);
+      }
+      if (I.t >= dur) {
+        p.idle = null;
+        p.idleT = 6 + ((p.phase * 7.7 + time) % 1) * 14;
+      }
+    }
+    // De gamla stödjer sig på käppen med vänster hand
+    if (p.type === "elder") {
+      lx = -0.25 * sit - 0.15;
+      lz = 0.15;
+      le = -0.1;
+    }
+    // Kast: armen bakåt, sedan snabbt framåt
+    if (p.throwT >= -1 && p.throwKind) {
+      p.throwT += dt;
+      if (p.throwT >= 0) {
+        const k = p.throwT;
+        if (k < 0.25) { rx = lerp(rx, -3.2, k / 0.25); re = lerp(re, -1.3, k / 0.25); }
+        else if (k < 0.4) { rx = lerp(-3.2, -0.9, (k - 0.25) / 0.15); re = lerp(-1.3, 0, (k - 0.25) / 0.15); }
+        else { rx = lerp(-0.9, rx, Math.min(1, (k - 0.4) / 0.3)); re = lerp(0, re, Math.min(1, (k - 0.4) / 0.3)); }
+        if (k >= 0.33 && !p.thrown) {
+          p.thrown = true;
+          d.root.updateMatrixWorld(true);
+          handPos.set(0, -0.32, 0.05).applyMatrix4(d.wristR.matrixWorld);
+          p.throwables?.launch(p.throwKind, handPos, p.throwTarget);
+        }
+        if (k > 0.8) {
+          p.throwT = -1;
+          p.throwKind = null;
+        }
+      }
+    }
+    d.armL.rotation.set(lx, 0, lz);
+    d.armR.rotation.set(rx, 0, rz);
+    d.foreL.rotation.set(le, 0, 0);
+    d.foreR.rotation.set(re, 0, 0);
+
+    d.root.updateMatrixWorld(true);
+    if (p.female) M.bodice.setMatrixAt(p.wi, d.body.matrixWorld);
+    else M.torso.setMatrixAt(p.mi, d.body.matrixWorld);
+    M.head.setMatrixAt(i, d.head.matrixWorld);
+    M.face.setMatrixAt(i, d.head.matrixWorld);
+    M.mouth.setMatrixAt(i, d.mouth.matrixWorld);
+    M.arm.setMatrixAt(i * 2, d.armL.matrixWorld);
+    M.arm.setMatrixAt(i * 2 + 1, d.armR.matrixWorld);
+    M.fore.setMatrixAt(i * 2, d.wristL.matrixWorld);
+    M.fore.setMatrixAt(i * 2 + 1, d.wristR.matrixWorld);
+    M.hand.setMatrixAt(i * 2, d.wristL.matrixWorld);
+    M.hand.setMatrixAt(i * 2 + 1, d.wristR.matrixWorld);
+    if (p.female) {
+      M.skirtThigh.setMatrixAt(p.wi * 2, d.thighL.matrixWorld);
+      M.skirtThigh.setMatrixAt(p.wi * 2 + 1, d.thighR.matrixWorld);
+      M.skirtShin.setMatrixAt(p.wi * 2, d.shinL.matrixWorld);
+      M.skirtShin.setMatrixAt(p.wi * 2 + 1, d.shinR.matrixWorld);
+    } else {
+      M.thigh.setMatrixAt(p.mi * 2, d.thighL.matrixWorld);
+      M.thigh.setMatrixAt(p.mi * 2 + 1, d.thighR.matrixWorld);
+      M.shin.setMatrixAt(p.mi * 2, d.shinL.matrixWorld);
+      M.shin.setMatrixAt(p.mi * 2 + 1, d.shinR.matrixWorld);
+    }
+      const ex = p.extras;
+      if (ex) for (let n = 0; n < ex.length; n++) ex[n].mesh.setMatrixAt(ex[n].k, d[ex[n].attach].matrixWorld);
+    }
   }
 }
+
+const _handPos = new THREE.Vector3();
 
 function lerp(a, b, t) {
   return a + (b - a) * t;

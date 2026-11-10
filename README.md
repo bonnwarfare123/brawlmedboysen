@@ -1,4 +1,4 @@
-# Brawlmedboysen – v0.28
+# Brawlmedboysen – v0.33
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
@@ -15,6 +15,16 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 **Arenan:** tornerbarriär av plankor med järnband, lera nedtill, hängande tygdraperier och vapensköldar, upptrampad lerig sand där blodet sjunker in, eldkorgar med eld och rök, träningsdocka som snurrar när man slår på den, torn byggda av riktiga plankor (med stege, fönsterluckor och tinnar), krattad sand med småsten och halmstrån, läktare med plankbänkar, snidade räcken, tak med fransar och ståplats längst bak, levande publik (axlar, armbågar, kläder med veck, smala och runda, tydligare ansikten) med barn, gamla med käpp, damer och adelsmän (reser sig, jublar, klappar, pekar, dricker, äter, dunkar grannen i ryggen och viftar med hatten), försäljare som går runt, folk som går på marknaden, en lägereld med gryta och rök vid tälten, tätare gräs med blommor, damm som svävar i luften, hundar, fåglar och flugor runt elden, kungapar som visar tummen upp eller ner, vakter och en härold med trumpet.
 
 **Grafik:** på hög grafik (F2) får ljusa saker ett mjukt glöd-sken, och färgtonen anpassas efter dag, kväll, regn och dimma (varmare på kvällen, gråare i regn, mörka hörn). Mjuka, fluffiga moln driver sakta över himlen på båda banorna (och blir ett grått molntäcke när det regnar eller snöar). På låg grafik stängs glöd, skuggor och dammet av. **F3** visar bilder per sekund, ritanrop och hur många millisekunder varje bild tar. Alla shaders byggs när banan laddas (inga ryck första gången något syns), bara de 4 eldarna närmast det du tittar på lyser upp omgivningen, och molnen och tyget kostar mindre.
+
+**Lättare att sikta på huvudet (v0.33):** en del av musens upp/ner lutar nu kameran i stället för att flytta den uppåt eller nedåt (`cameraTilt` i `config.js`), så man kan sikta högt utan att kameran åker ner mot marken. Siktet sitter lite ovanför mitten av skärmen (`aimScreenY`), och kameran står lite högre och närmare (`cameraHeight`, `cameraDistance`). Alla fyra värdena kan ökas eller minskas i `config.js`.
+
+**Alla rustningar ombyggda (v0.32):** de 14 rustningarna utöver Bonden är byggda om i lager efter konceptbilder (`outfits.js`): plagg som följer bålen, kjolar och vapenrockar som följer benen, bälten med väskor, axelskydd, handskar med krage, knäskydd och rejäla stövlar. Exempel: Ringbrynjan har lång brynja med vapenrock, kors och måne; Surcoat-riddaren lång vapenrock med hängande kedjor; Stadsvakten livré i två halvor med nycklar på bröstet; Plåtrustningen veckad kjol i spelarens färg och vitt. Proportionerna är kraftigare (större huvud, händer och fötter, grövre armar och ben, bredare bål).
+
+**Mörk medeltid (v0.31):** hela spelet har fått en råare ton. Himlen är mulen och grå, solen svagare, det ligger dis över arenan och färgtonen (`postfx.js`) är mindre mättad med hårdare kontrast och mörkare hörn. Alla färger i banorna dämpas och smutsas ner (`gritPass` i `arena.js`): vissnat gräs, lera, grånat trä och blekta tyger. Rustningarna: allt som hänger från höften (brynjekjolar, skört, tygstycken, höftskydd) följer nu med benen i stället för att benen sticker igenom, bälten har kanter och riktiga spännen, ringbrynjan och läderjackan går ner över låren, och ringbrynja, läder och vandrande riddare har fått rejäla stövlar och armskydd med remmar. Läder och vaddering har djup i ytan, tyget i spelarens färg är lite blekt och smutsigt, och stålet är mattare.
+
+**Verkligare riddare (v0.30):** armar och ben är nu ett sammanhängande skinn som böjer sig mjukt över axel, armbåge, höft och knä (`body.js`), i stället för stela rör med kulor i lederna. Händerna har riktiga fingrar och tumme som greppar runt vapnet, skorna är formade som fötter med sula och klack, och bålen har midja, bröstkorg och sluttande skuldror. Lite större händer, fötter och huvud ger en tydligare siluett. **Bonden** är ombyggd i lager efter en konceptbild (`peasant.js`): vadderad tunika med kant i spelarens färg, yllesjal med spänne, rem med spänne över bröstet, brett bälte med väskor, tygflik, stickade ärmar med läderskydd, pösiga byxor och stövlar med nedvikt krage och korsade remmar. Tunikans kjol följer med benen när de rör sig. Sköldarnas framsida visar plankorna.
+
+**Jämnare bildfrekvens (v0.29):** mindre skräpminne per bildruta (publiken, flaggorna, tyget och riddarnas animation återanvänder sina hjälpvärden), så webbläsaren behöver städa mer sällan och spelet hackar inte till. Goblinen, kungens armborst och pilen förbereds i grafikkortet redan i lobbyn (inget ryck första gången de syns). Publiken har enklare former (syns inte på håll) och kastar inga skuggor. Om datorn inte hinner med sänks upplösningen tillfälligt lite (högst till 75 %) och höjs igen när det går lätt.
 
 **Goblinen (v0.28):** i Alla mot alla, när någon leder med mer än två rundvinster, springer en goblin (hälften så lång som en riddare) in på planen några sekunder in i rundan och jagar ledaren med två knivar (6 i skada per hugg). Den dör av två slag, med vilket vapen som helst, och vem som helst får slå den. Går att parera. Inställningar i `GOBLIN` i `shared.js`. Armborstets pil är nu snabbare (55 m/s) och lättare att träffa med (träffar inom 0,65 m).
 
@@ -63,6 +73,9 @@ Alla knappar kan bytas: tryck **⌨️ Tangenter** i lobbyn eller i menyn när m
 | `public/js/castle.js` | Borggården (vinterbanan) med porten som öppnas i introt |
 | `public/js/castle-extras.js` | Borggårdens detaljer: spår i leran, rekvisita, girlanger, glöd, rök, dis och snöflingor |
 | `public/js/kit.js` | De nya rustningarna och hjälmarna (v0.25) |
+| `public/js/body.js` | Kroppen: skinnet över lederna, händer, skor och kjolar som följer benen (v0.30) |
+| `public/js/outfits.js` | Alla rustningar utom Bonden, byggda i lager (v0.32) |
+| `public/js/peasant.js` | Bondens kläder i lager (v0.30) |
 | `public/js/keybinds.js` | Knappar som går att byta (sparas i webbläsaren) |
 | `public/js/postfx.js` | Glöd och färgton (efterbehandling av bilden, bara på hög grafik) |
 | `public/js/crowd.js` | Publiken, kungaparet, vakterna och härolden |

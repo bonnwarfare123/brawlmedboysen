@@ -2,6 +2,7 @@
 // Inga 3D-filer behövs. Senare kan delar bytas mot riktiga modeller.
 
 import * as THREE from "three";
+import { fastNormals } from "./cloth.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { ARENA_RX, ARENA_RZ } from "./shared.js";
 import { CONFIG } from "./config.js";
@@ -12,19 +13,20 @@ import {
 } from "./textures.js";
 
 const PALETTE = {
-  grass: 0x7d9a55,
-  dirt: 0x8a6a48,
-  wood: 0x7a5434,
-  woodDark: 0x5a3c24,
-  woodLight: 0x9a7048,
-  blue: 0x2f5fb3,
-  red: 0xb8322f,
-  cream: 0xe9dcc0,
-  gold: 0xd9a521,
-  white: 0xf2efe6,
-  stone: 0x9b968c,
-  tree: 0x4f7a3a,
-  hill: 0x6f8f4e,
+  // Dämpade, smutsiga färger (mörk medeltid): vissnat gräs, lera, grånat trä, blekta tyger
+  grass: 0x58634a,
+  dirt: 0x5e4a36,
+  wood: 0x5c452f,
+  woodDark: 0x3f2d1f,
+  woodLight: 0x77604a,
+  blue: 0x34507f,
+  red: 0x7e2b27,
+  cream: 0xb9ab8e,
+  gold: 0xa98735,
+  white: 0xc4bfb2,
+  stone: 0x7b776f,
+  tree: 0x3d5232,
+  hill: 0x526142,
 };
 
 const materials = new Map();
@@ -790,7 +792,7 @@ export function buildArena() {
     setTime(evening) {
       this.evening = evening;
       setSkyColors(sky, evening);
-      if (cloudMaterial) cloudMaterial.color.set(evening ? 0xf0b090 : 0xffffff);
+      if (cloudMaterial) cloudMaterial.color.set(evening ? 0x8a6a62 : 0xa4a8aa); // tunga grå moln
       for (const f of fires) {
         f.boost = evening ? 2.6 : 1;
         f.light.distance = evening ? 15 : 8;
@@ -983,8 +985,8 @@ function makeHorse(color) {
 // Himmel: stor kupol med färgövergång (djupblå uppåt, ljus vid horisonten)
 // Himlens färger: dag = blå, kväll = solnedgång (orange vid horisonten, djupblå högst upp)
 export const SKY_COLORS = {
-  day: { top: 0x4f86c6, horizon: 0xc4dcef },
-  evening: { top: 0x27305e, horizon: 0xf2925a },
+  day: { top: 0x525d68, horizon: 0xa0a5a3 },      // mulet och tungt
+  evening: { top: 0x191c30, horizon: 0x9c5a3c },  // glödande rand vid horisonten
 };
 
 export function setSkyColors(sky, evening) {
@@ -1213,6 +1215,36 @@ function makeCastle() {
 
 // Grafikkortet ritar snabbare EN stor sak än hundratals små.
 // Här slås alla bitar med samma material ihop till en enda.
+// Smutsa ner allt i en bana: färgerna blir mindre mättade och lite mörkare (inget glatt och klart).
+// Eld, himmel och annat som lyser av sig självt rörs inte.
+const _hsl = {};
+function gritColor(c, sat, light) {
+  c.getHSL(_hsl);
+  c.setHSL(_hsl.h, _hsl.s * sat, _hsl.l * light);
+}
+export function gritPass(root, sat = 0.7, light = 0.95) {
+  const done = new Set();
+  const tmp = new THREE.Color();
+  root.traverse((obj) => {
+    if (!obj.isMesh) return;
+    for (const m of Array.isArray(obj.material) ? obj.material : [obj.material]) {
+      if (!m || done.has(m) || !(m.isMeshStandardMaterial || m.isMeshLambertMaterial || m.isMeshPhongMaterial)) continue;
+      done.add(m);
+      if (m.userData.noGrit || m.blending === THREE.AdditiveBlending) continue;
+      gritColor(m.color, sat, light);
+    }
+    if (obj.isInstancedMesh && obj.instanceColor && !done.has(obj.instanceColor)) {
+      done.add(obj.instanceColor);
+      for (let i = 0; i < obj.count; i++) {
+        obj.getColorAt(i, tmp);
+        gritColor(tmp, sat, 0.94);
+        obj.setColorAt(i, tmp);
+      }
+      obj.instanceColor.needsUpdate = true;
+    }
+  });
+}
+
 function mergeStatic(root) {
   root.updateMatrixWorld(true);
   const buckets = new Map();
@@ -2620,7 +2652,7 @@ function waveFlag(cloth, time) {
     pos.array[i * 3 + 2] = Math.sin(away * 7 - time * 6 + cloth.userData.phase) * 0.07 * away + Math.sin(y * 4 + time * 3) * 0.01;
   }
   pos.needsUpdate = true;
-  cloth.geometry.computeVertexNormals();
+  fastNormals(cloth.geometry);
 }
 
 // Hängande fana med märke, framsidan mot +Z

@@ -3,6 +3,7 @@
 // så de kostar ungefär lika mycket att rita. Varje rustning har en egen silhuett och egna material.
 
 import * as THREE from "three";
+import { paddedTexture, paddedBumpTexture } from "./textures.js";
 import {
   chainmailTexture, leatherTexture, quiltTexture, wrapTexture, linenTexture, stripeTexture, plateTexture,
   rivetClothTexture, channelQuiltTexture, forgedTexture,
@@ -63,11 +64,11 @@ export function kitMaterials(k, m, style, colorHex) {
     // Stadsvakt: livré i två färger (spelarens färg och en kontrast), mörk vadderad jacka under
     m.liveryA = k.mat(colorHex, 0.88, 0, { map: linenTexture() });
     m.liveryB = k.mat(light ? 0x2c2a30 : 0xe6dcc6, 0.88, 0, { map: linenTexture() });
-    m.padDark = k.mat(0x4c4238, 0.95, 0, { map: quiltTexture() });
+    m.padDark = k.mat(0x4c4238, 0.95, 0, { map: paddedTexture(), bumpMap: paddedBumpTexture(), bumpScale: 3 });
     Object.assign(out, { limbL: m.padDark, limbR: m.padDark, legL: m.liveryA, legR: m.liveryB, hips: m.wool, chest: { rx: 0.185, rz: 0.13, ar: 0.06 } });
   } else if (style === "mercenary") {
     // Legoknekt: hopplockat. Smutsig vadderad jack, en ärm i ringbrynja, randig hosa på ena benet
-    m.jack = k.mat(0xa88e64, 0.96, 0, { map: quiltTexture() });
+    m.jack = k.mat(0x9a825c, 0.96, 0, { map: paddedTexture(), bumpMap: paddedBumpTexture(), bumpScale: 3 });
     m.hoseStripe = k.mat(0xffffff, 0.9, 0, { map: stripeTexture(colorHex, 0xe2d6bc, 10) });
     Object.assign(out, { limbL: m.jack, limbR: m.chain, legL: m.hoseStripe, legR: m.wool, hips: m.jack, chest: { rx: 0.188, rz: 0.132, ar: 0.062 } });
   } else if (style === "halfplate") {
@@ -88,7 +89,7 @@ export function kitMaterials(k, m, style, colorHex) {
 // ---------- Bålen ----------
 
 export function buildKitTorso(k, style, pelvis, torso, m, look, H) {
-  const P = (...a) => pelvis.add(k.shape(...a));
+  const P = (...a) => k.pelvisPart(pelvis, ...a);
   const T = (...a) => torso.add(k.shape(...a));
   const { sculptTorso, sculptChest } = H;
   const mailBody = () => {

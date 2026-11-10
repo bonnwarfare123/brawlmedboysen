@@ -7,7 +7,7 @@ import {
   attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, TIME_NAMES, MAX_BOTS, WEATHERS, AWARDS,
   MAPS, MAP_NAMES, INTRO_SECONDS, CROSSBOW, KING_BOW, weaponName, GOBLIN,
 } from "./shared.js";
-import { buildArena, makeSky } from "./arena.js";
+import { buildArena, makeSky, gritPass } from "./arena.js";
 import { buildCastleArena } from "./castle.js";
 import { Knight, setEnvironment } from "./knight.js";
 import { Effects } from "./effects.js";
@@ -72,6 +72,7 @@ function seconds() {
 
 const canvas = $("game");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+let resScale = 1; // sänks tillfälligt om datorn inte hinner med (se adaptResolution)
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, CONFIG.maxPixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = CONFIG.shadows;
@@ -81,16 +82,16 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
-const SKY = 0x9cc3e0;
+const SKY = 0x8f9695; // mulen, grå himmel
 scene.background = new THREE.Color(SKY);
 scene.fog = new THREE.Fog(SKY, 70, 230);
 
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 500);
 
 // Blått ljus från himlen, varmt brunt studsljus från marken och en varm eftermiddagssol
-const skyLight = new THREE.HemisphereLight(0xbfd8ff, 0x806040, 1.25);
+const skyLight = new THREE.HemisphereLight(0xaab4bd, 0x6a5846, 1.35);
 scene.add(skyLight);
-const sun = new THREE.DirectionalLight(0xffe8c8, 2.7);
+const sun = new THREE.DirectionalLight(0xe8dcc8, 2.0);
 sun.position.set(14, 24, 10);
 sun.castShadow = true;
 sun.shadow.mapSize.set(CONFIG.shadowMapSize, CONFIG.shadowMapSize);
@@ -126,13 +127,17 @@ setEnvironment(environmentFor(false));
 
 // Banan: tornerplatsen byggs direkt, borggården först när någon väljer den
 let arena = buildArena();
+gritPass(arena.group);
 scene.add(arena.group);
 const arenas = { arena };
 let mapKind = "arena";
 function applyMap(kind) {
   kind = MAPS.includes(kind) ? kind : "arena";
   if (kind === mapKind) return;
-  if (!arenas[kind]) arenas[kind] = kind === "castle" ? buildCastleArena() : buildArena();
+  if (!arenas[kind]) {
+    arenas[kind] = kind === "castle" ? buildCastleArena() : buildArena();
+    gritPass(arenas[kind].group, kind === "castle" ? 0.74 : 0.7, kind === "castle" ? 0.97 : 0.95);
+  }
   scene.remove(arena.group);
   arena = arenas[kind];
   scene.add(arena.group);
@@ -206,8 +211,33 @@ function updateLightPool() {
 }
 
 // Bygg alla shaders direkt (även för saker som är dolda just nu), så det inte rycker första gången något syns
+// Saker som dyker upp först mitt i en runda (goblinen, kungens armborst, pilen, markeringen)
+// läggs in osynligt under marken när shaders byggs, så att de inte rycker första gången.
+let warmProps = null;
+function makeWarmProps() {
+  const g = new THREE.Group();
+  g.position.set(0, -80, 0);
+  try {
+    const gob = new Knight(GOBLIN.color, null, GOBLIN.look, { goblin: true, seed: 1 });
+    gob.group.scale.setScalar(GOBLIN.scale);
+    g.add(gob.group);
+    const bow = gob.buildItemModel(CROSSBOW);
+    if (bow) g.add(bow);
+    const basic = (opts) => new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.1), new THREE.MeshBasicMaterial(opts));
+    g.add(basic({ color: 0xffc94a, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    g.add(basic({ color: 0xfff2d0, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide }));
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshStandardMaterial({ color: 0x8a6a40, roughness: 0.8 })));
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshStandardMaterial({ color: 0x55585e, metalness: 0.7, roughness: 0.4 })));
+  } catch (err) {
+    console.warn("Kunde inte förbereda extra modeller", err);
+  }
+  g.traverse((o) => (o.frustumCulled = false));
+  return g;
+}
 function warmShaders() {
   try {
+    if (!warmProps) warmProps = makeWarmProps();
+    scene.add(warmProps);
     const hidden = [];
     scene.traverse((o) => {
       if (!o.visible) {
@@ -221,6 +251,7 @@ function warmShaders() {
     else renderer.compile(scene, camera);
     renderer.setRenderTarget(prevTarget);
     for (const o of hidden) o.visible = false;
+    scene.remove(warmProps);
   } catch (err) {
     console.warn("Kunde inte förbygga shaders", err);
   }
@@ -267,7 +298,7 @@ function applyAtmosphere() {
   const evening = timeOfDay === "evening";
   const rain = weatherKind === "rain";
   const fog = weatherKind === "fog";
-  let fogColor = evening ? 0x6a5a70 : SKY;
+  let fogColor = evening ? 0x4a4048 : SKY;
   if (rain) fogColor = evening ? 0x4a4a58 : 0x8a949e;
   if (fog) fogColor = evening ? 0x5a5662 : 0xb8bec4;
   const winter = mapKind === "castle";
@@ -275,17 +306,17 @@ function applyAtmosphere() {
   if (winter && fog) fogColor = evening ? 0x6a6874 : 0xd4dae2;  // snöstorm
   scene.background.set(fogColor);
   scene.fog.color.set(fogColor);
-  scene.fog.near = fog ? 4 : rain ? 25 : evening ? 45 : 70;
-  scene.fog.far = fog ? 42 : rain ? 110 : evening ? 180 : 230;
+  scene.fog.near = fog ? 4 : rain ? 22 : evening ? 30 : 42; // lite dis även i klart väder
+  scene.fog.far = fog ? 42 : rain ? 100 : evening ? 140 : 175;
   const dim = rain ? 0.5 : fog ? 0.65 : 1; // molnigt: solen syns knappt
-  skyLight.color.set(evening ? 0x8a8ac8 : 0xbfd8ff);
-  skyLight.groundColor.set(winter ? (evening ? 0x6a6070 : 0xb8c0cc) : evening ? 0x5a3a28 : 0x806040); // snön lyser upp underifrån
-  skyLight.intensity = (evening ? 0.7 : 1.25) * (rain || fog ? 1.15 : 1);
-  sun.color.set(evening ? 0xff9a55 : rain || fog ? 0xdde4ea : 0xffe8c8);
-  sun.intensity = (evening ? 1.6 : 2.7) * dim;
+  skyLight.color.set(evening ? 0x6c6c9c : 0xaab4bd);
+  skyLight.groundColor.set(winter ? (evening ? 0x6a6070 : 0xb8c0cc) : evening ? 0x4a3020 : 0x6a5846); // snön lyser upp underifrån
+  skyLight.intensity = (evening ? 0.66 : 1.35) * (rain || fog ? 1.15 : 1);
+  sun.color.set(evening ? 0xf08a4c : rain || fog ? 0xd2d9df : 0xe8dcc8);
+  sun.intensity = (evening ? 1.4 : 2.2) * dim;
   if (evening) sun.position.set(26, 7, -14);
   else sun.position.set(14, 24, 10);
-  renderer.toneMappingExposure = evening ? 1.15 : 1.05;
+  renderer.toneMappingExposure = evening ? 1.12 : 1.08;
   setEnvironment(environmentFor(evening));
   arena.setTime(evening);
   arena.setOvercast?.(rain || fog);
@@ -426,6 +457,7 @@ function positionOf(player) {
 let lowQuality = loadSetting("grafik", "hog") === "lag";
 
 function applyQuality() {
+  resScale = 1; // (skyddsnätet för bildfrekvensen börjar om)
   renderer.setPixelRatio(lowQuality ? 1 : Math.min(window.devicePixelRatio, CONFIG.maxPixelRatio));
   renderer.setSize(window.innerWidth, window.innerHeight);
   sun.castShadow = CONFIG.shadows && !lowQuality;
@@ -438,6 +470,8 @@ function applyQuality() {
   arena.setQuality(lowQuality); // eldkorgarnas ljus kostar lite extra
   if (postfx) {
     postfx.enabled = !lowQuality;
+    // Utan efterbehandling: dämpa färgerna direkt på bilden i stället
+    renderer.domElement.style.filter = lowQuality ? "saturate(0.78) contrast(1.08)" : "";
     postfx.setSize(window.innerWidth, window.innerHeight);
   }
   motes.off = lowQuality;
@@ -3633,7 +3667,8 @@ function tryJump() {
 
 const raycaster = new THREE.Raycaster();
 raycaster.camera = camera;
-const screenCenter = new THREE.Vector2(0, 0);
+const screenCenter = new THREE.Vector2(0, 1 - 2 * CONFIG.aimScreenY); // siktet sitter lite ovanför mitten
+$("crosshair").style.top = `${CONFIG.aimScreenY * 100}%`;
 let aim = null; // { id, seg }
 let highlightedKnight = null;
 
@@ -4002,6 +4037,7 @@ function updateOthers(dt) {
 
 const camTarget = new THREE.Vector3();
 const camPos = new THREE.Vector3();
+const camLook = new THREE.Vector3();
 
 function orbitCamera(radius, height, speed, lookY, center = null) {
   const t = performance.now() * speed;
@@ -4094,8 +4130,13 @@ function updateCamera(dt) {
 
   const d = CONFIG.cameraDistance + (me.dead ? 2.5 : 0);
   const pitch = me.dead ? Math.max(camPitch, 0.6) : camPitch;
-  camPos.copy(camTarget).addScaledVector(forward, -Math.cos(pitch) * d);
-  camPos.y += Math.sin(pitch) * d;
+  // En del av musens upp/ner lutar kameran i stället för att flytta den uppåt eller nedåt.
+  // Då kan man sikta mot huvuden utan att kameran åker ner mot marken.
+  const orbit = me.dead ? pitch : 0.25 + (pitch - 0.25) * (1 - CONFIG.cameraTilt);
+  camPos.copy(camTarget).addScaledVector(forward, -Math.cos(orbit) * d);
+  camPos.y += Math.sin(orbit) * d;
+  camLook.copy(camTarget).addScaledVector(forward, (Math.cos(pitch) - Math.cos(orbit)) * d);
+  camLook.y += (Math.sin(orbit) - Math.sin(pitch)) * d;
   camPos.y = Math.max(0.3, camPos.y);
 
   // Skakning vid träff
@@ -4108,7 +4149,7 @@ function updateCamera(dt) {
   }
 
   camera.position.copy(camPos);
-  camera.lookAt(camTarget);
+  camera.lookAt(camLook);
 }
 
 // ---------------------------------------------------------------------------
@@ -4216,6 +4257,36 @@ let frameCalls = 0;
 let frameMs = 0;
 renderer.info.autoReset = false;
 
+// SKYDDSNÄT FÖR BILDFREKVENSEN: om datorn inte hinner med (bildfrekvensen ligger klart under den
+// högsta den brukar klara) sänks upplösningen lite i taget, högst till 75 %. När det går lätt igen
+// höjs den tillbaka. Ändras högst var tredje sekund så att det inte fladdrar. Bara på Hög grafik.
+let peakFps = 0;
+let slowFor = 0;
+let fastFor = 0;
+let resChangedAt = 0;
+function adaptResolution(fps, now) {
+  if (lowQuality || phase === "lobby" || document.hidden) {
+    slowFor = fastFor = 0;
+    return;
+  }
+  peakFps = Math.max(peakFps * 0.999, fps); // ungefär skärmens uppdatering (60, 144, 165 …)
+  if (fps < peakFps * 0.8 && fps < 110) slowFor++;
+  else slowFor = 0;
+  if (fps >= peakFps * 0.95) fastFor++;
+  else fastFor = 0;
+  if (now - resChangedAt < 3000) return;
+  let next = resScale;
+  if (slowFor >= 2) next = Math.max(0.75, resScale - 0.1);
+  else if (fastFor >= 8 && resScale < 1) next = Math.min(1, resScale + 0.05);
+  if (next === resScale) return;
+  resScale = next;
+  resChangedAt = now;
+  slowFor = fastFor = 0;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, CONFIG.maxPixelRatio) * resScale);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  if (postfx) postfx.setSize(window.innerWidth, window.innerHeight);
+}
+
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1);
 
@@ -4225,6 +4296,7 @@ function frame() {
   if (now - fpsStart >= 500) {
     $("fps").textContent = `FPS: ${Math.round((fpsFrames * 1000) / (now - fpsStart))}` +
       (showStats ? ` · ${frameCalls} ritanrop · ${(frameMs / fpsFrames).toFixed(1)} ms/bild` : "");
+    adaptResolution((fpsFrames * 1000) / (now - fpsStart), now);
     fpsFrames = 0;
     frameMs = 0;
     fpsStart = now;

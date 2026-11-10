@@ -19,8 +19,10 @@ export const CONFIG = {
   staggerMoveFactor: 0.35, // fart när man blivit parerad
 
   // Kamera
-  cameraDistance: 5,       // hur långt bakom riddaren
-  cameraHeight: 1.6,       // höjden kameran siktar på
+  cameraDistance: 4.7,     // hur långt bakom riddaren
+  cameraHeight: 1.68,      // höjden kameran siktar på
+  cameraTilt: 0.3,         // hur mycket av musens upp/ner som lutar kameran i stället för att flytta den (0 = bara flytta, 1 = bara luta)
+  aimScreenY: 0.46,        // var siktet sitter på skärmen uppifrån (0.5 = mitten)
   cameraShoulder: 0.6,     // förskjutning åt höger ("över axeln")
   mouseSensitivity: 0.0025,
   pitchMin: -0.5,          // hur långt ner man kan titta
