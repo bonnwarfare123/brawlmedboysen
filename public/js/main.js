@@ -9,6 +9,7 @@ import {
 } from "./shared.js";
 import { buildArena, makeSky, gritPass } from "./arena.js";
 import { buildCastleArena } from "./castle.js";
+import { buildBorgArena } from "./borg.js";
 import { Knight, setEnvironment } from "./knight.js";
 import { Effects } from "./effects.js";
 import { Debris } from "./ragdoll.js";
@@ -135,8 +136,8 @@ function applyMap(kind) {
   kind = MAPS.includes(kind) ? kind : "arena";
   if (kind === mapKind) return;
   if (!arenas[kind]) {
-    arenas[kind] = kind === "castle" ? buildCastleArena() : buildArena();
-    gritPass(arenas[kind].group, kind === "castle" ? 0.74 : 0.7, kind === "castle" ? 0.97 : 0.95);
+    arenas[kind] = kind === "castle" ? buildCastleArena() : kind === "borg" ? buildBorgArena() : buildArena();
+    gritPass(arenas[kind].group, kind === "castle" ? 0.74 : kind === "borg" ? 0.82 : 0.7, kind === "castle" ? 0.97 : kind === "borg" ? 0.98 : 0.95);
   }
   scene.remove(arena.group);
   arena = arenas[kind];
@@ -247,8 +248,8 @@ function warmShaders() {
     });
     const prevTarget = renderer.getRenderTarget();
     if (postfx && postfx.enabled) renderer.setRenderTarget(postfx.target);
-    if (renderer.compileAsync) renderer.compileAsync(scene, camera).catch(() => {});
-    else renderer.compile(scene, camera);
+    // (compileAsync kan krascha i three r170 om ett material hinner tas bort under väntan)
+    renderer.compile(scene, camera);
     renderer.setRenderTarget(prevTarget);
     for (const o of hidden) o.visible = false;
     scene.remove(warmProps);
@@ -2956,17 +2957,69 @@ function renderHp() {
   if (!me) return;
   const pct = Math.max(0, (me.hp / COMBAT.maxHp) * 100);
   $("hp-fill").style.width = pct + "%";
-  $("hp-fill").style.backgroundColor = pct > 50 ? "#4caf50" : pct > 25 ? "#e0a020" : "#d0302a";
+  $("hp-lag").style.width = pct + "%"; // följer efter långsamt (visar hur mycket man just förlorade)
+  $("hp-bar").dataset.level = pct > 50 ? "ok" : pct > 25 ? "low" : "critical";
   $("hp-text").textContent = Math.max(0, me.hp);
 }
 
-function setCooldown(id, readyAt, total) {
-  const el = $(id);
+// Orkmätaren (uppdateras varje bildruta, men rör bara sidan när värdet faktiskt ändrats)
+let staminaShown = -1;
+let staminaState = "";
+function renderStamina() {
+  if (!me) return;
+  const S = CONFIG.stamina;
+  const value = Math.round(((me.stamina ?? S.max) / S.max) * 200) / 200;
+  if (value !== staminaShown) {
+    staminaShown = value;
+    $("stamina-fill").style.transform = `scaleX(${value})`;
+  }
+  const state = me.exhausted ? "empty" : (me.stamina ?? S.max) < S.lowAt ? "low" : value >= 1 ? "full" : "";
+  if (state !== staminaState) {
+    staminaState = state;
+    $("stamina-bar").dataset.state = state;
+  }
+}
+$("stamina-mark").style.left = `${(CONFIG.stamina.minAfterEmpty / CONFIG.stamina.max) * 100}%`;
+
+// En förmågeruta: ring som fylls medan man väntar, sekunder kvar, och en kort blänk när den är klar.
+// Sidan ändras bara när något faktiskt ändrats (inte varje bildruta).
+const abilities = {};
+function ability(id) {
+  if (!abilities[id]) {
+    const el = $(id);
+    abilities[id] = { el, time: el.querySelector(".ab-time"), p: -1, text: "", ready: null, charged: false };
+    el.addEventListener("animationend", () => el.classList.remove("pop", "used"));
+  }
+  return abilities[id];
+}
+function setCooldown(id, readyAt, total, charge = null) {
+  const a = ability(id);
   const remaining = Math.max(0, readyAt - seconds());
-  const fraction = total > 0 ? 1 - remaining / total : 1;
-  el.querySelector(".cd-fill").style.width = Math.min(100, fraction * 100) + "%";
-  el.classList.toggle("ready", remaining <= 0);
-  el.classList.remove("charged");
+  const ready = remaining <= 0;
+  // charge = hur långt ett tungt slag är laddat (0–1); då visar ringen laddningen i stället
+  const p = charge !== null ? charge : total > 0 ? Math.min(1, 1 - remaining / total) : 1;
+  const shown = Math.round(p * 50) / 50;
+  if (shown !== a.p) {
+    a.p = shown;
+    a.el.style.setProperty("--p", shown);
+  }
+  const text = charge === null && remaining > 0.3 && total >= 1.2 ? remaining.toFixed(1) : "";
+  if (text !== a.text) {
+    a.text = text;
+    a.time.textContent = text;
+  }
+  const state = charge !== null ? "charging" : ready ? "ready" : "wait";
+  if (state !== a.ready) {
+    if (a.ready === "wait" && state === "ready") a.el.classList.add("pop");   // klar igen: kort blänk
+    if (a.ready === "ready" && state === "wait") a.el.classList.add("used");  // nyss använd: kort tryck
+    a.ready = state;
+    a.el.dataset.state = state;
+  }
+  const charged = charge !== null && charge >= 1;
+  if (charged !== a.charged) {
+    a.charged = charged;
+    a.el.classList.toggle("charged", charged);
+  }
 }
 
 function renderCooldowns() {
@@ -2974,16 +3027,12 @@ function renderCooldowns() {
   const w = weaponOf(me);
   setCooldown("cd-q", me.nextQuick, attackSpec("q", w).cooldown);
   setCooldown("cd-t", me.nextThrust, attackSpec("t", w).cooldown);
-  if (charging) {
-    const progress = Math.min(1, (seconds() - mouseDownAt) / attackSpec("h", w).charge);
-    const el = $("cd-h");
-    el.querySelector(".cd-fill").style.width = progress * 100 + "%";
-    el.classList.toggle("charged", progress >= 1);
-    el.classList.remove("ready");
-  } else {
-    setCooldown("cd-h", me.nextHeavy, attackSpec("h", w).cooldown);
-  }
+  const charge = charging ? Math.min(1, (seconds() - mouseDownAt) / attackSpec("h", w).charge) : null;
+  setCooldown("cd-h", me.nextHeavy, attackSpec("h", w).cooldown, charge);
   setCooldown("cd-p", me.nextParry, COMBAT.parry.cooldown);
+  setCooldown("cd-k", me.nextKick, COMBAT.kick.cooldown);
+  setCooldown("cd-r", me.nextRoll, COMBAT.roll.cooldown);
+  renderStamina();
   if (me.dead) $("respawn-timer").textContent = "Väntar på nästa runda…";
 }
 
@@ -3135,6 +3184,10 @@ function renderHelp() {
     `${b(moveTxt)} gå · ${b(K("run"))} spring · ${b(K("jump"))} hoppa · ${b(binds.label("crouch", true))} huka · ${b(K("roll"))} rulla · ` +
     `${b("Esc")} släpp musen · ${b(K("quality"))} grafik · ${b(K("sound"))} ljud · ${b(K("music"))} musik`;
   $("weapon-keys").textContent = `${binds.label("prevWeapon", true)} och ${binds.label("nextWeapon", true)}`;
+  // Knapparna på förmågerutorna (kort form)
+  const short = (label) => label.split(" / ")[0].replace("Vänster mus", "V-mus").replace("Höger mus", "H-mus").replace("Mittenknappen", "M-mus").replace("Mellanslag", "Spc").replace(" + ", "+").slice(0, 8);
+  const keyOf = { "cd-q": K("attack"), "cd-h": "Håll", "cd-t": binds.label("thrust", true), "cd-p": K("parry"), "cd-k": K("kick"), "cd-r": K("roll") };
+  for (const [id, label] of Object.entries(keyOf)) $(id).querySelector("kbd").textContent = short(label);
 }
 binds.onChange(renderHelp);
 renderHelp();
@@ -3733,6 +3786,33 @@ function motionOf(vel, yaw, airborne) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Ork (stamina): sprint kostar ork, och den kommer tillbaka när man slutar sprinta.
+// Värdena finns i config.js. Returnerar true om man sprintar den här bildrutan.
+// ---------------------------------------------------------------------------
+function updateStamina(dt, t, inRound, wantsSprint) {
+  const S = CONFIG.stamina;
+  if (!inRound) {
+    // Mellan rundorna (och som död) är orken alltid full
+    me.stamina = S.max;
+    me.exhausted = false;
+    me.sprinting = false;
+    return false;
+  }
+  if (me.stamina === undefined) me.stamina = S.max;
+  if (me.exhausted && me.stamina >= S.minAfterEmpty) me.exhausted = false;
+  const sprinting = wantsSprint && !me.exhausted && me.stamina > 0;
+  if (sprinting) {
+    me.stamina = Math.max(0, me.stamina - (S.max / S.sprintSeconds) * dt);
+    me.lastSprintAt = t;
+    if (me.stamina <= 0) me.exhausted = true; // slut: tillbaka till vanlig fart tills en del kommit tillbaka
+  } else if (t - (me.lastSprintAt ?? -99) >= S.recoverDelay) {
+    me.stamina = Math.min(S.max, me.stamina + (S.max / S.recoverSeconds) * dt);
+  }
+  me.sprinting = sprinting;
+  return sprinting;
+}
+
 function updateMe(dt) {
   forward.set(Math.sin(camYaw), 0, Math.cos(camYaw));
   right.set(-Math.cos(camYaw), 0, Math.sin(camYaw));
@@ -3755,10 +3835,10 @@ function updateMe(dt) {
   }
 
   const moving = move.lengthSq() > 0;
-  const running = moving && !charging && !me.crouch && binds.held("run", keys);
+  const running = updateStamina(dt, t, inRound, moving && canMove && !charging && !me.crouch && binds.held("run", keys));
   wantedVel.set(0, 0, 0);
   if (moving) {
-    let speed = running ? CONFIG.runSpeed : CONFIG.walkSpeed;
+    let speed = running ? CONFIG.sprintSpeed : CONFIG.walkSpeed;
     speed *= COMBAT.legLossSpeed[Math.min(2, me.knight.legLoss)]; // avhuggna ben gör en långsam
     if (me.crouch) speed *= COMBAT.crouch.speed;
     if (me.holding) speed *= COMBAT.grab.moveFactor; // släpar runt på någon

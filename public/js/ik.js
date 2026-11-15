@@ -91,14 +91,37 @@ function smooth(t) {
 // från stridsställningen – då tas ett korrigeringssteg (som när man vänder sig).
 // ---------------------------------------------------------------------------
 
-// Steglängd (meter per hel gångcykel). Kortare steg när man går bakåt eller åt sidan.
-// run = 0 (gå) till 1 (spring), forward/side = fart i riddarens egen riktning.
-export function gaitStride(run, forward, side) {
-  const speed = Math.hypot(forward, side) || 1;
-  const sideness = Math.abs(side) / speed;
-  const back = Math.max(0, -forward) / speed;
-  return (1.35 + 0.65 * run) * (1 - 0.3 * sideness) * (1 - 0.25 * back);
+// GÅNGEN – justerbara värden. Stegtakten bestäms av farten (som hos en människa: snabbare = fler
+// steg, men framför allt LÄNGRE steg). Förr var steget alltid kort, så benen trummade i hög fart.
+export const GAIT = {
+  cadenceBase: 0.72,     // gångcykler per sekund i mycket låg fart (en cykel = två steg)
+  cadencePerSpeed: 0.19, // så mycket ökar takten per meter/sekund
+  groundTravel: 0.86,    // så långt (meter) kroppen hinner medan en fot står kvar på marken (benets räckvidd)
+  minStance: 0.24,       // minsta andel av cykeln som foten står på marken (resten är sving och svävfas)
+  maxStance: 0.62,       // största andel (långsam gång: alltid en fot i marken)
+  runFrom: 2.2,          // under den här farten går man
+  runFull: 5,            // vid den här farten springer man för fullt
+  sprintFrom: 4.35,      // över den här farten ser det ut som sprint (framåtlutad, pumpande armar)
+  sprintFull: 4.9,
+};
+
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+// 0 = gå, 1 = spring för fullt
+export const gaitRun = (speed) => clamp01((speed - GAIT.runFrom) / (GAIT.runFull - GAIT.runFrom));
+// 0 = vanlig fart, 1 = sprint
+export const gaitSprint = (speed) => clamp01((speed - GAIT.sprintFrom) / (GAIT.sprintFull - GAIT.sprintFrom));
+
+// Steglängd (meter per hel gångcykel) för en viss fart. Kortare steg när man går bakåt eller åt sidan.
+// forward/side = fart i riddarens egen riktning.
+export function gaitStride(speed, forward, side) {
+  const len = Math.hypot(forward, side) || 1;
+  const sideness = Math.abs(side) / len;
+  const back = Math.max(0, -forward) / len;
+  const cadence = GAIT.cadenceBase + GAIT.cadencePerSpeed * speed;
+  return Math.max(0.5, (speed / cadence) * (1 - 0.22 * sideness) * (1 - 0.2 * back));
 }
+// Andel av cykeln som en fot står på marken. Långa steg = kort tid i marken (resten svävar man).
+export const gaitStance = (stride) => Math.min(GAIT.maxStance, Math.max(GAIT.minStance, GAIT.groundTravel / stride));
 
 const MIN_GAP = 0.13; // fötterna får aldrig korsa varandra: minst så här långt isär i sidled
 
@@ -146,7 +169,7 @@ export class FootPlanner {
     if (stride === null) {
       const c = Math.cos(yaw);
       const s = Math.sin(yaw);
-      stride = gaitStride(run, v[0] * s + v[1] * c, v[0] * c - v[1] * s);
+      stride = gaitStride(speed, v[0] * s + v[1] * c, v[0] * c - v[1] * s);
     }
 
     if (speed > 0.3) this.gait(pos, yaw, v, speed, phase, run, onStep, stride);
@@ -161,9 +184,9 @@ export class FootPlanner {
   }
 
   gait(pos, yaw, vel, speed, phase, run, onStep, stride) {
-    const stance = 0.6 - 0.22 * run; // andel av cykeln foten står på marken
+    const stance = gaitStance(stride); // andel av cykeln foten står på marken
     const cycleTime = stride / speed;
-    const lift = 0.1 + 0.14 * run;
+    const lift = 0.09 + 0.2 * run;
     const dirX = vel[0] / speed;
     const dirZ = vel[1] / speed;
 
@@ -181,7 +204,7 @@ export class FootPlanner {
         }
         foot.current = [foot.plant[0], 0, foot.plant[1]];
         // Hälen lyfter mot slutet av steget
-        foot.pitch = smooth(Math.max(0, (f / stance - 0.7) / 0.3)) * 0.45;
+        foot.pitch = smooth(Math.max(0, (f / stance - 0.6) / 0.4)) * (0.45 + 0.25 * run);
       } else {
         // Svingar fram
         const s = (f - stance) / (1 - stance);
@@ -202,14 +225,17 @@ export class FootPlanner {
           tx += (wanted - lat) * Math.cos(yaw);
           tz -= (wanted - lat) * Math.sin(yaw);
         }
-        const e = smooth(s);
+        // Foten hänger kvar bakom en kort stund (frånskjutet), dras sedan fram och sätts ner mjukt
+        const e = smooth(Math.min(1, s * (1 + 0.12 * run)) ** (1 + 0.35 * run));
+        // Hälen sparkar upp bakom kroppen i början av svinget när man springer
+        const up = Math.sin(Math.PI * s ** (1 - 0.35 * run));
         foot.current = [
           foot.from[0] + (tx - foot.from[0]) * e,
-          Math.sin(Math.PI * s) * lift,
+          up * lift,
           foot.from[1] + (tz - foot.from[1]) * e,
         ];
-        // Tårna upp precis innan hälen sätts ner
-        foot.pitch = s < 0.3 ? 0.3 * (1 - s / 0.3) : -0.3 * smooth(Math.max(0, (s - 0.6) / 0.4));
+        // Tårna pekar bakåt-neråt efter frånskjutet, och upp precis innan hälen sätts ner
+        foot.pitch = s < 0.35 ? (0.3 + 0.5 * run) * (1 - s / 0.35) : -0.3 * smooth(Math.max(0, (s - 0.6) / 0.4));
       }
     }
   }

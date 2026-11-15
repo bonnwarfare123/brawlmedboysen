@@ -92,15 +92,19 @@ function folds(geo, n, amp, top, bottom) {
 // ---------------------------------------------------------------------------
 // Kroppsdelarnas former (i personens egna koordinater, tittar mot +Z)
 // ---------------------------------------------------------------------------
+const UPPER_ARM = 0.24; // axel till armbåge
+const HAND_DROP = 0.105; // underarmen är så mycket längre än förut
+const HEAD = 0.9;
+const THIGH = 0.415;
 function buildShapes() {
   const S = {};
   // Bål: tunika med axlar, krage och bälte (mörkare)
   S.torso = merge([
-    part(folds(new THREE.CylinderGeometry(0.13, 0.155, 0.32, 16, 3), 7, 0.06, 0.4, 0.05), 1, [0, 0.27, 0], [1.1, 1, 0.82]),
+    part(folds(new THREE.CylinderGeometry(0.13, 0.155, 0.32, 16, 3), 7, 0.06, 0.4, 0.05), 1, [0, 0.27, 0], [1.16, 1, 0.84]),
     part(new THREE.SphereGeometry(0.14, 8, 4), 1, [0, 0.41, 0], [1.25, 0.45, 0.8]),
     // axlar (rundade) och nacke
-    part(new THREE.SphereGeometry(0.06, 6, 4), 0.95, [0.155, 0.385, 0], [1.1, 0.9, 1]),
-    part(new THREE.SphereGeometry(0.06, 6, 4), 0.95, [-0.155, 0.385, 0], [1.1, 0.9, 1]),
+    part(new THREE.SphereGeometry(0.062, 6, 4), 0.95, [0.172, 0.385, 0], [1.1, 0.9, 1]),
+    part(new THREE.SphereGeometry(0.062, 6, 4), 0.95, [-0.172, 0.385, 0], [1.1, 0.9, 1]),
     // tunikans kjol med veck nedanför bältet
     part(folds(new THREE.CylinderGeometry(0.168, 0.205, 0.17, 18, 2, true), 9, 0.09, 0.11, -0.06), 0.92, [0, 0.03, 0], [1.1, 1, 0.9]),
     part(new THREE.CylinderGeometry(0.172, 0.172, 0.04, 10), 0.35, [0, 0.12, 0], [1.1, 1, 0.84]),
@@ -112,8 +116,8 @@ function buildShapes() {
   S.bodice = merge([
     part(new THREE.CylinderGeometry(0.115, 0.13, 0.3, 10), 1, [0, 0.28, 0], [1.1, 1, 0.85]),
     part(new THREE.SphereGeometry(0.13, 8, 4), 1, [0, 0.4, 0], [1.22, 0.45, 0.82]),
-    part(new THREE.SphereGeometry(0.052, 6, 4), 0.95, [0.14, 0.38, 0], [1.1, 0.9, 1]),
-    part(new THREE.SphereGeometry(0.052, 6, 4), 0.95, [-0.14, 0.38, 0], [1.1, 0.9, 1]),
+    part(new THREE.SphereGeometry(0.054, 6, 4), 0.95, [0.152, 0.38, 0], [1.1, 0.9, 1]),
+    part(new THREE.SphereGeometry(0.054, 6, 4), 0.95, [-0.152, 0.38, 0], [1.1, 0.9, 1]),
     part(new THREE.SphereGeometry(0.075, 7, 4), 1, [0, 0.31, 0.06], [1.5, 0.75, 0.9]), // byst
     part(folds(new THREE.CylinderGeometry(0.145, 0.2, 0.18, 18, 2, true), 10, 0.08, 0.13, -0.05), 0.92, [0, 0.05, 0], [1.1, 1, 0.92]),
     part(new THREE.BoxGeometry(0.012, 0.2, 0.01), 0.35, [0, 0.27, 0.125]), // snörning
@@ -255,6 +259,16 @@ function buildShapes() {
     part(new THREE.CylinderGeometry(0.007, 0.008, 0.62, 5), 0.32, [0, -0.6, 0.06]),
     part(new THREE.ShapeGeometry(tri), 1, [0.006, -0.78, 0.06], [1, -1, 1]),
   ]);
+  // Proportioner som en vuxen människa (ca 1,6 m): armarna räcker ner till låret, benen är längre,
+  // huvudet lite mindre och axlarna bredare än förut (de såg ut som barn med korta armar)
+  S.arm.scale(1, UPPER_ARM / 0.15, 1);
+  S.fore.translate(0, 0.15, 0);
+  S.fore.scale(1, 1.8, 1);
+  S.fore.translate(0, -0.15, 0);
+  for (const k of ["hand", "drumstick", "handHat", "mug", "kerchief", "pennant", "cane"]) S[k].translate(0, -HAND_DROP, 0);
+  for (const k of ["head", "face", "mouth", "hairShort", "hairLong", "tonsure", "beard", "hood", "brim", "cap", "beret", "wimple", "hennin", "straw", "chaperon", "wreath", "coif"]) S[k].scale(HEAD, HEAD, HEAD);
+  for (const k of ["thigh", "skirtThigh"]) S[k].scale(1, THIGH / 0.36, 1);
+  for (const k of ["shin", "skirtShin"]) S[k].scale(1, 1.12, 1);
   return S;
 }
 
@@ -420,7 +434,7 @@ export class Crowd {
       // Armbågen sitter 0.15 ner. "wrist" ligger tillbaka på axelns höjd i underarmens koordinater,
       // så att underarm, hand och saker kan ritas med samma mått som förut
       d["fore" + s] = new THREE.Object3D();
-      d["fore" + s].position.set(0, -0.15, 0);
+      d["fore" + s].position.set(0, -UPPER_ARM, 0);
       d["wrist" + s] = new THREE.Object3D();
       d["wrist" + s].position.set(0, 0.15, 0);
       d["fore" + s].add(d["wrist" + s]);
@@ -436,13 +450,13 @@ export class Crowd {
     d.thighL.add(d.shinL);
     d.thighR.add(d.shinR);
     d.head.position.set(0, 0.46, 0.01);
-    d.mouth.position.set(0, 0.066, 0.088);
-    d.armL.position.set(0.18, 0.38, 0);
-    d.armR.position.set(-0.18, 0.38, 0);
+    d.mouth.position.set(0, 0.066 * HEAD, 0.088 * HEAD);
+    d.armL.position.set(0.2, 0.38, 0);
+    d.armR.position.set(-0.2, 0.38, 0);
     d.thighL.position.set(0.08, 0.02, 0.02);
     d.thighR.position.set(-0.08, 0.02, 0.02);
-    d.shinL.position.set(0, -0.36, 0);
-    d.shinR.position.set(0, -0.36, 0);
+    d.shinL.position.set(0, -THIGH, 0);
+    d.shinR.position.set(0, -THIGH, 0);
     this.d = d;
     this.focus = new THREE.Vector3();
     this.throwQueue = [];
@@ -487,11 +501,11 @@ export class Crowd {
     p.look += (lookTarget - p.look) * Math.min(1, dt * 3);
 
     const hop = cheer > 0.05 ? Math.max(0, Math.sin(time * 8 * (0.7 + p.eager * 0.6) + p.phase)) * 0.08 * cheer * stand : 0;
-    d.root.position.set(spot.pos.x, spot.pos.y + stand * 0.72 * p.scale + hop, spot.pos.z);
+    d.root.position.set(spot.pos.x, spot.pos.y + stand * 0.84 * p.scale + hop, spot.pos.z);
     d.root.rotation.set(0, spot.yaw + p.look * 0.25, 0);
     d.root.scale.setScalar(p.scale);
     d.body.scale.set(p.girth, 1, 0.9 + p.girth * 0.1 + (p.girth - 1) * 0.6);
-    d.armL.position.x = 0.18 * (0.35 + p.girth * 0.65);
+    d.armL.position.x = 0.2 * (0.35 + p.girth * 0.65);
     d.armR.position.x = -d.armL.position.x;
     d.torso.rotation.set(0.12 * cheer * sit + Math.sin(t) * 0.03 - stand * 0.05 + p.hunch, p.look * 0.25, Math.sin(t * 0.7) * 0.04);
     d.head.rotation.set(Math.sin(t * 0.9) * 0.06 - cheer * 0.25, p.look * 0.5, Math.sin(t * 0.5) * 0.05);
@@ -616,7 +630,7 @@ export class Crowd {
         if (k >= 0.33 && !p.thrown) {
           p.thrown = true;
           d.root.updateMatrixWorld(true);
-          handPos.set(0, -0.32, 0.05).applyMatrix4(d.wristR.matrixWorld);
+          handPos.set(0, -0.32 - HAND_DROP, 0.05).applyMatrix4(d.wristR.matrixWorld);
           p.throwables?.launch(p.throwKind, handPos, p.throwTarget);
         }
         if (k > 0.8) {

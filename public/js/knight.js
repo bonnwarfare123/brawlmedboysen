@@ -27,7 +27,7 @@ import { OUTFIT_STYLES, outfitMaterials, buildOutfitTorso, buildOutfitLimbs } fr
 import { armRings, legRings, tubeGeometry, handParts, shoeParts, skirtWeights } from "./body.js";
 import { COMBAT, JOINT_SEGMENT, LEG_JOINTS, weaponSpec, FISTS, CROSSBOW } from "./shared.js";
 import { Ragdoll } from "./ragdoll.js";
-import { FootPlanner, solveLeg, solveArm, gaitStride } from "./ik.js";
+import { FootPlanner, solveLeg, solveArm, gaitStride, gaitStance, gaitRun, gaitSprint } from "./ik.js";
 import { Cloth, Chain } from "./cloth.js";
 import { KIT_STYLES, CLOSED_HELMETS, HOOD_HELMETS, kitMaterials, buildKitTorso, buildKitLimbs, buildKitHelmet } from "./kit.js";
 import { rollFeatures, sculptHead as sculptFace, faceTexture, buildHair, beardShell, BEARD_REGION, BEARD_THICK, noseGeometry as wedgeNose } from "./face.js";
@@ -4203,11 +4203,15 @@ export class Knight {
     // ----- Gångcykel -----
     // Cykeln går alltid framåt, oavsett åt vilket håll man går (annars spritter benen när man går snett bakåt)
     const speed = motion.airborne ? 0 : motion.speed;
-    const run = Math.min(1, Math.max(0, (speed - 3.5) / 2.5)); // 0 = gå, 1 = spring
-    const stride = gaitStride(run, motion.forward, motion.side);
-    this.stride = stride;
+    const run = gaitRun(speed);       // 0 = gå, 1 = spring
+    const sprint = gaitSprint(speed); // 0 = vanlig fart, 1 = sprint
+    // Steglängden följer farten (jämnas ut lite, så att benen inte rycker när farten ändras)
+    const wantStride = gaitStride(speed, motion.forward, motion.side);
+    this.stride = this.stride ? this.stride + (wantStride - this.stride) * (1 - Math.exp(-dt * 9)) : wantStride;
+    const stride = this.stride;
+    const stance = gaitStance(stride);
     if (speed > 0.3) this.phase += ((speed * dt) / stride) * Math.PI * 2;
-    const targetAmp = Math.min(1, speed / 3.5) * lerp(0.5, 0.8, run);
+    const targetAmp = Math.min(1, speed / 3) * lerp(0.5, 0.85, run);
     this.amp += (targetAmp - this.amp) * (1 - Math.exp(-dt * 8));
     const amp = this.amp;
     const moving = Math.min(1, amp * 2.2); // 0 = stilla (stridsställning), 1 = i rörelse
@@ -4228,7 +4232,7 @@ export class Knight {
     const accF = this.prevFwd === undefined ? 0 : (motion.forward - this.prevFwd) / Math.max(dt, 1e-3);
     this.prevFwd = motion.forward;
     const kAcc = 1 - Math.exp(-dt * 6);
-    this.accLean = (this.accLean || 0) + (Math.max(-0.22, Math.min(0.22, accF * 0.025)) - (this.accLean || 0)) * kAcc;
+    this.accLean = (this.accLean || 0) + (Math.max(-0.26, Math.min(0.26, accF * 0.03)) - (this.accLean || 0)) * kAcc;
     this.turnLean = (this.turnLean || 0) + (Math.max(-0.2, Math.min(0.2, -Math.max(-4, Math.min(4, yawRate)) * speed * 0.012)) - (this.turnLean || 0)) * kAcc;
     // Varje riddare har sin egen takt när han står still (andas, flyttar vikten, rättar till greppet)
     this.idleSeed ??= Math.random() * 100;
@@ -4237,11 +4241,13 @@ export class Knight {
 
     // ----- Höfterna -----
     // Lägre när man står i stridsställning (böjda knän) och när man springer, gungar i takt med stegen
-    let pelvisY = lerp(0.95, 0.925 - 0.03 * run, moving) - Math.abs(Math.sin(this.phase)) * 0.025 * amp;
-    let pelvisRotY = lerp(-0.22, Math.sin(this.phase) * 0.16 * amp * dirFwd, moving); // stilla: vänster höft fram
+    // Kroppen är lägst mitt i varje steg (när foten bär vikten) och högst mitt emellan (svävfasen när man springer)
+    const bob = -Math.cos(2 * (this.phase - Math.PI * stance)) * lerp(0.016, 0.04, run) * amp;
+    let pelvisY = lerp(0.95, 0.925 - 0.04 * run, moving) + bob;
+    let pelvisRotY = lerp(-0.22, Math.sin(this.phase) * (0.16 + 0.08 * sprint) * amp * dirFwd, moving); // stilla: vänster höft fram
     // Höften sjunker på den sida där benet svingar, och vikten flyttas över foten man står på
     let pelvisRotZ = Math.sin(this.phase) * 0.07 * amp + this.turnLean * 0.5;
-    let pelvisX = -Math.sin(this.phase) * 0.028 * amp;
+    let pelvisX = -Math.sin(this.phase) * lerp(0.04, 0.022, run) * amp; // vikten över foten man står på (mest när man går)
     // Stilla: väger långsamt över från fot till fot
     pelvisX += Math.sin(idleT * 0.55) * 0.022 * still;
     pelvisRotZ += Math.sin(idleT * 0.55) * 0.035 * still;
@@ -4258,7 +4264,8 @@ export class Knight {
 
     // ----- Vapenarmen: stridsställning/gång, laddning eller slag -----
     let pose = STANCE_R.map((v, i) => lerp(v, CARRY_R[i], moving));
-    pose[0] -= swing * 0.42 * dirFwd;
+    pose[0] -= swing * (0.42 + 0.3 * sprint) * dirFwd;
+    pose[2] -= 0.35 * sprint; // armbågen böjs mer i sprint (armarna pumpar)
     this.chargeAmount += ((this.charging ? 1 : 0) - this.chargeAmount) * Math.min(1, dt * 8);
     const chargePose = movesFor(this.weaponKey).h.arm[0].slice(1);
     pose = pose.map((v, i) => lerp(v, chargePose[i], this.chargeAmount));
@@ -4313,7 +4320,7 @@ export class Knight {
 
     // ----- Sköldarmen: stridsställning/gång eller parering -----
     let shield = STANCE_L.map((v, i) => lerp(v, CARRY_L[i], moving));
-    shield[0] += swing * 0.3 * dirFwd;
+    shield[0] += swing * (0.3 + 0.3 * sprint) * dirFwd;
     let shieldK = k;
     if (this.parryT >= 0 && !this.twoHanded) {
       this.parryT += dt;
@@ -4359,7 +4366,7 @@ export class Knight {
     }
 
     // ----- Bålen: lutar in i rörelsen, motvrids mot höfterna, andas -----
-    let lean = 0.06 * moving + 0.1 * run * dirFwd + Math.sin(idleT * 1.9) * 0.016 + (1 - moving) * 0.05 + lunge * 0.25 + this.crouchAmt * 0.28 + this.accLean;
+    let lean = 0.06 * moving + (0.07 * run + 0.15 * sprint) * dirFwd + Math.sin(idleT * 1.9) * 0.016 + (1 - moving) * 0.05 + lunge * 0.25 + this.crouchAmt * 0.28 + this.accLean;
     let torsoZ = attackBend + this.turnLean - pelvisRotZ * 0.6; // överkroppen rätar upp sig mot höftens lutning
     // Stilla: rullar på axlarna och rättar till greppet då och då
     let fidget = 0;
@@ -4889,7 +4896,7 @@ export class Knight {
       this.feet.reset([pos.x, pos.y, pos.z], yaw); // landa med fötterna under kroppen
     }
 
-    const run = Math.min(1, Math.max(0, (motion.speed - 3.5) / 2.5));
+    const run = gaitRun(motion.speed);
     const feet = this.feet.update(dt, [pos.x, pos.y, pos.z], yaw, [vx, vz], this.phase, run, (side, spot) => {
       this.onFootstep?.(side, spot, yaw);
     }, this.stride);

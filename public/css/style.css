@@ -866,3 +866,206 @@ button.primary:active:not(:disabled) { transform: translateY(1px); }
 #event-banner span { display: block; font-family: "Alegreya", serif; font-style: italic; font-size: 14px; margin-top: 2px; }
 #event-banner span:empty { display: none; }
 body[data-phase="lobby"] #event-banner { display: none; }
+
+/* =====================================================================
+   v0.34: MODERNT GRÄNSSNITT – rena former, mörka diskreta ytor, en accentfärg (dämpat guld)
+   ===================================================================== */
+:root {
+  --ui-bg: rgba(15, 17, 21, 0.74);
+  --ui-bg-solid: #16191f;
+  --ui-line: rgba(255, 255, 255, 0.09);
+  --ui-text: #f1eee7;
+  --ui-dim: rgba(241, 238, 231, 0.6);
+  --ui-accent: #e2b04a;
+  --ui-danger: #dc4b3b;
+  --ui-ok: #62c26a;
+  --ui-radius: 10px;
+  --ui-font: "Inter", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --ui-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* ---------- Spelets HUD ---------- */
+#hud { font-family: var(--ui-font); color: var(--ui-text); }
+#hud .panel {
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius);
+  color: var(--ui-text);
+  box-shadow: var(--ui-shadow);
+  backdrop-filter: blur(6px);
+  font-size: 13px;
+}
+#hud button.small {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--ui-line);
+  border-radius: 6px;
+  color: var(--ui-text);
+  font-family: var(--ui-font);
+  font-size: 12px;
+  transition: background 0.15s;
+}
+#hud button.small:hover { background: rgba(255, 255, 255, 0.16); }
+
+/* Spelarlistan uppe till vänster */
+#hud .top-left { padding: 10px 12px; min-width: 190px; }
+#hud .room-row { font-size: 12px; color: var(--ui-dim); display: flex; align-items: center; gap: 6px; }
+#hud .room-row strong { color: var(--ui-accent); letter-spacing: 1.5px; font-weight: 700; }
+#hud #player-list { margin-top: 8px; }
+#hud #player-list li { padding: 3px 0; gap: 8px; font-size: 13px; }
+#hud #player-list .kills { margin-left: auto; padding-left: 14px; color: var(--ui-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
+#hud #player-list .dead-name { opacity: 0.45; text-decoration: line-through; }
+#hud .dot { width: 9px; height: 9px; border: none; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.16); }
+
+/* Rundan, händelser och meddelanden */
+#round-banner {
+  background: var(--ui-bg); border: 1px solid var(--ui-line); border-radius: 999px; padding: 6px 16px;
+  font-family: var(--ui-font); font-size: 13px; font-weight: 600; letter-spacing: 0.04em; color: var(--ui-text); backdrop-filter: blur(6px);
+}
+.kill {
+  background: var(--ui-bg); border: 1px solid var(--ui-line); border-radius: 8px; padding: 5px 10px;
+  font-family: var(--ui-font); font-size: 13px; color: var(--ui-text); animation: ui-slide 0.25s ease-out;
+}
+@keyframes ui-slide { from { transform: translateX(14px); opacity: 0; } to { transform: none; opacity: 1; } }
+#callout { font-family: var(--font-head); font-size: 32px; letter-spacing: 0.03em; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.75); text-align: center; max-width: 80vw; }
+.center-hint, .status-banner, #pickup-hint {
+  background: var(--ui-bg); border: 1px solid var(--ui-line); border-radius: 999px; color: var(--ui-text);
+  font-family: var(--ui-font); font-size: 13px; padding: 7px 16px; backdrop-filter: blur(6px);
+}
+#death { font-family: var(--ui-font); font-size: 16px; color: var(--ui-text); }
+.death-title { font-family: var(--font-head); font-size: 44px; letter-spacing: 0.04em; color: var(--ui-danger); text-shadow: 0 3px 14px rgba(0, 0, 0, 0.7); }
+#respawn-timer { color: var(--ui-dim); margin-top: 4px; }
+#crosshair { border-width: 1.5px; width: 12px; height: 12px; margin: -6px 0 0 -6px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45); }
+#crosshair.on-target { border-color: var(--ui-danger); }
+#crosshair.on-target::after { background: var(--ui-danger); }
+
+/* Hjälptexten: liten och diskret, tar aldrig plats från mitten */
+#hud .help {
+  max-width: min(360px, calc(50vw - 270px)); padding: 8px 10px; font-size: 11px; line-height: 1.55; color: var(--ui-dim);
+  background: rgba(15, 17, 21, 0.5); box-shadow: none;
+}
+#hud .help b {
+  color: var(--ui-text); font-weight: 600; background: rgba(255, 255, 255, 0.1); border-radius: 4px; padding: 0 4px; white-space: nowrap;
+}
+@media (max-width: 1150px) { #hud .help { display: none; } }
+#hud #perf { padding: 6px 10px; font-size: 11px; color: var(--ui-dim); background: rgba(15, 17, 21, 0.5); box-shadow: none; }
+
+/* Vapenbytet mellan rundorna */
+#hud #weapon-bar { text-align: center; padding: 10px 16px; }
+#hud #weapon-bar b { font-family: var(--font-head); letter-spacing: 0.04em; color: var(--ui-accent); }
+#hud #weapon-desc { color: var(--ui-text); }
+#hud #weapon-bar .weapon-hint { color: var(--ui-dim); opacity: 1; }
+
+/* ---------- Liv, ork och förmågor ---------- */
+#combat-hud { width: auto; bottom: 20px; display: flex; flex-direction: column; align-items: center; gap: 10px; pointer-events: none; }
+.abilities { display: flex; gap: 8px; }
+.ab {
+  --p: 1;
+  position: relative; width: 50px; height: 50px; border-radius: 12px;
+  background: var(--ui-bg); border: 1px solid var(--ui-line); color: var(--ui-text);
+  display: grid; place-items: center; overflow: hidden; backdrop-filter: blur(6px);
+  transition: border-color 0.2s, color 0.2s, transform 0.12s;
+}
+.ab svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; transition: opacity 0.2s; }
+/* Ringen: en mörk slöja som sveps bort medurs medan förmågan laddas om */
+.ab-ring { position: absolute; inset: 0; background: conic-gradient(transparent calc(var(--p) * 360deg), rgba(6, 7, 9, 0.7) 0); pointer-events: none; }
+.ab[data-state="ready"] .ab-ring { background: none; }
+.ab[data-state="wait"] { color: var(--ui-dim); }
+.ab[data-state="wait"] svg { opacity: 0.45; }
+.ab-time { position: absolute; inset: 0; display: grid; place-items: center; font: 700 15px/1 var(--ui-font); font-style: normal; font-variant-numeric: tabular-nums; color: #fff; text-shadow: 0 1px 4px #000; }
+.ab kbd {
+  position: absolute; top: 3px; left: 4px; font: 600 9px/1 var(--ui-font); letter-spacing: 0.02em; color: var(--ui-dim);
+}
+.ab-name { position: absolute; bottom: 3px; left: 0; right: 0; text-align: center; font: 600 8.5px/1 var(--ui-font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ui-dim); }
+.ab svg { margin-top: -2px; }
+/* Tungt slag laddas: ringen fylls i guld, och rutan lyser när slaget är fulladdat */
+.ab[data-state="charging"] { border-color: rgba(226, 176, 74, 0.6); color: var(--ui-accent); }
+.ab[data-state="charging"] .ab-ring { background: conic-gradient(rgba(226, 176, 74, 0.3) calc(var(--p) * 360deg), transparent 0); }
+.ab.charged { border-color: var(--ui-accent); box-shadow: 0 0 0 1px var(--ui-accent), 0 0 14px rgba(226, 176, 74, 0.45); }
+/* Klar igen: en kort blänk. Nyss använd: rutan trycks ner. */
+.ab.pop { animation: ab-pop 0.38s ease-out; }
+.ab.used { animation: ab-used 0.18s ease-out; }
+@keyframes ab-pop {
+  0% { transform: scale(0.94); border-color: var(--ui-accent); box-shadow: 0 0 0 0 rgba(226, 176, 74, 0.6); color: var(--ui-accent); }
+  60% { transform: scale(1.05); box-shadow: 0 0 0 7px rgba(226, 176, 74, 0); }
+  100% { transform: none; box-shadow: 0 0 0 0 rgba(226, 176, 74, 0); }
+}
+@keyframes ab-used { 0% { transform: scale(0.9); } 100% { transform: none; } }
+
+.bars { width: 340px; max-width: calc(100vw - 32px); display: flex; flex-direction: column; gap: 5px; }
+#hp-bar {
+  height: 16px; background: rgba(8, 9, 11, 0.72); border: 1px solid var(--ui-line); border-radius: 8px; overflow: hidden; position: relative;
+}
+#hp-fill, #hp-lag { position: absolute; inset: 0 auto 0 0; height: 100%; width: 100%; border-radius: 7px; }
+#hp-fill { background: linear-gradient(180deg, #7bd47f, var(--ui-ok)); transition: width 0.18s ease-out, background 0.3s; }
+#hp-lag { background: rgba(255, 255, 255, 0.55); transition: width 0.7s ease-out 0.25s; }
+#hp-bar[data-level="low"] #hp-fill { background: linear-gradient(180deg, #f0c060, #e0a030); }
+#hp-bar[data-level="critical"] #hp-fill { background: linear-gradient(180deg, #ee6a5a, var(--ui-danger)); }
+#hp-bar[data-level="critical"] { animation: hp-warn 1.1s ease-in-out infinite; }
+@keyframes hp-warn { 50% { border-color: rgba(220, 75, 59, 0.9); } }
+#hp-text { line-height: 14px; font: 700 11px/14px var(--ui-font); letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
+
+/* Orken: smal guldgul mätare under livet */
+#stamina-bar { position: relative; height: 6px; background: rgba(8, 9, 11, 0.72); border: 1px solid var(--ui-line); border-radius: 4px; overflow: hidden; transition: border-color 0.25s, opacity 0.4s; }
+#stamina-fill { height: 100%; width: 100%; transform-origin: left center; background: linear-gradient(180deg, #f3cd72, var(--ui-accent)); transition: transform 0.12s linear, background 0.25s; }
+#stamina-mark { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, 0.28); opacity: 0; transition: opacity 0.25s; }
+#stamina-bar[data-state="full"] { opacity: 0.55; }
+#stamina-bar[data-state="low"] #stamina-fill { background: linear-gradient(180deg, #f0a050, #e07a30); }
+#stamina-bar[data-state="empty"] { border-color: rgba(220, 75, 59, 0.75); }
+#stamina-bar[data-state="empty"] #stamina-fill { background: #8a6a55; }
+#stamina-bar[data-state="empty"] #stamina-mark { opacity: 1; } /* strecket visar hur mycket som krävs för att sprinta igen */
+
+@media (max-width: 700px) {
+  .ab { width: 42px; height: 42px; border-radius: 10px; }
+  .ab-name { display: none; }
+  .bars { width: 280px; }
+}
+@media (prefers-reduced-motion: reduce) { .ab.pop, .ab.used, #hp-bar[data-level="critical"], .kill { animation: none; } }
+
+/* ---------- Lobby, kort och övriga rutor: samma rena stil (inget trä, inga nitar, inget pergament) ---------- */
+:root {
+  --wood-bg: linear-gradient(180deg, #1c2027 0%, #15181d 100%);
+  --rivets: none;
+  --parch-bg: #ece8df;
+  --parch: #ece8df;
+  --parch-2: #dcd6c8;
+  --parch-3: #b9b1a0;
+  --ink: #1b1d22;
+  --ink-soft: #5c5a55;
+  --gold: #e2b04a;
+  --gold-hi: #f0cd82;
+  --blood: #b23a2c;
+  --blood-hi: #cf4f3c;
+}
+.card { border: 1px solid rgba(0, 0, 0, 0.5); border-radius: 14px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5); }
+.card h1 { text-shadow: none; }
+button.primary {
+  background: var(--blood-hi); border: none; border-radius: 10px; text-shadow: none;
+  box-shadow: 0 4px 14px rgba(178, 58, 44, 0.35);
+}
+.lobby-panel { border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5); }
+.lp-head h2 { text-shadow: none; letter-spacing: 4px; }
+.lp-tab { background: rgba(255, 255, 255, 0.06); border: none; text-shadow: none; color: rgba(236, 232, 223, 0.75); border-radius: 10px 10px 0 0; }
+.lp-tab.active { box-shadow: inset 0 2px 0 var(--gold); }
+.lp-body { border: none; box-shadow: none; }
+.lobby-panel button.small.iron { background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: none; }
+.lobby-panel .lp-body button.small { background: #fff; border: 1px solid rgba(0, 0, 0, 0.14); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); border-radius: 8px; }
+.lobby-panel .lp-body button.small:hover:not(:disabled) { background: #f6f3ec; }
+.lobby-panel .mode-btn.active, .lobby-panel .team-btn.active, .lobby-panel .time-btn.active, .lobby-panel .weather-btn.active, .lobby-panel .map-btn.active {
+  background: var(--ink) !important; color: #fff !important; border-color: var(--ink) !important; box-shadow: inset 0 -2px 0 var(--gold) !important;
+}
+#volume-panel.panel { background: var(--ui-bg); border: 1px solid var(--ui-line); border-radius: var(--ui-radius); color: var(--ui-text); font-family: var(--ui-font); backdrop-filter: blur(6px); box-shadow: var(--ui-shadow); }
+#volume-panel button.small { background: rgba(255, 255, 255, 0.08); border: 1px solid var(--ui-line); color: var(--ui-text); border-radius: 6px; }
+.lobby-panel .lobby-list li { background: #fff; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 8px; }
+.lp-foot { border-top: 1px solid rgba(255, 255, 255, 0.08); box-shadow: none; }
+.ready-summary .pip { border: none; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.14); }
+.ready-summary .pip.ready { box-shadow: 0 0 0 2px var(--gold); }
+.lobby-panel .ready-btn { background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: none; border-radius: 10px; }
+.lobby-panel .ready-btn.active { background: var(--ui-ok); border-color: transparent; color: #0f1a10; }
+@keyframes lp-glow { 50% { box-shadow: 0 0 0 2px var(--gold-hi), 0 0 18px rgba(240, 205, 130, 0.55); } }
+.board-head { border-bottom: none; text-shadow: none; }
+#board-table td { background: rgba(0, 0, 0, 0.04); }
+#my-card { background: rgba(0, 0, 0, 0.04); border: 1px solid rgba(0, 0, 0, 0.08); }
+.my-stats div { background: #fff; border: 1px solid rgba(0, 0, 0, 0.08); }
+#event-banner { background: var(--ui-bg); border: 1px solid rgba(226, 176, 74, 0.55); border-radius: 12px; backdrop-filter: blur(6px); font-family: var(--ui-font); }
+#event-banner b { text-shadow: none; color: var(--ui-accent); }
+#event-banner span { font-family: var(--ui-font); font-style: normal; color: var(--ui-dim); }

@@ -1657,3 +1657,6 @@ export function buildCastleArena() {
     gateCamera: ellipsePoint(GATE_T, FX - 6, FZ - 6),
   };
 }
+
+// Stenmaterialet (med variation i världskoordinater) används även av Kungaborgen
+export { stoneMat, TILE as STONE_TILE };

@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.33";
+export const VERSION = "0.36";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -149,8 +149,8 @@ export const TIME_NAMES = { day: "Dag", evening: "Kväll" };
 export const WEATHERS = ["sun", "rain", "fog"];
 
 // Banor (lobbyledaren väljer). Borggården har ett intro när matchen börjar.
-export const MAPS = ["arena", "castle"];
-export const MAP_NAMES = { arena: "Tornerplatsen", castle: "Borggården" };
+export const MAPS = ["arena", "castle", "borg"];
+export const MAP_NAMES = { arena: "Tornerplatsen", castle: "Borggården", borg: "Kungaborgen" };
 export const INTRO_SECONDS = 10;
 
 // Utmärkelser efter matchen: vem hade mest av vad?

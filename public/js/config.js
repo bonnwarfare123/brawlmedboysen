@@ -3,8 +3,18 @@
 
 export const CONFIG = {
   // Rörelse (meter per sekund)
-  walkSpeed: 4,
-  runSpeed: 6.5,
+  walkSpeed: 3,            // vanlig fart (W)
+  sprintSpeed: 5,          // sprint (Shift + W), kostar ork
+
+  // Ork (stamina) – gäller bara sprint
+  stamina: {
+    max: 100,
+    sprintSeconds: 6,      // så länge räcker full ork när man sprintar
+    recoverSeconds: 4,     // så lång tid tar det att fylla på från noll till full
+    recoverDelay: 0.75,    // paus efter avslutad sprint innan orken börjar komma tillbaka
+    minAfterEmpty: 20,     // har orken tagit helt slut måste så här mycket komma tillbaka innan man kan sprinta igen
+    lowAt: 25,             // under det här visas orken som låg
+  },
   acceleration: 11,        // hur snabbt man kommer upp i fart / bromsar (högre = snabbare)
   airControl: 2.5,         // hur mycket man kan styra i luften
 

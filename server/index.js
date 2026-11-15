@@ -2181,7 +2181,7 @@ export class GameRoom extends DurableObject {
       let vx = 0;
       let vz = 0;
       if (dist > ideal + 0.25) {
-        const speed = dist > 6 ? 5.5 : 3.4;
+        const speed = dist > 6 ? 5 : 3;
         vx += fx * speed;
         vz += fz * speed;
       } else if (dist < ideal - 0.5) {
