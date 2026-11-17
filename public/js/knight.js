@@ -4209,7 +4209,7 @@ export class Knight {
     const wantStride = gaitStride(speed, motion.forward, motion.side);
     this.stride = this.stride ? this.stride + (wantStride - this.stride) * (1 - Math.exp(-dt * 9)) : wantStride;
     const stride = this.stride;
-    const stance = gaitStance(stride);
+    const stance = gaitStance(stride, Math.abs(motion.side || 0) / (Math.hypot(motion.forward, motion.side) || 1));
     if (speed > 0.3) this.phase += ((speed * dt) / stride) * Math.PI * 2;
     const targetAmp = Math.min(1, speed / 3) * lerp(0.5, 0.85, run);
     this.amp += (targetAmp - this.amp) * (1 - Math.exp(-dt * 8));

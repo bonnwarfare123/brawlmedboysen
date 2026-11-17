@@ -1,4 +1,4 @@
-# Brawlmedboysen – v0.36
+# Brawlmedboysen – v0.38
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
@@ -15,6 +15,10 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 **Arenan:** tornerbarriär av plankor med järnband, lera nedtill, hängande tygdraperier och vapensköldar, upptrampad lerig sand där blodet sjunker in, eldkorgar med eld och rök, träningsdocka som snurrar när man slår på den, torn byggda av riktiga plankor (med stege, fönsterluckor och tinnar), krattad sand med småsten och halmstrån, läktare med plankbänkar, snidade räcken, tak med fransar och ståplats längst bak, levande publik (axlar, armbågar, kläder med veck, smala och runda, tydligare ansikten) med barn, gamla med käpp, damer och adelsmän (reser sig, jublar, klappar, pekar, dricker, äter, dunkar grannen i ryggen och viftar med hatten), försäljare som går runt, folk som går på marknaden, en lägereld med gryta och rök vid tälten, tätare gräs med blommor, damm som svävar i luften, hundar, fåglar och flugor runt elden, kungapar som visar tummen upp eller ner, vakter och en härold med trumpet.
 
 **Grafik:** på hög grafik (F2) får ljusa saker ett mjukt glöd-sken, och färgtonen anpassas efter dag, kväll, regn och dimma (varmare på kvällen, gråare i regn, mörka hörn). Mjuka, fluffiga moln driver sakta över himlen på båda banorna (och blir ett grått molntäcke när det regnar eller snöar). På låg grafik stängs glöd, skuggor och dammet av. **F3** visar bilder per sekund, ritanrop och hur många millisekunder varje bild tar. Alla shaders byggs när banan laddas (inga ryck första gången något syns), bara de 4 eldarna närmast det du tittar på lyser upp omgivningen, och molnen och tyget kostar mindre.
+
+**Kungaborgen 2.0 – riktiga material (v0.38):** borgen har fått en visuell genomgång i Blender med skripten i mappen `blender/` (körs i ordning i Blenders Scripting-flik): `01` mäter scenen, `02` bygger PBR-material (grå sten med fogar, fukt, mossa och sprickor, dämpad sand och jord med grus och skrapspår, brungrått trä med ådring och lagade plankor, skiffer/spån/tegel med överlapp, järn med rost, tyg med vävstruktur), `03` bygger om kil- och spetstak till riktiga tak med taksprång och fasar synliga kanter inom en triangelbudget, `04` lägger nötta trappsteg, äldre murpartier, grus och stenar vid murfoten, och `05` bakar varje material till sömlösa bilder (färg, roughness, normal map) och exporterar `borg.glb` med WebP-texturer. Spelet läser nu de bakade texturerna direkt ur glb-filen (`borg.js`), och smuts nertill, mossa på skuggsidan, nötta trappsteg och arenans grusiga kant görs i shadern med samma värden som i Blender. Den spanska sommarlooken är borta: neutralt dagsljus som låter stenen vara grå. Före → efter: 40 038 → 50 730 trianglar, 278 → 284 objekt, 27 → 29 material, 0 → 81 texturer, glb 2,7 → 5,0 MB.
+
+**Kungaborgen i spansk sommar (v0.37):** banan har fått en egen sommardag i Spanien: hög stark sol, djupblå himmel, ljus sandsten (stora huggna block) och varmt ljus från sanden. Kvällen är en orange solnedgång, regn och dimma är ljusare. Inga svävande prickar (såg ut som snö). Fötterna står nu på sanden i stället för i den, och taken är fixade i Blender: porthuset har valmat tak och de små kil-taken över portarna är riktiga sadeltak med vindskivor och trägavel. Takpannorna ligger i rader längs takfoten. **Sidsteg:** när man går åt sidan tar riddaren korta galopperande sidsteg, så benen inte släpar efter kroppen (`ik.js`).
 
 **Ny bana: Kungaborgen (v0.36):** borgen som byggdes i Blender (`public/models/borg.glb`) är nu en spelbar bana. Man slåss på sandplanen innanför tornerbarriären. Publik sitter på läktarna i öst och väst och på adelsläktarna på övre gården, och folk står längs södra sidan. Kungen och drottningen sitter på en tronpall med röd matta i kungalogen, med härolden och två vakter; bröstvärnet framför logen är sänkt så att man ser dem från planen. Banan har facklor, träningsdocka, prispall, dag och kväll, regn, snö och dimma som de andra banorna. Den laddas med en egen liten GLB-läsare (`borg.js`) och slås ihop per material så att den ritas snabbt. **Publiken ser mer ut som riktiga människor** på alla banor: längre armar som når ner till höften, mindre huvuden, bredare axlar och längre ben (`crowd.js`).
 
@@ -76,7 +80,8 @@ Alla knappar kan bytas: tryck **⌨️ Tangenter** i lobbyn eller i menyn när m
 | `public/js/main.js` | Startskärm, styrning, kamera, spel-loop |
 | `public/js/arena.js` | Bygger arenan av enkla former (barriär, läktare, kungaloge, plankstorn, eldkorgar, träningsdocka, prispall) |
 | `server/index.js` (Leaderboard) | Den gemensamma topplistan (ett eget Durable Object som heter BOARD i `wrangler.jsonc`) |
-| `public/js/borg.js` | Kungaborgen: laddar borgmodellen, material, publikplatser och kungalogen (v0.36) |
+| `public/js/borg.js` | Kungaborgen: laddar borgmodellen med bakade texturer, världseffekter i shadern, publikplatser och kungalogen (v0.36, v0.38) |
+| `blender/` | Blender-skript (bpy) för borgens material, tak, slitage, bakning och export (v0.38) |
 | `public/js/castle.js` | Borggården (vinterbanan) med porten som öppnas i introt |
 | `public/js/castle-extras.js` | Borggårdens detaljer: spår i leran, rekvisita, girlanger, glöd, rök, dis och snöflingor |
 | `public/js/kit.js` | De nya rustningarna och hjälmarna (v0.25) |

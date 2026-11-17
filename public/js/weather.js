@@ -158,7 +158,7 @@ export class Motes {
   set(kind = this.kind, evening = this.evening) {
     this.kind = kind;
     this.evening = evening;
-    this.points.visible = !this.off && kind !== "rain";
+    this.points.visible = !this.off && !this.hidden && kind !== "rain"; // hidden: banan vill inte ha dem
     const m = this.points.material;
     m.color.set(evening ? 0xffb060 : kind === "fog" ? 0xe8ecf0 : 0xfff0d0);
     m.opacity = evening ? 0.75 : kind === "fog" ? 0.3 : 0.5;

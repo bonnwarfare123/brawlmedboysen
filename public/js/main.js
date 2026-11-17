@@ -137,7 +137,7 @@ function applyMap(kind) {
   if (kind === mapKind) return;
   if (!arenas[kind]) {
     arenas[kind] = kind === "castle" ? buildCastleArena() : kind === "borg" ? buildBorgArena() : buildArena();
-    gritPass(arenas[kind].group, kind === "castle" ? 0.74 : kind === "borg" ? 0.82 : 0.7, kind === "castle" ? 0.97 : kind === "borg" ? 0.98 : 0.95);
+    gritPass(arenas[kind].group, kind === "castle" ? 0.74 : kind === "borg" ? 1 : 0.7, kind === "castle" ? 0.97 : kind === "borg" ? 1 : 0.95);
   }
   scene.remove(arena.group);
   arena = arenas[kind];
@@ -305,6 +305,10 @@ function applyAtmosphere() {
   const winter = mapKind === "castle";
   if (winter && rain) fogColor = evening ? 0x5c5a68 : 0xc4ccd6; // snöfall
   if (winter && fog) fogColor = evening ? 0x6a6874 : 0xd4dae2;  // snöstorm
+  if (mapKind === "borg") {
+    borgAtmosphere(evening, rain, fog);
+    return;
+  }
   scene.background.set(fogColor);
   scene.fog.color.set(fogColor);
   scene.fog.near = fog ? 4 : rain ? 22 : evening ? 30 : 42; // lite dis även i klart väder
@@ -321,8 +325,38 @@ function applyAtmosphere() {
   setEnvironment(environmentFor(evening));
   arena.setTime(evening);
   arena.setOvercast?.(rain || fog);
+  motes.hidden = false;
   motes.set(weatherKind, evening);
   postfx?.setGrade(rain ? (winter ? "snow" : "rain") : fog ? "fog" : evening ? "evening" : winter ? "winter" : "day");
+}
+
+// Kungaborgen: en klar sommardag med neutralt, rent ljus som låter den grå stenen vara grå.
+// Hög sol (korta skuggor), blå himmel, ljusa skuggor. Kvällen blir en dämpad solnedgång,
+// regn och dimma är ljusare än på de andra banorna så att materialen fortfarande syns.
+// (Solens riktning här måste stämma med SOL_HORISONTELL i Blender-materialen: mossan växer på skuggsidan.)
+function borgAtmosphere(evening, rain, fog) {
+  let fogColor = evening ? 0xb39a8e : 0xbccad6;
+  if (rain) fogColor = evening ? 0x5c5c66 : 0x9ca6b0;
+  if (fog) fogColor = evening ? 0xa0948e : 0xd2d4d4;
+  scene.background.set(fogColor);
+  scene.fog.color.set(fogColor);
+  scene.fog.near = fog ? 6 : rain ? 26 : evening ? 45 : 70;
+  scene.fog.far = fog ? 55 : rain ? 120 : evening ? 190 : 280;
+  const dim = rain ? 0.45 : fog ? 0.6 : 1;
+  skyLight.color.set(evening ? 0x8a88b0 : rain || fog ? 0xc4ccd4 : 0xc2d4ea);
+  skyLight.groundColor.set(evening ? 0x6a5444 : 0x7c766c);
+  skyLight.intensity = evening ? 1.4 : 1.6;
+  sun.color.set(evening ? 0xffaa6a : rain || fog ? 0xe4e8ec : 0xfff6ea);
+  sun.intensity = (evening ? 2.4 : 3.3) * dim;
+  if (evening) sun.position.set(28, 8, -12);
+  else sun.position.set(8, 40, 10);
+  renderer.toneMappingExposure = evening ? 1.12 : rain || fog ? 1.16 : 1.1;
+  setEnvironment(environmentFor(evening));
+  arena.setTime(evening);
+  arena.setOvercast?.(rain || fog);
+  motes.hidden = true; // inga svävande prickar här (de såg ut som snö)
+  motes.set(weatherKind, evening);
+  postfx?.setGrade(rain ? "borgRain" : fog ? "borgFog" : evening ? "borgEvening" : "borg");
 }
 
 const effects = new Effects(scene);

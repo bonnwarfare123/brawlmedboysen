@@ -97,6 +97,7 @@ export const GAIT = {
   cadenceBase: 0.72,     // gångcykler per sekund i mycket låg fart (en cykel = två steg)
   cadencePerSpeed: 0.19, // så mycket ökar takten per meter/sekund
   groundTravel: 0.86,    // så långt (meter) kroppen hinner medan en fot står kvar på marken (benets räckvidd)
+  sideTravelCut: 0.44,   // åt sidan når benet mycket kortare: så mycket kortare blir den sträckan
   minStance: 0.24,       // minsta andel av cykeln som foten står på marken (resten är sving och svävfas)
   maxStance: 0.62,       // största andel (långsam gång: alltid en fot i marken)
   runFrom: 2.2,          // under den här farten går man
@@ -118,10 +119,13 @@ export function gaitStride(speed, forward, side) {
   const sideness = Math.abs(side) / len;
   const back = Math.max(0, -forward) / len;
   const cadence = GAIT.cadenceBase + GAIT.cadencePerSpeed * speed;
-  return Math.max(0.5, (speed / cadence) * (1 - 0.22 * sideness) * (1 - 0.2 * back));
+  // Åt sidan kan benen inte kliva lika långt som framåt (höften når inte), så man tar korta, snabba sidsteg
+  return Math.max(0.5, (speed / cadence) * (1 - 0.55 * sideness) * (1 - 0.2 * back));
 }
 // Andel av cykeln som en fot står på marken. Långa steg = kort tid i marken (resten svävar man).
-export const gaitStance = (stride) => Math.min(GAIT.maxStance, Math.max(GAIT.minStance, GAIT.groundTravel / stride));
+// Åt sidan (sideness 1) hinner kroppen bara flytta sig en kortare bit medan foten står kvar.
+export const gaitStance = (stride, sideness = 0) =>
+  Math.min(GAIT.maxStance, Math.max(GAIT.minStance, (GAIT.groundTravel - GAIT.sideTravelCut * sideness) / stride));
 
 const MIN_GAP = 0.13; // fötterna får aldrig korsa varandra: minst så här långt isär i sidled
 
@@ -184,13 +188,23 @@ export class FootPlanner {
   }
 
   gait(pos, yaw, vel, speed, phase, run, onStep, stride) {
-    const stance = gaitStance(stride); // andel av cykeln foten står på marken
+    // Hur mycket av rörelsen går åt sidan (0 = rakt fram/bak, 1 = rakt åt sidan)?
+    const sideness = Math.abs((vel[0] * Math.cos(yaw) - vel[1] * Math.sin(yaw)) / speed);
+    const stance = gaitStance(stride, sideness); // andel av cykeln foten står på marken
     const cycleTime = stride / speed;
     const lift = 0.09 + 0.2 * run;
     const dirX = vel[0] / speed;
     const dirZ = vel[1] / speed;
 
-    for (const [side, offset] of [["L", 0], ["R", 0.5]]) {
+    // Åt sidan: "sidogalopp". Ledande foten kliver långt ut, den andra stänger snabbt efter (en kvarts cykel
+    // i stället för en halv), sedan svävar man en kort stund. Annars hinner kroppen före fötterna och benen släpar efter.
+    const latV = vel[0] * Math.cos(yaw) - vel[1] * Math.sin(yaw); // plus = åt vänster
+    const lead = latV > 0 ? "L" : "R";
+    const close = 0.5 - 0.25 * sideness; // hur långt efter den ledande foten den andra sätts ner (andel av cykeln)
+    const offsets = lead === "L" ? [["L", 0], ["R", 1 - close]] : [["L", 0.5 - close], ["R", 0.5]];
+    const leadReach = sideness * Math.max(0, (stride * (0.5 - close) + MIN_GAP) / 2 - 0.05);
+
+    for (const [side, offset] of offsets) {
       const foot = this.feet[side];
       let f = (phase / (Math.PI * 2) + offset) % 1;
       if (f < 0) f += 1;
@@ -213,7 +227,7 @@ export class FootPlanner {
         // Var ska foten landa? Där kroppen är vid nedsättningen, plus ett halvt steg framåt
         const remaining = (1 - s) * (1 - stance) * cycleTime;
         const [ix, iz] = this.ideal(side, pos, yaw, true);
-        const ahead = (stride * stance) / 2;
+        const ahead = (stride * stance) / 2 + (side === lead ? leadReach : 0);
         let tx = ix + vel[0] * remaining + dirX * ahead;
         let tz = iz + vel[1] * remaining + dirZ * ahead;
         // Korsa inte benen: vänster fot ska alltid landa till vänster om den högra (och tvärtom)
