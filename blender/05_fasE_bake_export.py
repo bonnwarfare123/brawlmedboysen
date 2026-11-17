@@ -43,11 +43,23 @@ def mappar():
     return bas, tex, exp
 
 
+def exportobjekt():
+    """Synliga mesh-objekt + dolda Boolean-snitt som lämnar material i dem (fönsternischer)."""
+    ut = []
+    for o in bpy.context.view_layer.objects:
+        if o.type == "MESH" and o.visible_get():
+            ut.append(o)
+            for md in o.modifiers:
+                if md.type == "BOOLEAN" and md.show_render and md.object and md.object not in ut:
+                    ut.append(md.object)
+    return ut
+
+
 def bakbara_material():
     """MAT_-material med procedur-noder (från Fas B) som används av synliga objekt."""
     anv = set()
-    for o in bpy.context.view_layer.objects:
-        if o.type == "MESH" and o.visible_get():
+    for o in exportobjekt():
+        if True:
             for s in o.material_slots:
                 if s.material:
                     anv.add(s.material)
@@ -271,9 +283,7 @@ def forbered(R):
 def exportera(exp, R):
     """Byt till bakade material, exportera, byt tillbaka."""
     bytta = []
-    for o in bpy.context.view_layer.objects:
-        if o.type != "MESH" or not o.visible_get():
-            continue
+    for o in exportobjekt():
         for i, s in enumerate(o.material_slots):
             if s.material and not s.material.name.endswith("__B"):
                 b = bpy.data.materials.get(s.material.name + "__B")

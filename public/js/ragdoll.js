@@ -139,7 +139,7 @@ export class Ragdoll {
   //   world   = samma punkter i världen just nu
   //   spin    = extra fart för punkterna längst bort, så delen snurrar
   //   name    = kroppsdelens namn (ger leder med rörelsegränser)
-  // bounds: { rx, rz } – ovalen som staketet bildar
+  // bounds: { rx, rz } – ovalen som staketet bildar, eller { clamp(x, z) } för banans egen form
   constructor(bodies, bounds = null) {
     this.points = [];
     this.constraints = [];
@@ -407,7 +407,9 @@ export class Ragdoll {
   collide() {
     for (const p of this.points) {
       if (p.y < p.r) p.y = p.r;
-      if (this.bounds) {
+      if (this.bounds?.clamp) {
+        [p.x, p.z] = this.bounds.clamp(p.x, p.z);
+      } else if (this.bounds) {
         const v = (p.x / this.bounds.rx) ** 2 + (p.z / this.bounds.rz) ** 2;
         if (v > 1) {
           const s = 1 / Math.sqrt(v);

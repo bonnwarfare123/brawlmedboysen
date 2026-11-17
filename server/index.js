@@ -17,7 +17,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import {
-  MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, MATCH, ARENA_RX, ARENA_RZ,
+  MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, MATCH, ARENA_RX, ARENA_RZ, insideArena, clampToArena, arenaExtent,
   JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS, AIM_JOINT, ARMORS, HELMETS, SHIELDS,
   WEAPONS, CAPES, MODES, attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, MAX_BOTS, BOT_NAMES, WEATHERS, AWARDS,
   MAPS, INTRO_SECONDS, CROSSBOW, KING_BOW, GOBLIN,
@@ -1159,9 +1159,11 @@ export class GameRoom extends DurableObject {
     if (!this.canFight(player)) return;
 
     // Håll positionen inom arenan (skydd mot konstiga värden)
-    const x = Math.max(-ARENA_RX, Math.min(ARENA_RX, finite(msg.p[0])));
+    // (varje bana har sin egen yta – Kungaborgens skrank är rektangulärt, inte ovalt)
+    const [ex, ez] = arenaExtent(this.map);
+    const x = Math.max(-ex, Math.min(ex, finite(msg.p[0])));
     const y = Math.max(0, Math.min(5, finite(msg.p[1])));
-    const z = Math.max(-ARENA_RZ, Math.min(ARENA_RZ, finite(msg.p[2])));
+    const z = Math.max(-ez, Math.min(ez, finite(msg.p[2])));
     // Utan ben sitter man kvar där man föll. Den som hålls fast står där den som håller den står.
     if (player.heldBy) {
       const holder = this.players.get(player.heldBy);
@@ -1468,7 +1470,7 @@ export class GameRoom extends DurableObject {
     for (let d = 0; d <= T.range; d += 0.25) {
       const x = start[0] + fx * d;
       const z = start[2] + fz * d;
-      if ((x / (ARENA_RX - 0.3)) ** 2 + (z / (ARENA_RZ - 0.3)) ** 2 > 1) {
+      if (!insideArena(this.map, x, z, 0.3)) {
         range = d;
         break;
       }
@@ -1723,11 +1725,8 @@ export class GameRoom extends DurableObject {
     }
     const id = "i" + randomId().slice(0, 4);
     const a = Math.random() * Math.PI * 2;
-    const p = [
-      round2(Math.max(-ARENA_RX + 0.5, Math.min(ARENA_RX - 0.5, player.p[0] + Math.sin(a) * 0.9))),
-      0,
-      round2(Math.max(-ARENA_RZ + 0.5, Math.min(ARENA_RZ - 0.5, player.p[2] + Math.cos(a) * 0.9))),
-    ];
+    const [dx, dz] = clampToArena(this.map, player.p[0] + Math.sin(a) * 0.9, player.p[2] + Math.cos(a) * 0.9, 0.5);
+    const p = [round2(dx), 0, round2(dz)];
     const item = { id, w: player.cw, p, r: round2(Math.random() * Math.PI * 2) };
     this.items.set(id, item);
     player.cw = FISTS;
@@ -1742,13 +1741,10 @@ export class GameRoom extends DurableObject {
       return null;
     }
     const a = Math.random() * Math.PI * 2;
+    const [sx, sz] = clampToArena(this.map, player.p[0] + Math.sin(a) * 1.1, player.p[2] + Math.cos(a) * 1.1, 0.5);
     const item = {
       id: "i" + randomId().slice(0, 4), w: player.stash, r: round2(Math.random() * Math.PI * 2),
-      p: [
-        round2(Math.max(-ARENA_RX + 0.5, Math.min(ARENA_RX - 0.5, player.p[0] + Math.sin(a) * 1.1))),
-        0,
-        round2(Math.max(-ARENA_RZ + 0.5, Math.min(ARENA_RZ - 0.5, player.p[2] + Math.cos(a) * 1.1))),
-      ],
+      p: [round2(sx), 0, round2(sz)],
     };
     player.stash = null;
     this.items.set(item.id, item);
@@ -1793,11 +1789,7 @@ export class GameRoom extends DurableObject {
         g.moving = 1;
       }
       // Håll den inne på planen
-      const e = (g.p[0] / (ARENA_RX - 0.4)) ** 2 + (g.p[2] / (ARENA_RZ - 0.4)) ** 2;
-      if (e > 1) {
-        g.p[0] /= Math.sqrt(e);
-        g.p[2] /= Math.sqrt(e);
-      }
+      [g.p[0], g.p[2]] = clampToArena(this.map, g.p[0], g.p[2], 0.4);
       if (dist < GOBLIN.reach && t >= g.nextAtk) {
         g.nextAtk = t + GOBLIN.every + Math.random() * 0.3;
         g.side = g.side === "L" ? "R" : "L";
@@ -1921,7 +1913,7 @@ export class GameRoom extends DurableObject {
     for (let d = 0; d <= KING_BOW.range; d += 0.2) {
       const x = from[0] + fx * d;
       const z = from[2] + fz * d;
-      if ((x / (ARENA_RX + 0.6)) ** 2 + (z / (ARENA_RZ + 0.6)) ** 2 > 1) {
+      if (!insideArena(this.map, x, z, -0.6)) {
         range = d;
         break;
       }
@@ -2210,13 +2202,7 @@ export class GameRoom extends DurableObject {
       }
       let x = bot.p[0] + vx * dt;
       let z = bot.p[2] + vz * dt;
-      const rx = ARENA_RX - 0.6;
-      const rz = ARENA_RZ - 0.6;
-      const v = (x / rx) ** 2 + (z / rz) ** 2;
-      if (v > 1) {
-        x /= Math.sqrt(v);
-        z /= Math.sqrt(v);
-      }
+      [x, z] = clampToArena(this.map, x, z, 0.6);
       moving = Math.hypot(vx, vz) > 0.3 ? (Math.hypot(vx, vz) > 4.5 ? 2 : 1) : 0;
       bot.p = [round2(x), 0, round2(z)];
     }

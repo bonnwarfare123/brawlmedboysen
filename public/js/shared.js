@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.38";
+export const VERSION = "0.39";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -240,6 +240,59 @@ export const COLORS = [
 // Arenans spelbara yta är en oval (ellips) med dessa radier i meter
 export const ARENA_RX = 13;
 export const ARENA_RZ = 10;
+
+// Varje bana har sin egen spelbara yta som följer det synliga staketet.
+//  oval: Tornerplatsen och Borggården (staketet står 0,7 m utanför ovalen)
+//  box:  Kungaborgen – rektangulärt skrank med avfasade hörn. Måtten är innerkanten på borgens
+//        skrank i spelet (uppmätt i borg.glb, skala 1,12): |x| ≤ 14,77, |z| ≤ 10,29 och hörnen
+//        avskurna längs |x| + |z| ≤ 22,37. Staketet står precis på gränsen.
+// "fence" = hur långt utanför gränsen staketets insida står (lösa delar/ragdolls stannar där).
+export const ARENA_SHAPES = {
+  arena: { type: "oval", rx: ARENA_RX, rz: ARENA_RZ, fence: 0.55 },
+  castle: { type: "oval", rx: ARENA_RX, rz: ARENA_RZ, fence: 0.55 },
+  borg: { type: "box", hx: 14.77, hz: 10.29, corner: 22.37, fence: 0.05 },
+};
+export const arenaShape = (map) => ARENA_SHAPES[map] || ARENA_SHAPES.arena;
+
+// Största |x| och |z| som ytan når (för enkla rimlighetskontroller)
+export function arenaExtent(map) {
+  const s = arenaShape(map);
+  return s.type === "box" ? [s.hx, s.hz] : [s.rx, s.rz];
+}
+
+// Är punkten innanför ytan, med "margin" meter till kanten? (negativ margin = utanför kanten)
+export function insideArena(map, x, z, margin = 0) {
+  const s = arenaShape(map);
+  if (s.type === "box") {
+    const ax = Math.abs(x), az = Math.abs(z);
+    return ax <= s.hx - margin && az <= s.hz - margin && ax + az <= s.corner - margin * Math.SQRT2;
+  }
+  return (x / (s.rx - margin)) ** 2 + (z / (s.rz - margin)) ** 2 <= 1;
+}
+
+// Flytta punkten till närmaste ställe innanför ytan (margin = t.ex. spelarens radie). Returnerar [x, z].
+export function clampToArena(map, x, z, margin = 0) {
+  const s = arenaShape(map);
+  if (s.type === "box") {
+    const hx = s.hx - margin, hz = s.hz - margin, c = s.corner - margin * Math.SQRT2;
+    let ax = Math.min(Math.abs(x), hx);
+    let az = Math.min(Math.abs(z), hz);
+    const over = ax + az - c;
+    if (over > 0) {
+      // ut mot det avfasade hörnet: skjut tillbaka vinkelrätt mot hörnlinjen
+      ax -= over / 2;
+      az -= over / 2;
+      if (ax > hx) { az -= ax - hx; ax = hx; }
+      if (az > hz) { ax -= az - hz; az = hz; }
+    }
+    return [Math.sign(x) * ax, Math.sign(z) * az];
+  }
+  const rx = s.rx - margin, rz = s.rz - margin;
+  const v = (x / rx) ** 2 + (z / rz) ** 2;
+  if (v <= 1) return [x, z];
+  const k = 1 / Math.sqrt(v);
+  return [x * k, z * k];
+}
 
 // Rumskoder: 4–8 tecken, bara A–Z och 0–9
 export const ROOM_CODE_RE = /^[A-Z0-9]{4,8}$/;

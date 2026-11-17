@@ -3,7 +3,7 @@
 import * as THREE from "three";
 import { CONFIG } from "./config.js";
 import {
-  COLORS, ARENA_RX, ARENA_RZ, ROOM_CODE_RE, VERSION, COMBAT, MATCH, ARMORS, HELMETS, SHIELDS, WEAPONS, CAPES, MODE_NAMES, TEAMS,
+  COLORS, ARENA_RX, ARENA_RZ, clampToArena, arenaShape, ROOM_CODE_RE, VERSION, COMBAT, MATCH, ARMORS, HELMETS, SHIELDS, WEAPONS, CAPES, MODE_NAMES, TEAMS,
   attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, TIME_NAMES, MAX_BOTS, WEATHERS, AWARDS,
   MAPS, MAP_NAMES, INTRO_SECONDS, CROSSBOW, KING_BOW, weaponName, GOBLIN,
 } from "./shared.js";
@@ -147,7 +147,48 @@ function applyMap(kind) {
   arena.setQuality?.(lowQuality);
   applyWeather(weatherKind);
   warmShaders();
+  kollisionsVy.bygg();
 }
+
+// FELSÖKNING: lägg till ?kollision i adressen för att se kollisionerna (syns aldrig annars).
+//  röd linje   = banans kant (där staketets insida står)
+//  gul linje   = där spelarens mittpunkt stoppas (kanten minus spelarens radie)
+//  blå rutor   = hinder på planen (t.ex. träningsdockan)
+//  grön ring   = spelarens kollisionsradie
+const kollisionsVy = {
+  pa: new URLSearchParams(location.search).has("kollision"),
+  grupp: null,
+  ring: null,
+  bygg() {
+    if (!this.pa) return;
+    if (this.grupp) scene.remove(this.grupp);
+    this.grupp = new THREE.Group();
+    const linje = (margin, farg) => {
+      const pts = [];
+      const s = arenaShape(mapKind);
+      for (let i = 0; i <= 256; i++) {
+        const t = (i / 256) * Math.PI * 2;
+        const R = s.type === "box" ? 40 : Math.max(s.rx, s.rz) * 2;
+        const [x, z] = clampToArena(mapKind, Math.sin(t) * R, Math.cos(t) * R, margin);
+        pts.push(new THREE.Vector3(x, 0.06, z));
+      }
+      return new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: farg, depthTest: false }));
+    };
+    this.grupp.add(linje(0, 0xff3030), linje(PLAYER_RADIUS, 0xffd020));
+    for (const c of arena.colliders) {
+      const b = new THREE.Box3Helper(new THREE.Box3(new THREE.Vector3(c.minX, 0, c.minZ), new THREE.Vector3(c.maxX, 1.2, c.maxZ)), 0x3080ff);
+      this.grupp.add(b);
+    }
+    this.ring = new THREE.Mesh(new THREE.RingGeometry(PLAYER_RADIUS - 0.02, PLAYER_RADIUS, 40), new THREE.MeshBasicMaterial({ color: 0x30ff60, depthTest: false }));
+    this.ring.rotation.x = -Math.PI / 2;
+    this.grupp.add(this.ring);
+    this.grupp.renderOrder = 999;
+    scene.add(this.grupp);
+  },
+  folj(pos) {
+    if (this.ring) this.ring.position.set(pos.x, 0.07, pos.z);
+  },
+};
 
 // LJUSPOOL: banorna har många eldar med eget ljus (6–8 st). Varje ljus gör ALLA ytor dyrare att rita,
 // så i stället finns bara 4 riktiga ljus, som hela tiden flyttas till de eldar som är närmast det man tittar på.
@@ -369,7 +410,12 @@ const effects = new Effects(scene);
   };
 }
 const debris = new Debris(30, 45); // döda kroppar och avhuggna delar
-const RAGDOLL_BOUNDS = { rx: ARENA_RX + 0.55, rz: ARENA_RZ + 0.55 }; // staketet
+// Lösa delar och kroppar stannar vid staketet (följer banans form)
+const RAGDOLL_BOUNDS = {
+  rx: ARENA_RX + 0.55,
+  rz: ARENA_RZ + 0.55,
+  clamp: (x, z) => clampToArena(mapKind, x, z, -arenaShape(mapKind).fence),
+};
 const sound = new Sound(
   loadSetting("ljud", "pa") === "av",
   loadSetting("musik", "pa") === "pa",
@@ -3807,6 +3853,7 @@ const right = new THREE.Vector3();
 const move = new THREE.Vector3();
 const wantedVel = new THREE.Vector3();
 const PLAYER_RADIUS = 0.4;
+kollisionsVy.bygg(); // (bara med ?kollision i adressen)
 
 // Riddarens fart uttryckt framåt/åt sidan i förhållande till dit den tittar
 function motionOf(vel, yaw, airborne) {
@@ -3958,15 +4005,9 @@ function updateMe(dt) {
       }
     }
 
-    // Håll riddaren innanför staketet (ovalen)
-    const rx = ARENA_RX - PLAYER_RADIUS;
-    const rz = ARENA_RZ - PLAYER_RADIUS;
-    const v = (me.pos.x / rx) ** 2 + (me.pos.z / rz) ** 2;
-    if (v > 1) {
-      const s = 1 / Math.sqrt(v);
-      me.pos.x *= s;
-      me.pos.z *= s;
-    }
+    // Håll riddaren innanför staketet (banans egen form: oval eller Kungaborgens rektangulära skrank)
+    [me.pos.x, me.pos.z] = clampToArena(mapKind, me.pos.x, me.pos.z, PLAYER_RADIUS);
+    kollisionsVy.folj(me.pos);
   }
 
   // Damm när man springer och när man landar efter ett hopp

@@ -1,8 +1,11 @@
 # =====================================================================
-#  BRAWL MED BOYSEN – FAS B: MATERIALUPPGRADERING (PBR utan plastkänsla)  v1.2
+#  BRAWL MED BOYSEN – FAS B: MATERIALUPPGRADERING (PBR utan plastkänsla)  v1.4
 #  v1.1: lagade plankor, mossa främst på skuggsidan, nötta trappsteg (MAT_Sten_Trappa),
 #        arenasand med mer grus längs skranket och upptrampad mitt
 #  v1.2: sprickor bara på enstaka stenar och svagare
+#  v1.4: plankornas springor är mörkbruna i stället för nästan svarta.
+#  v1.3: ljusare kalkbruk i fogarna, grundare fogar och mjukare stenkanter (inga svarta linjer),
+#        olika höga skift och olika långa block, varmare block och lite gul lav, fönsternischernas insida
 #  Klistra in i Blenders Scripting-flik och tryck "Run Script" (Alt+P).
 #
 #  Vad skriptet gör:
@@ -198,16 +201,25 @@ class Nodbyggare:
         return n.outputs[i]
 
     # --- block (stenar, plankor, takpannor) ---
-    def block(self, u, v, rader, kolumner, fog_kakel, ojamn=0.0):
+    def block(self, u, v, rader, kolumner, fog_kakel, ojamn=0.0, variera=0.0):
         """Förskjutna rader. Returnerar: fog (1 i fogen), kant (avstånd till fog,
-        i kakel-enheter), bu/bv (blockets mitt – samma för hela blocket), fv (0..1 inom raden)."""
+        i kakel-enheter), bu/bv (blockets mitt – samma för hela blocket), fv (0..1 inom raden).
+        variera > 0: olika höga skift och olika långa block (som riktigt murverk), fortfarande sömlöst."""
         if ojamn > 0:
             v = self.add(v, self.mul(self.sub(self.brus(u, v, 6, 6, 2.0, 0.5, 11.0), 0.5), ojamn / rader))
             u = self.add(u, self.mul(self.sub(self.brus(u, v, 6, 6, 2.0, 0.5, 23.0), 0.5), ojamn / kolumner))
+        if variera > 0 and rader % 2 == 0:
+            # v' = v + a/(2πk)·sin(2πkv): radgränserna flyttas, skiften blir olika höga (period bevaras)
+            k = rader / 2
+            v = self.add(v, self.mul(self.sin(self.mul(v, TAU * k)), variera / (TAU * k)))
         r = self.mul(v, rader)
         rad = self.floor(r)
         fv = self.sub(r, rad)
         skift = self.mul(self.m("MODULO", rad, 2.0), 0.5)
+        if variera > 0:
+            # olika långa block: förskjut fogarna olika i varje skift
+            fas = self.mul(rad, 2.37)
+            u = self.add(u, self.mul(self.sin(self.add(self.mul(u, TAU * kolumner), fas)), variera * 0.8 / (TAU * kolumner)))
         x = self.add(self.mul(u, kolumner), skift)
         kol = self.floor(x)
         fu = self.sub(x, kol)
@@ -229,7 +241,8 @@ class Nodbyggare:
 # Materialtyper. Var och en returnerar (färg, roughness, metallic, höjd, sheen)
 # ---------------------------------------------------------------------
 def bygg_sten(b, u, v, p):
-    fog, kant, bu, bv, fv, fu = b.block(u, v, p["rader"], p["kolumner"], p["fog"] / p["tile"], p.get("ojamn", 0.25))
+    fog, kant, bu, bv, fv, fu = b.block(u, v, p["rader"], p["kolumner"], p["fog"] / p["tile"], p.get("ojamn", 0.25),
+                                        p.get("variera", 0.0))
     r = b.slump_per_block(bu, bv, 3.1)
     r2 = b.slump_per_block(bu, bv, 9.7)
     stor = b.brus(u, v, 3, 3, 3.0, 0.5, 1.0)          # stora fläckar
@@ -246,8 +259,13 @@ def bygg_sten(b, u, v, p):
     # vittring: ljusare, slitna stenkanter
     slit = b.mul(b.sub(1.0, b.mjuk(kant, 0.0, p["fog"] / p["tile"] * 2.5)), 0.12)
     sten = b.blanda(sten, b.farg(p["b"]), slit)
+    # några varmare, gulgrå block (kalksten) och lite gul lav i fläckar
+    varm = b.mul(b.mjuk(r2, 0.72, 0.84), p.get("varm", 0.0))
+    sten = b.blanda(sten, b.vm("MULTIPLY", sten, b.farg("#fff0d8")), varm)
+    lav = b.mul(b.mul(b.mjuk(b.brus(u, v, 24, 24, 2.0, 0.6, 31.0), 0.7, 0.78), b.mjuk(stor, 0.45, 0.7)), p.get("lav", 0.0))
+    sten = b.blanda(sten, b.farg("#a49a5c"), lav)
     # fog (mörkare bruk med smuts)
-    fogfarg = b.vskala(b.farg(p["fogfarg"]), b.madd(fin, 0.2, 0.9))
+    fogfarg = b.vskala(b.farg(p["fogfarg"]), b.madd(fin, 0.24, 0.88))     # kornigt kalkbruk
     farg = b.blanda(sten, fogfarg, fog)
     rough = b.klamp(b.add(b.madd(mellan, 0.12, p.get("rough", 0.8)),
                           b.sub(b.mul(fog, 0.12), b.mul(fukt, 0.25))))
@@ -255,9 +273,11 @@ def bygg_sten(b, u, v, p):
     # sprickor: tunna, och bara på enstaka stenar (inte ett nät över hela muren)
     spricka = b.mjuk(b.absv(b.sub(b.brus(u, v, 9, 9, 2.0, 0.5, 5.0), 0.5)), 0.005, 0.0)
     spricka = b.mul(spricka, b.mjuk(b.slump_per_block(bu, bv, 21.7), 0.9, 0.95))
-    hojd = b.add(b.mul(b.mjuk(kant, 0.0, p["fog"] / p["tile"] * 3.0), 0.6),
+    # stenkanterna rundas mjukt över en bredare zon och fogen ligger bara lite djupare än stenen
+    # (förut: djup fog + skarp rundning → normal map gav svarta linjer i solljus)
+    hojd = b.add(b.mul(b.mjuk(kant, 0.0, p["fog"] / p["tile"] * 4.0), p.get("rundning", 0.35)),
                  b.madd(mellan, 0.3, b.mul(fin, 0.1)))
-    hojd = b.sub(hojd, b.add(b.mul(fog, 0.35), b.mul(spricka, 0.25)))
+    hojd = b.sub(hojd, b.add(b.mul(fog, p.get("fogdjup", 0.15)), b.mul(spricka, 0.25)))
     farg = b.blanda(farg, b.vskala(farg, 0.75), b.mul(spricka, 0.35))
     return farg, rough, 0.0, hojd, 0.0, r2
 
@@ -323,7 +343,7 @@ def bygg_tra(b, u, v, p):
     lagad = b.mul(b.mjuk(b.slump_per_block(bu, bv, 17.3), 0.9, 0.94), p.get("lagade", 0.85))
     farg = b.blanda(farg, b.vm("MULTIPLY", farg, b.farg("#ffe9cf")), lagad)
     farg = b.blanda(farg, b.vskala(farg, 1.25), b.mul(lagad, 0.6))
-    farg = b.blanda(farg, b.farg("#2b2219"), fog)
+    farg = b.blanda(farg, b.farg("#5a4a3a"), fog)   # v1.4: mörkbrun springa, inte svart
     rough = b.klamp(b.sub(b.madd(adr, 0.12, b.madd(fog, 0.15, p.get("rough", 0.7))), b.mul(lagad, 0.06)))
     hojd = b.add(b.mul(b.mjuk(kant, 0.0, 0.01), 0.4), b.mul(adr2, 0.25))
     hojd = b.sub(hojd, b.add(b.mul(spricka, 0.4), b.mul(fog, 0.4)))
@@ -431,14 +451,17 @@ BYGGARE = {"sten": bygg_sten, "kullersten": bygg_kullersten, "mark": bygg_mark, 
 STEN = dict(fukt=0.5, mossa=0.25)
 MATERIAL = {
     # --- sten ---
-    "BO_Mur":   ("MAT_Sten_Mur", "sten", 1024, dict(STEN, tile=2.0, rader=4, kolumner=3, fog=0.03,
-                  a="#7f7a71", b="#958e82", c="#a39a8b", fogfarg="#4d4840", rough=0.82)),
+    "BO_Mur":   ("MAT_Sten_Mur", "sten", 1024, dict(STEN, tile=2.0, rader=6, kolumner=3, fog=0.03, variera=0.45,
+                  a="#8c887f", b="#a19c91", c="#b2a996", fogfarg="#857f73", rough=0.84, varm=0.45, lav=0.3,
+                  mossa=0.1)),
     "BO_Karna": ("MAT_Sten_Huggen", "sten", 1024, dict(STEN, tile=2.0, rader=4, kolumner=2, fog=0.014, ojamn=0.1,
-                  a="#8e877b", b="#a39b8d", c="#aea594", fogfarg="#5e584f", rough=0.78, mossa=0.15)),
-    "BO_Port":  ("MAT_Sten_Port", "sten", 1024, dict(STEN, tile=2.0, rader=6, kolumner=4, fog=0.025,
-                  a="#746d63", b="#877f72", c="#93897a", fogfarg="#433e37", rough=0.84, fukt=0.6)),
+                  variera=0.25, a="#99948a", b="#aaa397", c="#b7ad9b", fogfarg="#8f887c", rough=0.8, mossa=0.08,
+                  varm=0.35, lav=0.15)),
+    "BO_Port":  ("MAT_Sten_Port", "sten", 1024, dict(STEN, tile=2.0, rader=6, kolumner=4, fog=0.025, variera=0.4,
+                  a="#847e74", b="#958e82", c="#a39886", fogfarg="#7a7368", rough=0.85, fukt=0.5, varm=0.4,
+                  lav=0.2, mossa=0.1)),
     "BO_Hallar": ("MAT_Sten_Hallar", "sten", 1024, dict(STEN, tile=2.0, rader=2, kolumner=2, fog=0.03, ojamn=0.15,
-                  a="#7e786e", b="#8f887c", c="#9a9284", fogfarg="#463f34", rough=0.8, mossa=0.15)),
+                  a="#88827a", b="#989186", c="#a39b8c", fogfarg="#6c655a", rough=0.8, mossa=0.12, varm=0.3)),
     "BO_Gard":  ("MAT_Sten_Kullersten", "kullersten", 1024, dict(tile=2.0, celler=16,
                   a="#6f6a62", b="#858076", c="#948c7e", fogfarg="#4a4236")),
     # --- mark (dämpad, jordnära – ingen klargul sand) ---
@@ -479,7 +502,7 @@ MATERIAL = {
     "BO_Service": ("MAT_Korsvirke", "korsvirke", 1024, dict(tile=3.2, tile_v=2.6, puts="#c1b9a8", tra="#55463a")),
     "BO_Ho":    ("MAT_Ho", "ho", 512, dict(tile=1.0)),
 }
-BUMP = {"sten": (0.55, 0.03), "kullersten": (0.6, 0.03), "mark": (0.45, 0.02), "tra": (0.35, 0.01),
+BUMP = {"sten": (0.4, 0.03), "kullersten": (0.6, 0.03), "mark": (0.45, 0.02), "tra": (0.35, 0.01),
         "tak": (0.6, 0.02), "jarn": (0.25, 0.005), "tyg": (0.25, 0.004), "korsvirke": (0.4, 0.01), "ho": (0.5, 0.01)}
 VARLD = {"sten": (0.55, True), "kullersten": (0.3, False), "mark": (0.0, False), "tra": (0.45, False),
          "korsvirke": (0.5, False)}  # (smuts nertill, mossa)
@@ -488,7 +511,14 @@ SOL_HORISONTELL = (-0.62, 0.78, 0.0)
 # Material som inte ersätter något BO_-material (tilldelas i Fas D)
 EXTRA = {
     "MAT_Sten_Trappa": ("sten", 1024, dict(STEN, tile=2.0, rader=4, kolumner=2, fog=0.02, ojamn=0.12, trappa=True,
-                        a="#857e73", b="#968e81", c="#a19888", fogfarg="#4d4840", rough=0.7, mossa=0.12)),
+                        a="#8f8a80", b="#a09a8f", c="#aaa292", fogfarg="#7c766b", rough=0.72, mossa=0.08, varm=0.3)),
+    # Fönsternischernas insida: mörk men inte svart – grovt putsad, brungrå murad insida med lite trä
+    "MAT_Fonster_Inre": ("sten", 512, dict(tile=1.0, rader=4, kolumner=2, fog=0.02, ojamn=0.2, fukt=0.2, mossa=0.0,
+                         a="#3d3630", b="#463e36", c="#4e453b", fogfarg="#2e2924", rough=0.92, rundning=0.2)),
+    # Samma insida, men spelet låter den lysa varmt på kvällen (som levande ljus innanför)
+    "MAT_Fonster_Varm": ("sten", 512, dict(tile=1.0, rader=4, kolumner=2, fog=0.02, ojamn=0.2, fukt=0.2, mossa=0.0,
+                         a="#4a3f34", b="#54483b", c="#5c4f40", fogfarg="#382f27", rough=0.9, rundning=0.2,
+                         varm_ljus=True)),
 }
 ENKLA = {  # material som inte behöver textur
     "BO_Eld":     ("MAT_Eld", dict(farg="#ffb050", emission=6.0)),
@@ -592,6 +622,7 @@ def bygg_material(namn, typ, upplosning, p, ersatter):
     mat["varld_mossa"] = VARLD.get(typ, (0.0, False))[1]
     mat["trappa"] = bool(p.get("trappa"))
     mat["arena"] = bool(p.get("arena"))
+    mat["varm_ljus"] = bool(p.get("varm_ljus"))
     mat["sol_horisontell"] = list(SOL_HORISONTELL)
     if typ == "tyg":
         mat.use_backface_culling = False

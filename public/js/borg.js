@@ -312,9 +312,28 @@ export function buildBorgArena() {
   // Trä till tronpallen (tills borgens eget trämaterial har laddats)
   const wood = new THREE.MeshStandardMaterial({ color: 0x6f5c48, map: plankTexture(), roughness: 0.85 });
   let arenaMat = null;
+  // Några bostadsfönster lyser svagt varmt på kvällen (ingen ljuskälla – bara självlysande färg)
+  let varmMat = null;
+  let inreMat = null;
+  let kvall = false;
+  const tandFonster = () => {
+    // Fönsternischernas insida ligger i skugga och blir kolsvart utan studsljus:
+    // ge den ett svagt brunt egenljus så att den läses som mörkt trä/murverk, inte som ett hål.
+    if (inreMat) {
+      inreMat.emissive.set(0x3a2c20);
+      inreMat.emissiveIntensity = kvall ? 0.35 : 0.6;
+    }
+    if (varmMat) {
+      varmMat.emissive.set(kvall ? 0xff8a3a : 0x3a2c20);
+      varmMat.emissiveIntensity = kvall ? 0.45 : 0.6;
+    }
+  };
   const ready = loadGlb(MODEL_URL).then(({ nodes, materials }) => {
     const holder = new THREE.Group();
     arenaMat = materials.find((m) => m.name === "MAT_Mark_Arena") || null;
+    varmMat = materials.find((m) => m.name === "MAT_Fonster_Varm") || null;
+    inreMat = materials.find((m) => m.name === "MAT_Fonster_Inre") || null;
+    tandFonster();
     const tra = materials.find((m) => m.name === "MAT_Tra_Konstruktion");
     if (tra) for (const o of woodUsers) o.material = tra;
     for (const n of nodes) {
@@ -464,6 +483,8 @@ export function buildBorgArena() {
     },
     setTime(evening) {
       this.evening = evening;
+      kvall = !!evening;
+      tandFonster();
       // Klar blå himmel på dagen, dämpad solnedgång på kvällen
       sky.material.uniforms.top.value.set(evening ? 0x3a4078 : 0x4a7cc0);
       sky.material.uniforms.horizon.value.set(evening ? 0xe0a078 : 0xc4d4e4);
