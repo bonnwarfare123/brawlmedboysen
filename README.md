@@ -1,4 +1,4 @@
-# Brawlmedboysen – v0.39
+# Brawlmedboysen – v0.40
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
@@ -15,6 +15,8 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 **Arenan:** tornerbarriär av plankor med järnband, lera nedtill, hängande tygdraperier och vapensköldar, upptrampad lerig sand där blodet sjunker in, eldkorgar med eld och rök, träningsdocka som snurrar när man slår på den, torn byggda av riktiga plankor (med stege, fönsterluckor och tinnar), krattad sand med småsten och halmstrån, läktare med plankbänkar, snidade räcken, tak med fransar och ståplats längst bak, levande publik (axlar, armbågar, kläder med veck, smala och runda, tydligare ansikten) med barn, gamla med käpp, damer och adelsmän (reser sig, jublar, klappar, pekar, dricker, äter, dunkar grannen i ryggen och viftar med hatten), försäljare som går runt, folk som går på marknaden, en lägereld med gryta och rök vid tälten, tätare gräs med blommor, damm som svävar i luften, hundar, fåglar och flugor runt elden, kungapar som visar tummen upp eller ner, vakter och en härold med trumpet.
 
 **Grafik:** på hög grafik (F2) får ljusa saker ett mjukt glöd-sken, och färgtonen anpassas efter dag, kväll, regn och dimma (varmare på kvällen, gråare i regn, mörka hörn). Mjuka, fluffiga moln driver sakta över himlen på båda banorna (och blir ett grått molntäcke när det regnar eller snöar). På låg grafik stängs glöd, skuggor och dammet av. **F3** visar bilder per sekund, ritanrop och hur många millisekunder varje bild tar. Alla shaders byggs när banan laddas (inga ryck första gången något syns), bara de 4 eldarna närmast det du tittar på lyser upp omgivningen, och molnen och tyget kostar mindre.
+
+**Stadsvakten som 3D-modell (v0.40):** rustningen *Stadsvakt* ritas nu med en riktig modell från Blender (`public/models/rustningar/guard.glb`): kettle hat med nitar och snörning, skägg, puffade blåvita axlar, quiltade ärmar, tabard med korsade nycklar och guldkant, bälte med väska, tvåfärgade hosor och läderstövlar. Modellen är skinnad på riddarens egna 15 kroppsdelar, så gång, strid, ragdoll och avhuggning fungerar som förut; hjälmen kan slås av och det blå tyget tar spelarens färg. 18 979 trianglar, 14 material, 1,5 MB. Samma väg fungerar för alla rustningar: kör `blender/karaktarer/C10_spelmodell_export.py` (ändra `KONFIG`), lägg filen i `public/models/rustningar/` och lägg till en rad i `MODELLER` i `public/js/rustningsmodell.js`. Saknas filen används den kodbyggda rustningen.
 
 **Kungaborgen – rättningar (v0.39):** (1) *Osynliga väggar:* spelet stoppade alla spelare vid en oval (13 × 10 m) på alla banor, men Kungaborgens skrank är rektangulärt med avfasade hörn. Nu har varje bana sin egen gräns (`ARENA_SHAPES` i `shared.js`) som både servern och klienten använder; i borgen går man ända fram till skranket (testat i 32 riktningar). Lägg till `?kollision` i adressen för att se gränsen (röd = skranket, gul = där spelaren stannar, blå = hinder, grön = spelarens radie). (2) *Svarta fogar:* fogbruket är nu ljust gråbrunt, fogarna grundare och kanterna mjukare, med lite varmare block och gul lav (`02` v1.3). (3) *Svarta fönster:* de platta svarta lådorna har ersatts av riktiga nischer i murarna (`06_fonster_nischer.py`): ljusare stenkanter, mörkbrun insida, träkors i större fönster, och några bostadsfönster lyser svagt varmt på kvällen. Trianglar 49 092 → 52 996 i glb-filen (+8 %), glb 5,04 → 5,19 MB.
 
@@ -83,7 +85,7 @@ Alla knappar kan bytas: tryck **⌨️ Tangenter** i lobbyn eller i menyn när m
 | `public/js/arena.js` | Bygger arenan av enkla former (barriär, läktare, kungaloge, plankstorn, eldkorgar, träningsdocka, prispall) |
 | `server/index.js` (Leaderboard) | Den gemensamma topplistan (ett eget Durable Object som heter BOARD i `wrangler.jsonc`) |
 | `public/js/borg.js` | Kungaborgen: laddar borgmodellen med bakade texturer, världseffekter i shadern, publikplatser och kungalogen (v0.36, v0.38) |
-| `blender/` | Blender-skript (bpy) för borgens material, tak, slitage, fönsternischer, bakning och export (v0.38, v0.39) |
+| `blender/` | Blender-skript (bpy) för borgens material, tak, slitage, fönsternischer, bakning och export (v0.38, v0.39); `blender/karaktarer/` stadsvakten och exporten av spelmodeller (v0.40) |
 | `public/js/castle.js` | Borggården (vinterbanan) med porten som öppnas i introt |
 | `public/js/castle-extras.js` | Borggårdens detaljer: spår i leran, rekvisita, girlanger, glöd, rök, dis och snöflingor |
 | `public/js/kit.js` | De nya rustningarna och hjälmarna (v0.25) |

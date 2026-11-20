@@ -1,0 +1,716 @@
+"""
+C10_spelmodell_export.py  –  Brawl med Boysen: SPELMODELL FÖR EN RUSTNING (generell)
+==================================================================================
+Gör en karaktär från Blender spelbar. Klistra in i Scripting-fliken och kör
+(stadsvakt.blend eller en annan karaktärsfil med samma basmodell och rigg).
+
+Ändra bara KONFIG nedan för nästa karaktär (en per rustning i lobbyn).
+
+Vad skriptet gör (originalobjekten ändras aldrig – allt görs på kopior)
+  1. Kopierar kropp, ögon och all utrustning (tänderna hoppas över).
+  2. Ger delar utan vikter vikter: stela kjolar/tabarder följer bäcken och lår
+     (som riddarnas kjolar), bälte och väska följer bålen, övrigt får vikter
+     från närmaste kroppshörn. Hjälmen blir en egen stel del.
+  3. Poserar riggen (Auto-Rig Pro, FK) så att armarna hänger rakt ned – samma
+     grundställning som riddarna i spelet – och "bakar" posen.
+  4. Flyttar över vikterna från riggens 130+ ben till spelets 15 kroppsdelar
+     (pelvis, torso, head, upperArm/forearm/hand L/R, thigh/shin/foot L/R).
+  5. Anpassar modellen till riddarens skelett: benen till spelets fasta
+     benlängder (fot-IK), armarnas/bålens mått sparas som "byggnad" som
+     spelet använder för just den här rustningen.
+  6. Tar bort dold yta (hud under kläder, vaddering under tabard …) och bantar
+     till trianglarna i KONFIG.
+  7. Delar modellen i sömmar mellan kroppsdelarna (för avhuggning) med
+     bibehållna mjuka normaler, och sparar kroppsdelen per hörn (_REGION).
+  8. Enkla spelmaterial (färg/roughness/metallic per material, lagfärg märkt).
+  9. Exporterar <ut>.glb: en skinnad kropp + en stel hjälm + spelskelettet,
+     plus mått i "extras".
+
+Exporten hamnar i samlingen COL_Spelexport_<nyckel> (dold) för granskning.
+Kan köras om – den gamla exporten tas bort först.  Testat i Blender 5.3.
+"""
+
+import bpy
+import bmesh
+import json
+import math
+import os
+import time
+from mathutils import Vector, Matrix, Euler
+from mathutils.bvhtree import BVHTree
+from mathutils.kdtree import KDTree
+
+# =============================================================== KONFIG (per rustning)
+KONFIG = {
+    "nyckel": "guard",                 # rustningens nyckel i spelet (KIT_STYLES i kit.js)
+    "namn": "Stadsvakt",
+    "samling": "COL_Char_Stadsvakt",   # utrustningen
+    "rigg": "rig",
+    "kropp": "body",
+    "extra": ["Eye_Left", "Eye_Right"],  # följer med (huvud)
+    "hoppa_over": ["Teeth"],           # namn som innehåller detta tas inte med
+    "hjalm": ["Hjalm"],                # stela delar på huvudet som kan slås av
+    "kjol": ["Tabard", "Kjol"],        # hänger från höften och följer låren
+    "bal": ["Balte", "Vaska", "Emblem", "Ringbrynja"],   # följer bara bål/bäcken
+    # dold yta: inre lager → yttre lager som täcker dem (namn innehåller …)
+    "dold_yta": {
+        "body": ["Vaddering", "Hosor", "Stovlar", "Handskar", "Tabard", "Kjol", "Ringbrynja",
+                 "Har", "Skagg", "Hjalm_Foder", "Axelskydd", "Manschetter"],
+        "Vaddering": ["Tabard", "Ringbrynja", "Axelskydd", "Manschetter"],
+        "Hosor": ["Stovlar", "Kjol", "Tabard"],
+        "Vaddering_Kjol": ["Tabard"],
+    },
+    "kropp_tris": 7000,                # kroppen efter bantning
+    "mal_tris": 19000,                 # hela modellen (kropp + utrustning + hjälm)
+    "lagfarg": ["Tyg_Bla"],            # material som tar spelarens färg
+    # spelmaterial: namn innehåller → (färg, roughness, metallic)
+    "material": [
+        ("Tyg_Vit", "#ddd2bb", 0.9, 0.0), ("Tyg_Bla", "#2b4aa0", 0.9, 0.0),
+        ("Tyg_Guld", "#c99a36", 0.6, 0.3), ("Vaddering", "#4a3324", 0.92, 0.0),
+        ("Ringbrynja", "#5a5c60", 0.5, 0.85), ("Hjalm", "#6e665e", 0.55, 0.8),
+        ("Metall", "#6e665e", 0.55, 0.8), ("Massing", "#b08d45", 0.35, 0.9),
+        ("Lader_Snore", "#8e3f2a", 0.65, 0.0), ("Lader_Mork", "#3f2818", 0.7, 0.0),
+        ("Lader", "#6f4629", 0.65, 0.0), ("Har", "#5c3d26", 0.75, 0.0),
+        ("Sula", "#2c1b10", 0.8, 0.0),
+    ],
+    "ut": "export/rustningar/guard.glb",   # relativt .blend-filens mapp
+}
+
+# =============================================================== spelets skelett (från knight.js)
+BEN = ["pelvis", "torso", "head", "upperArmL", "forearmL", "handL", "upperArmR", "forearmR", "handR",
+       "thighL", "shinL", "footL", "thighR", "shinR", "footR"]
+FORALDER = {"pelvis": None, "torso": "pelvis", "head": "torso",
+            "upperArmL": "torso", "forearmL": "upperArmL", "handL": "forearmL",
+            "upperArmR": "torso", "forearmR": "upperArmR", "handR": "forearmR",
+            "thighL": "pelvis", "shinL": "thighL", "footL": "shinL",
+            "thighR": "pelvis", "shinR": "thighR", "footR": "shinR"}
+# Riddarens fasta ben (fot-IK i ik.js räknar med dem): höft ±0,1 / 0,92, knä 0,50, fotled 0,10
+HOFT_X, HOFT_Z, KNA_Z, VRIST_Z = 0.10, 0.92, 0.50, 0.10
+BAKEN_Z = 1.0
+
+R = []
+
+
+# =============================================================== hjälp
+def har(namn, lista):
+    return any(k in namn for k in lista)
+
+
+def ARP_till_spel(g):
+    """ARP-gruppnamn → [(spelben, andel)]."""
+    n = g.lower()
+    s = "L" if n.endswith(".l") else ("R" if n.endswith(".r") else "")
+    huvud = ("head", "jaw", "c_lips", "c_teeth", "tong", "c_chin", "c_nose", "c_eye", "c_cheek", "c_ear")
+    if n.startswith(huvud):
+        return [("head", 1.0)]
+    if n.startswith("neck"):
+        return [("head", 0.55), ("torso", 0.45)]
+    if n.startswith("root"):
+        return [("pelvis", 1.0)]
+    if n.startswith("spine_01"):
+        return [("pelvis", 0.55), ("torso", 0.45)]
+    if n.startswith("spine"):
+        return [("torso", 1.0)]
+    if n.startswith("shoulder") or n.startswith("clavicle"):
+        return [("torso", 1.0)]
+    if not s:
+        return []
+    if "forearm" in n:
+        return [("forearm" + s, 1.0)]
+    if n.startswith(("c_arm_twist", "arm_")):
+        return [("upperArm" + s, 1.0)]
+    fingrar = ("hand", "c_pinky", "pinky", "c_ring", "ring", "c_middle", "middle",
+               "c_index", "index", "thumb", "c_thumb")
+    if n.startswith(fingrar):
+        return [("hand" + s, 1.0)]
+    if n.startswith("thigh"):
+        return [("thigh" + s, 1.0)]
+    if n.startswith("leg_"):
+        return [("shin" + s, 1.0)]
+    if n.startswith(("foot", "toes")):
+        return [("foot" + s, 1.0)]
+    return []
+
+
+def smooth(a, b, x):
+    t = max(0.0, min(1.0, (x - a) / (b - a)))
+    return t * t * (3 - 2 * t)
+
+
+def normera(w, maxn=4):
+    topp = sorted(((k, v) for k, v in w.items() if v > 1e-4), key=lambda x: -x[1])[:maxn]
+    tot = sum(v for _, v in topp) or 1.0
+    return {k: v / tot for k, v in topp}
+
+
+def tris_me(me):
+    return sum(len(p.vertices) - 2 for p in me.polygons)
+
+
+def ta_bort_samling(namn):
+    kol = bpy.data.collections.get(namn)
+    if not kol:
+        return
+    for o in list(kol.objects):
+        d = o.data
+        bpy.data.objects.remove(o, do_unlink=True)
+        if d and d.users == 0:
+            if isinstance(d, bpy.types.Mesh):
+                bpy.data.meshes.remove(d)
+            elif isinstance(d, bpy.types.Armature):
+                bpy.data.armatures.remove(d)
+    bpy.data.collections.remove(kol)
+
+
+# =============================================================== 1. pose: armarna rakt ned (ARP FK)
+def varld(rig, ben):
+    return rig.matrix_world @ rig.pose.bones[ben].head
+
+
+def posera_armar(rig):
+    pb = rig.pose.bones
+    sparat = {}
+    for s in ("l", "r"):
+        ik = pb.get(f"c_hand_ik.{s}")
+        arm = pb.get(f"c_arm_fk.{s}")
+        fore = pb.get(f"c_forearm_fk.{s}")
+        if not (ik and arm and fore):
+            R.append(f"  (hittar inte ARP-armens FK-ben på sida {s} – armarna poseras inte)")
+            continue
+        sparat[s] = (ik.get("ik_fk_switch", 0.0), arm.rotation_mode, arm.rotation_euler.copy(),
+                     fore.rotation_mode, fore.rotation_euler.copy())
+        ik["ik_fk_switch"] = 1.0
+        arm.rotation_mode = "XYZ"
+        fore.rotation_mode = "XYZ"
+        S, E, W = f"c_arm_twist_offset.{s}", f"forearm_stretch.{s}", f"hand.{s}"
+
+        def fel():
+            bpy.context.view_layer.update()
+            a, e, w = varld(rig, S), varld(rig, E), varld(rig, W)
+            d1 = e - a
+            d2 = w - e
+            return d1.x ** 2 + d1.y ** 2 + 0.6 * (d2.x ** 2 + d2.y ** 2)
+
+        for ben in (arm, fore, arm, fore):
+            steg = math.radians(10)
+            while steg > math.radians(0.3):
+                for ax in (0, 2):
+                    bast = fel()
+                    for t in (1, -1):
+                        e = ben.rotation_euler.copy()
+                        e[ax] += t * steg
+                        gammal = ben.rotation_euler.copy()
+                        ben.rotation_euler = e
+                        if fel() < bast - 1e-9:
+                            break
+                        ben.rotation_euler = gammal
+                steg *= 0.5
+        a, e, w = varld(rig, S), varld(rig, E), varld(rig, W)
+        R.append(f"  arm {s}: överarm {math.degrees(math.atan2(Vector((e - a).xy).length, -(e - a).z)):.1f}° "
+                 f"från lodrätt, underarm {math.degrees(math.atan2(Vector((w - e).xy).length, -(w - e).z)):.1f}°")
+    bpy.context.view_layer.update()
+    return sparat
+
+
+def aterstall_pose(rig, sparat):
+    pb = rig.pose.bones
+    for s, (sw, m1, e1, m2, e2) in sparat.items():
+        pb[f"c_hand_ik.{s}"]["ik_fk_switch"] = sw
+        pb[f"c_arm_fk.{s}"].rotation_euler = e1
+        pb[f"c_arm_fk.{s}"].rotation_mode = m1
+        pb[f"c_forearm_fk.{s}"].rotation_euler = e2
+        pb[f"c_forearm_fk.{s}"].rotation_mode = m2
+    bpy.context.view_layer.update()
+
+
+# =============================================================== 2. kopior med vikter
+class Kroppsvikter:
+    """Kroppens hörn i vila (världen) med spelvikter – för stela delar."""
+
+    def __init__(self, kropp):
+        me = kropp.data
+        mw = kropp.matrix_world
+        gn = [g.name for g in kropp.vertex_groups]
+        self.co, self.spel, self.arp = [], [], []
+        for v in me.vertices:
+            arp = {gn[g.group]: g.weight for g in v.groups if g.weight > 1e-4}
+            sp = {}
+            for n, w in arp.items():
+                for b, a in ARP_till_spel(n):
+                    sp[b] = sp.get(b, 0) + w * a
+            self.co.append(mw @ v.co)
+            self.arp.append(arp)
+            self.spel.append(normera(sp, 15))
+        self.kd = KDTree(len(self.co))
+        for i, c in enumerate(self.co):
+            self.kd.insert(c, i)
+        self.kd.balance()
+
+    def narmast(self, p, filt=None, n=6, arp=False):
+        s = {}
+        for c, i, d in self.kd.find_n(p, n * 4):
+            if filt and not filt(self.spel[i]):
+                continue
+            w = 1.0 / max(d, 0.004) ** 2
+            for k, v in (self.arp[i] if arp else self.spel[i]).items():
+                s[k] = s.get(k, 0) + v * w
+            n -= 1
+            if n <= 0:
+                break
+        return s
+
+
+def kopiera(o, kol):
+    k = o.copy()
+    k.data = o.data.copy()
+    k.name = "EXP_" + o.name
+    kol.objects.link(k)
+    k.parent = None
+    k.matrix_world = o.matrix_world.copy()
+    return k
+
+
+# =============================================================== 3. omriktning till riddarens skelett
+def likform(Jm0, Jm1, Jk0, Jk1):
+    """Avbildar modellens ben [Jm0→Jm1] på riddarens [Jk0→Jk1]: vridning + längd längs benet."""
+    dm = (Jm1 - Jm0)
+    dk = (Jk1 - Jk0)
+    lm, lk = dm.length, dk.length
+    dm.normalize()
+    dk.normalize()
+    rot = dm.rotation_difference(dk).to_matrix()
+    s = lk / max(lm, 1e-6)
+
+    def f(v):
+        u = v - Jm0
+        a = u.dot(dm)
+        u2 = u + dm * a * (s - 1.0)
+        return Jk0 + rot @ u2
+    return f, rot
+
+
+# =============================================================== huvudprogram
+def kor():
+    K = KONFIG
+    if bpy.context.object and bpy.context.object.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    rig = bpy.data.objects[K["rigg"]]
+    kropp = bpy.data.objects[K["kropp"]]
+    mapp = os.path.dirname(bpy.data.filepath)
+    kolnamn = f"COL_Spelexport_{K['nyckel']}"
+    ta_bort_samling(kolnamn)
+    kol = bpy.data.collections.new(kolnamn)
+    bpy.context.scene.collection.children.link(kol)
+
+    R.append(f"SPELMODELL {K['namn']} ({K['nyckel']})")
+
+    # --- källobjekt
+    kallor = [kropp] + [bpy.data.objects[n] for n in K["extra"] if bpy.data.objects.get(n)]
+    for o in bpy.data.collections[K["samling"]].all_objects:
+        if o.type == "MESH" and not o.hide_render and not har(o.name, K["hoppa_over"]) and o not in kallor:
+            kallor.append(o)
+    R.append(f"Källor: {len(kallor)} objekt")
+    KV = Kroppsvikter(kropp)
+
+    # --- kopior, klass och (för delar som poseras) ARP-vikter i vila
+    klass = {}
+    kopior = []
+    for o in kallor:
+        k = kopiera(o, kol)
+        kopior.append(k)
+        harvikt = len(k.vertex_groups) > 0 and any(len(v.groups) for v in k.data.vertices)
+        if har(o.name, K["hjalm"]):
+            klass[k] = "hjalm"
+        elif har(o.name, K["kjol"]):
+            klass[k] = "kjol"
+        elif har(o.name, K["bal"]) and not harvikt:
+            klass[k] = "bal"
+        else:
+            klass[k] = "pose"
+            if not harvikt:
+                mw = k.matrix_world
+                k.vertex_groups.clear()
+                grupper = {}
+                for v in k.data.vertices:
+                    w = normera(KV.narmast(mw @ v.co, arp=True), 4)
+                    for n, x in w.items():
+                        if n not in grupper:
+                            grupper[n] = k.vertex_groups.new(name=n)
+                        grupper[n].add([v.index], x, "REPLACE")
+            if not any(m.type == "ARMATURE" for m in k.modifiers):
+                am = k.modifiers.new("Armature", "ARMATURE")
+                am.object = rig
+            for m in k.modifiers:
+                if m.type == "ARMATURE":
+                    m.object = rig
+
+    def kjolvikt(p):
+        zt = smooth(0.98, 1.12, p.z)
+        w = {"torso": zt, "pelvis": 1 - zt}
+        t = smooth(0.0, 1.0, (HOFT_Z - 0.02 - p.z) / 0.32)   # nedanför höften: följer låren
+        if t > 0:
+            a = smooth(-0.07, 0.07, p.x)
+            w["pelvis"] = w.get("pelvis", 0) * (1 - 0.6 * t)
+            w["thighL"] = 0.6 * t * a
+            w["thighR"] = 0.6 * t * (1 - a)
+        return normera(w)
+
+    def balfilt(sp):
+        return bool(sp) and max(sp, key=sp.get) in ("pelvis", "torso", "head")
+
+    # --- posera armarna och baka allt (världskoordinater)
+    R.append("Pose (armarna rakt ned, som riddarna):")
+    sparat = posera_armar(rig)
+    dg = bpy.context.evaluated_depsgraph_get()
+    J = {}
+    for nyckel, ben in (("axelL", "c_arm_twist_offset.l"), ("armbL", "forearm_stretch.l"), ("handL", "hand.l"),
+                        ("axelR", "c_arm_twist_offset.r"), ("armbR", "forearm_stretch.r"), ("handR", "hand.r"),
+                        ("hoftL", "thigh_twist.l"), ("knaL", "leg_stretch.l"), ("vristL", "foot.l"),
+                        ("hoftR", "thigh_twist.r"), ("knaR", "leg_stretch.r"), ("vristR", "foot.r"),
+                        ("nacke", "neck.x"), ("huvud", "head.x")):
+        J[nyckel] = varld(rig, ben).copy()
+    data = {}     # kopia → (co-lista, spelvikter-lista, mesh)
+    for k in kopior:
+        ev = k.evaluated_get(dg)
+        me = bpy.data.meshes.new_from_object(ev, preserve_all_data_layers=True, depsgraph=dg)
+        me.transform(k.matrix_world)
+        gn = [g.name for g in k.vertex_groups]
+        if klass[k] == "pose":
+            sv = []
+            for v in me.vertices:
+                w = {}
+                for g in v.groups:
+                    if g.group < len(gn):
+                        for b, a in ARP_till_spel(gn[g.group]):
+                            w[b] = w.get(b, 0) + g.weight * a
+                if not w:
+                    w = normera(KV.narmast(v.co))
+                sv.append(normera(w))
+        elif klass[k] == "hjalm":
+            sv = [{"head": 1.0} for _ in me.vertices]
+        elif klass[k] == "kjol":
+            sv = [kjolvikt(v.co) for v in me.vertices]
+        else:
+            sv = [normera(KV.narmast(v.co, balfilt)) for v in me.vertices]
+        gammal = k.data
+        k.data = me
+        k.modifiers.clear()
+        k.vertex_groups.clear()
+        k.matrix_world = Matrix.Identity(4)
+        if gammal.users == 0:
+            bpy.data.meshes.remove(gammal)
+        data[k] = sv
+    aterstall_pose(rig, sparat)
+
+    # --- byggnad (riddarens mått för den här rustningen) och riddarens leder
+    dz = HOFT_Z - (J["hoftL"].z + J["hoftR"].z) / 2
+    axel_z = (J["axelL"].z + J["axelR"].z) / 2 + dz
+    axel_x = (J["axelL"].x - J["axelR"].x) / 2
+    tall = (axel_z - BAKEN_Z) / 0.41
+    broad = axel_x / 0.212
+    overarm = ((J["armbL"] - J["axelL"]).length + (J["armbR"] - J["axelR"]).length) / 2
+    underarm = ((J["handL"] - J["armbL"]).length + (J["handR"] - J["armbR"]).length) / 2
+    armY, foreY = overarm / 0.29, underarm / 0.26
+    huvud_z = BAKEN_Z + 0.46 * tall
+    Jk = {"pelvis": Vector((0, 0, BAKEN_Z)), "torso": Vector((0, 0, BAKEN_Z)), "head": Vector((0, 0, huvud_z))}
+    for S, sx in (("L", 1), ("R", -1)):
+        a = Vector((sx * 0.212 * broad, 0, axel_z))
+        e = a - Vector((0, 0, 0.29 * armY))
+        h = e - Vector((0, 0, 0.26 * foreY))
+        Jk["upperArm" + S], Jk["forearm" + S], Jk["hand" + S] = a, e, h
+        Jk["thigh" + S] = Vector((sx * HOFT_X, 0, HOFT_Z))
+        Jk["shin" + S] = Vector((sx * HOFT_X, 0, KNA_Z))
+        Jk["foot" + S] = Vector((sx * HOFT_X, 0, VRIST_Z))
+    R.append(f"Byggnad: tall {tall:.3f}  broad {broad:.3f}  överarm {overarm:.3f} m (armY {armY:.3f})  "
+             f"underarm {underarm:.3f} m (foreY {foreY:.3f})  höjdjustering {dz:+.3f} m")
+
+    # --- omriktning per ben
+    upp = Vector((0, 0, dz))
+    T = {"pelvis": lambda v: v + upp, "torso": lambda v: v + upp}
+    nacke = J["nacke"] + upp
+    T["head"] = lambda v, d=(Jk["head"] - nacke): v + upp + d
+    for S, s in (("L", "L"), ("R", "R")):
+        fa, _ = likform(J["axel" + S] + upp, J["armb" + S] + upp, Jk["upperArm" + S], Jk["forearm" + S])
+        fu, ru = likform(J["armb" + S] + upp, J["hand" + S] + upp, Jk["forearm" + S], Jk["hand" + S])
+        hand0 = J["hand" + S] + upp
+        T["upperArm" + S] = fa
+        T["forearm" + S] = fu
+        T["hand" + S] = lambda v, h0=hand0, r=ru, hk=Jk["hand" + S]: hk + r @ (v - h0)
+        ft, _ = likform(J["hoft" + S], J["kna" + S], Jk["thigh" + S], Jk["shin" + S])
+        fs, rs = likform(J["kna" + S], J["vrist" + S], Jk["shin" + S], Jk["foot" + S])
+        v0 = J["vrist" + S]
+        T["thigh" + S] = ft
+        T["shin" + S] = fs
+        T["foot" + S] = lambda v, a0=v0, r=rs, ak=Jk["foot" + S]: ak + r @ (v - a0)
+    for k, sv in data.items():
+        me = k.data
+        for v, w in zip(me.vertices, sv):
+            p = v.co.copy()
+            ny = Vector()
+            tot = 0.0
+            for b, x in w.items():
+                ny += T[b](p) * x
+                tot += x
+            v.co = ny / tot if tot > 0 else p + upp
+        me.update()
+
+    # --- dold yta
+    bpy.context.view_layer.update()
+    dg = bpy.context.evaluated_depsgraph_get()
+    bvh = {k: BVHTree.FromObject(k, dg) for k in kopior}
+    namn_av = {k: k.name[4:] for k in kopior}
+    for k in kopior:
+        nm = namn_av[k]
+        nyckel = next((n for n in sorted(K["dold_yta"], key=len, reverse=True)
+                       if (nm == n if n == K["kropp"] else n in nm)), None)
+        if nyckel is None:
+            continue
+        yttre = [b for o, b in bvh.items() if o is not k and har(namn_av[o], K["dold_yta"][nyckel])]
+        if not yttre:
+            continue
+        me = k.data
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        sv = data[k]
+        dl = bm.verts.layers.int.new("_idx")
+        for i, v in enumerate(bm.verts):
+            v[dl] = i
+        bort = []
+        for f in bm.faces:
+            c = f.calc_center_median()
+            n = f.normal
+            if n.length < 0.5:
+                continue
+            hit = False
+            for b in yttre:
+                if b.ray_cast(c + n * 0.002, n, 0.05)[0] is not None:
+                    hit = True
+                    break
+            if hit:
+                bort.append(f)
+        fore = len(bm.faces)
+        bmesh.ops.delete(bm, geom=bort, context="FACES_ONLY")
+        losa = [v for v in bm.verts if not v.link_faces]
+        bmesh.ops.delete(bm, geom=losa, context="VERTS")
+        nya_sv = [sv[v[dl]] for v in bm.verts]
+        bm.verts.layers.int.remove(dl)
+        bm.to_mesh(me)
+        bm.free()
+        data[k] = nya_sv
+        R.append(f"  dold yta {namn_av[k]}: {len(bort)} av {fore} ytor borttagna")
+    for k in [k for k in kopior if len(k.data.polygons) == 0]:
+        kopior.remove(k)
+        del data[k]
+        bpy.data.objects.remove(k, do_unlink=True)
+
+    # --- vikter som vertex groups (spelben) – så att decimering tar med dem
+    for k in kopior:
+        k.vertex_groups.clear()
+        g = {b: k.vertex_groups.new(name=b) for b in BEN}
+        for i, w in enumerate(data[k]):
+            for b, x in w.items():
+                g[b].add([i], x, "REPLACE")
+
+    # --- bantning
+    def decimera(k, mal):
+        t0 = tris_me(k.data)
+        if t0 <= mal:
+            return
+        m = k.modifiers.new("Dec", "DECIMATE")
+        m.ratio = max(0.05, mal / t0)
+        m.use_collapse_triangulate = True
+        dg2 = bpy.context.evaluated_depsgraph_get()
+        me = bpy.data.meshes.new_from_object(k.evaluated_get(dg2), preserve_all_data_layers=True, depsgraph=dg2)
+        gammal = k.data
+        k.modifiers.remove(m)
+        k.data = me
+        bpy.data.meshes.remove(gammal)
+
+    kropp_k = next(k for k in kopior if namn_av[k] == K["kropp"])
+    decimera(kropp_k, K["kropp_tris"])
+    ovr = [k for k in kopior if k is not kropp_k]
+    summa = sum(tris_me(k.data) for k in kopior)
+    if summa > K["mal_tris"]:
+        rest = K["mal_tris"] - tris_me(kropp_k.data)
+        stora = [k for k in ovr if tris_me(k.data) > 500]
+        sma = sum(tris_me(k.data) for k in ovr if k not in stora)
+        stor = sum(tris_me(k.data) for k in stora)
+        kvot = max(0.25, (rest - sma) / max(1, stor))
+        for k in stora:
+            decimera(k, int(tris_me(k.data) * kvot))
+
+    # --- sömmar per kroppsdel + region + mjuka normaler
+    for k in kopior:
+        me = k.data
+        gn = [g.name for g in k.vertex_groups]
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        bm.normal_update()
+        dl = bm.verts.layers.deform.active
+        reg = bm.faces.layers.int.new("_reg")
+        nrm = {}
+        for v in bm.verts:
+            nrm[v.index] = v.normal.copy()
+        orig = bm.verts.layers.int.new("_o")
+        for v in bm.verts:
+            v[orig] = v.index
+        for f in bm.faces:
+            s = {}
+            for v in f.verts:
+                for gi, w in (v[dl].items() if dl else []):
+                    s[gi] = s.get(gi, 0) + w
+            f[reg] = BEN.index(gn[max(s, key=s.get)]) if s else 0
+        kant = [e for e in bm.edges if len(e.link_faces) == 2 and e.link_faces[0][reg] != e.link_faces[1][reg]]
+        bmesh.ops.split_edges(bm, edges=kant)
+        regv = bm.verts.layers.float.new("_REGION")
+        for v in bm.verts:
+            v[regv] = float(v.link_faces[0][reg]) if v.link_faces else 0.0
+        on = [nrm[v[orig]] for v in bm.verts]
+        bm.verts.layers.int.remove(orig)
+        bm.faces.layers.int.remove(reg)
+        bm.to_mesh(me)
+        bm.free()
+        for p in me.polygons:
+            p.use_smooth = True
+        me.normals_split_custom_set_from_vertices(on)
+        for a in [a.name for a in me.color_attributes]:     # färger per hörn behövs inte i spelet
+            me.color_attributes.remove(me.color_attributes[a])
+        if me.uv_layers:
+            me.uv_layers[0].name = "UVMap"
+        else:
+            me.uv_layers.new(name="UVMap")
+        # _REGION som punktattribut (float) finns nu i mesh.attributes
+
+    # --- spelmaterial
+    def spelmaterial(m):
+        if m is None:
+            return None
+        nm = m.name + "__S"
+        ut = bpy.data.materials.get(nm)
+        har_bild = m.node_tree is not None and any(n.type == "TEX_IMAGE" and n.image for n in m.node_tree.nodes)
+        if har_bild:
+            return m                                      # kropp och ögon: behåll texturerna
+        regel = next((r for r in K["material"] if r[0] in m.name), None)
+        farg, rough, metal = (regel[1:] if regel else ("#808080", 0.8, 0.0))
+        if ut is None:
+            ut = bpy.data.materials.new(nm)
+            if ut.node_tree is None:
+                ut.use_nodes = True
+        b = ut.node_tree.nodes.get("Principled BSDF")
+        h = farg.lstrip("#")
+        rgb = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        lin = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+        b.inputs["Base Color"].default_value = (*lin, 1)
+        b.inputs["Roughness"].default_value = rough
+        b.inputs["Metallic"].default_value = metal
+        ut.diffuse_color = (*lin, 1)                     # syns också i Blenders enkla vy
+        ut.roughness = rough
+        ut.metallic = metal
+        ut["lag"] = 1 if har(m.name, K["lagfarg"]) else 0
+        return ut
+
+    for k in kopior:
+        for i, sl in enumerate(k.material_slots):
+            k.data.materials[i] = spelmaterial(sl.material)
+
+    # --- slå ihop: kropp (skinnad) och hjälm (stel)
+    def sla_ihop(lista, namn):
+        if not lista:
+            return None
+        with bpy.context.temp_override(active_object=lista[0], selected_editable_objects=lista,
+                                       selected_objects=lista):
+            bpy.ops.object.join()
+        o = lista[0]
+        o.name = namn
+        o.data.name = namn
+        return o
+
+    hjalmar = [k for k in kopior if klass[k] == "hjalm"]
+    ovriga = [k for k in kopior if klass[k] != "hjalm"]
+    kroppobj = sla_ihop(ovriga, f"SM_{K['nyckel']}_Kropp")
+    hjalmobj = sla_ihop(hjalmar, f"SM_{K['nyckel']}_Hjalm")
+    if hjalmobj:
+        hjalmobj.vertex_groups.clear()
+
+    # --- spelskelettet
+    ad = bpy.data.armatures.new(f"ARM_{K['nyckel']}")
+    arm = bpy.data.objects.new(f"ARM_{K['nyckel']}", ad)
+    kol.objects.link(arm)
+    for o in bpy.context.view_layer.objects:
+        o.select_set(False)
+    bpy.context.view_layer.objects.active = arm
+    arm.select_set(True)
+    with bpy.context.temp_override(active_object=arm, object=arm):
+        bpy.ops.object.mode_set(mode="EDIT")
+        eb = ad.edit_bones
+        for b in BEN:
+            e = eb.new(b)
+            e.head = Jk[b]
+            barn = [c for c, p in FORALDER.items() if p == b and not c.startswith(("thigh",))]
+            if b in ("pelvis",):
+                e.tail = Jk[b] + Vector((0, 0, 0.1))
+            elif b == "torso":
+                e.tail = Jk["head"]
+            elif b == "head":
+                e.tail = Jk[b] + Vector((0, 0, 0.25))
+            elif b.startswith("foot"):
+                e.tail = Jk[b] + Vector((0, -0.15, -0.08))
+            elif b.startswith("hand"):
+                e.tail = Jk[b] + Vector((0, 0, -0.1))
+            else:
+                nasta = {"upperArm": "forearm", "forearm": "hand", "thigh": "shin", "shin": "foot"}[b[:-1]] + b[-1]
+                e.tail = Jk[nasta]
+            e.use_deform = True
+        for b, p in FORALDER.items():
+            if p:
+                eb[b].parent = eb[p]
+        bpy.ops.object.mode_set(mode="OBJECT")
+    kroppobj.parent = arm
+    kroppobj.matrix_parent_inverse = Matrix.Identity(4)
+    am = kroppobj.modifiers.new("Armature", "ARMATURE")
+    am.object = arm
+    if hjalmobj:
+        hjalmobj.parent = None
+
+    meta = {"byggnad": {"tall": round(tall, 4), "broad": round(broad, 4), "armY": round(armY, 4),
+                        "foreY": round(foreY, 4)},
+            "brost": {"rx": 0.2 * broad, "rz": 0.15, "ar": 0.075},
+            "huvud": [round(x, 4) for x in Jk["head"]], "version": 1, "nyckel": K["nyckel"]}
+    arm["spelmodell"] = json.dumps(meta)
+    kroppobj["spelmodell"] = json.dumps(meta)
+
+    # --- export
+    ut = os.path.join(mapp, K["ut"])
+    os.makedirs(os.path.dirname(ut), exist_ok=True)
+    for o in bpy.context.view_layer.objects:
+        o.select_set(False)
+    valda = [o for o in (kroppobj, hjalmobj, arm) if o]
+    for o in valda:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.export_scene.gltf(filepath=ut, export_format="GLB", use_selection=True, export_apply=True,
+                              export_skins=True, export_animations=False, export_extras=True,
+                              export_attributes=True, export_yup=True, export_texcoords=True,
+                              export_normals=True, export_materials="EXPORT",
+                              export_image_format="WEBP")
+    kol.hide_viewport = True
+    kol.hide_render = True
+    lc = bpy.context.view_layer.layer_collection.children.get(kolnamn)
+    if lc:
+        lc.exclude = False
+        lc.hide_viewport = True
+
+    t_kropp = tris_me(kroppobj.data)
+    t_hjalm = tris_me(hjalmobj.data) if hjalmobj else 0
+    mats = len([m for m in kroppobj.data.materials if m]) + (len(hjalmobj.data.materials) if hjalmobj else 0)
+    R.append(f"Trianglar: kropp+utrustning {t_kropp}, hjälm {t_hjalm}, totalt {t_kropp + t_hjalm} "
+             f"(mål {K['mal_tris']})")
+    R.append(f"Ritanrop (material): {mats}")
+    R.append(f"Export: {ut}  ({os.path.getsize(ut) / 1024:.0f} kB)")
+    txt = "\n".join(R)
+    print(txt)
+    return txt
+
+
+if __name__ == "__main__":
+    resultat_text = kor()

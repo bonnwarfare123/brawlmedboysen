@@ -29,6 +29,7 @@ import { COMBAT, JOINT_SEGMENT, LEG_JOINTS, weaponSpec, FISTS, CROSSBOW } from "
 import { Ragdoll } from "./ragdoll.js";
 import { FootPlanner, solveLeg, solveArm, gaitStride, gaitStance, gaitRun, gaitSprint } from "./ik.js";
 import { Cloth, Chain } from "./cloth.js";
+import { rustningsmodell, byggnadFor, anvandRustningsmodell, rustningHuggAv } from "./rustningsmodell.js";
 import { KIT_STYLES, CLOSED_HELMETS, HOOD_HELMETS, kitMaterials, buildKitTorso, buildKitLimbs, buildKitHelmet } from "./kit.js";
 import { rollFeatures, sculptHead as sculptFace, faceTexture, buildHair, beardShell, BEARD_REGION, BEARD_THICK, noseGeometry as wedgeNose } from "./face.js";
 import {
@@ -656,6 +657,9 @@ export class Knight {
     this.visorOpen = 0;
 
     const style = ARMOR_STYLES[look.a] || ARMOR_STYLES[0];
+    // Rustningar som finns som färdig 3D-modell (se rustningsmodell.js)
+    const glbSpec = opts.goblin ? null : rustningsmodell(style);
+    this.glb = glbSpec ? byggnadFor(glbSpec) : null;
     this.style = style;
     this.wIndex = look.w; // vapnet riddaren håller just nu (FISTS = inget)
     const wspec = weaponSpec(look.w);
@@ -841,8 +845,10 @@ export class Knight {
       slim: { broad: 0.97, tall: 1.07, deep: 0.94, hips: 0.95, arm: 0.98, fore: 0.98, leg: 0.99 },
       muscular: { broad: 1.19, tall: 1.05, deep: 1.08, hips: 0.97, arm: 1.3, fore: 1.22, leg: 1.18 },
     }[kind];
+    if (this.glb) Object.assign(B, { broad: this.glb.broad, tall: this.glb.tall, deep: 1, arm: 1 });
     const { broad, tall } = B;
-    this.reshape({
+    if (this.glb) this.chestBody = { ...this.glb.chest };
+    this.reshape(this.glb ? this.glb.reshape : {
       torso: [broad, tall, B.deep],
       head: [1.1, 1.1, 1.1],
       upperArmL: [B.arm, 1.1, B.arm], upperArmR: [B.arm, 1.1, B.arm],
@@ -853,7 +859,7 @@ export class Knight {
       footL: [1.22, 1.06, 1.2], footR: [1.22, 1.06, 1.2],
       pelvis: [B.hips, 1, B.deep * 0.5 + 0.5],
     });
-    this.armLen = [0.29 * 1.1, 0.26 * 1.04]; // överarm, underarm (för armlösaren)
+    this.armLen = this.glb ? this.glb.armLen : [0.29 * 1.1, 0.26 * 1.04]; // överarm, underarm (för armlösaren)
     this.chestBody.rx *= broad;
     this.chestBody.rz *= B.deep;
     this.chestBody.ar *= B.arm;
@@ -915,6 +921,7 @@ export class Knight {
     });
 
     this.trimShadows();
+    if (glbSpec) anvandRustningsmodell(this, glbSpec, colorHex);
 
     // Kontaktskugga under fötterna (läggs till efter skuggorna ovan, så den inte kastar någon egen)
     this.contact = contactShadow();
@@ -3831,6 +3838,7 @@ export class Knight {
     const segName = JOINT_SEGMENT[joint];
     const seg = segName && this.seg[segName];
     if (!seg || seg.userData.detached) return null;
+    if (this.rustning) rustningHuggAv(this, segName);
 
     // Tyg och kedja som sitter på delen som lossnar slutar röra sig och följer med den
     if (segName === "torso") this.freezeSoft();
