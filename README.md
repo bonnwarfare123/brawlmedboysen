@@ -1,4 +1,4 @@
-# Brawlmedboysen – v0.40
+# Brawlmedboysen – v0.42
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
@@ -15,6 +15,10 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 **Arenan:** tornerbarriär av plankor med järnband, lera nedtill, hängande tygdraperier och vapensköldar, upptrampad lerig sand där blodet sjunker in, eldkorgar med eld och rök, träningsdocka som snurrar när man slår på den, torn byggda av riktiga plankor (med stege, fönsterluckor och tinnar), krattad sand med småsten och halmstrån, läktare med plankbänkar, snidade räcken, tak med fransar och ståplats längst bak, levande publik (axlar, armbågar, kläder med veck, smala och runda, tydligare ansikten) med barn, gamla med käpp, damer och adelsmän (reser sig, jublar, klappar, pekar, dricker, äter, dunkar grannen i ryggen och viftar med hatten), försäljare som går runt, folk som går på marknaden, en lägereld med gryta och rök vid tälten, tätare gräs med blommor, damm som svävar i luften, hundar, fåglar och flugor runt elden, kungapar som visar tummen upp eller ner, vakter och en härold med trumpet.
 
 **Grafik:** på hög grafik (F2) får ljusa saker ett mjukt glöd-sken, och färgtonen anpassas efter dag, kväll, regn och dimma (varmare på kvällen, gråare i regn, mörka hörn). Mjuka, fluffiga moln driver sakta över himlen på båda banorna (och blir ett grått molntäcke när det regnar eller snöar). På låg grafik stängs glöd, skuggor och dammet av. **F3** visar bilder per sekund, ritanrop och hur många millisekunder varje bild tar. Alla shaders byggs när banan laddas (inga ryck första gången något syns), bara de 4 eldarna närmast det du tittar på lyser upp omgivningen, och molnen och tyget kostar mindre.
+
+**Stadsvakten, rättningar (v0.42):** skuggningen i vecken bakas bara inom 3,5 cm (förr 10 m, som gjorde stövelskaft, ärmar och hals nästan svarta), så stövlarna har samma läderfärg hela vägen. Hjälmen är mindre: kupan 4 % och brättet når 40 % kortare ut.
+
+**Stadsvakten förbättrad (v0.41):** materialen är bakade till en gemensam textur (färg med skuggning i vecken, quiltmönster, väv, läder och metall med roughness/metallic och normal map), så kläderna ser ut som lager i stället för färg på huden – och modellen ritas med 5 ritanrop i stället för 14. Händerna är knutna och vapnet och skölden sitter i näven (greppet sparas i modellen; vänster hand på tvåhandsvapen siktar handleden före greppet). Axelpuffarna följer överarmen och sträcks inte ut till spetsar när armen lyfts. Huvudet är 6 % större och hjälmen sitter 2 cm djupare. 18 982 trianglar, 2,2 MB.
 
 **Stadsvakten som 3D-modell (v0.40):** rustningen *Stadsvakt* ritas nu med en riktig modell från Blender (`public/models/rustningar/guard.glb`): kettle hat med nitar och snörning, skägg, puffade blåvita axlar, quiltade ärmar, tabard med korsade nycklar och guldkant, bälte med väska, tvåfärgade hosor och läderstövlar. Modellen är skinnad på riddarens egna 15 kroppsdelar, så gång, strid, ragdoll och avhuggning fungerar som förut; hjälmen kan slås av och det blå tyget tar spelarens färg. 18 979 trianglar, 14 material, 1,5 MB. Samma väg fungerar för alla rustningar: kör `blender/karaktarer/C10_spelmodell_export.py` (ändra `KONFIG`), lägg filen i `public/models/rustningar/` och lägg till en rad i `MODELLER` i `public/js/rustningsmodell.js`. Saknas filen används den kodbyggda rustningen.
 

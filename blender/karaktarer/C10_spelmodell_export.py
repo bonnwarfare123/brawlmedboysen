@@ -51,6 +51,7 @@ KONFIG = {
     "hoppa_over": ["Teeth"],           # namn som innehåller detta tas inte med
     "hjalm": ["Hjalm"],                # stela delar på huvudet som kan slås av
     "kjol": ["Tabard", "Kjol"],        # hänger från höften och följer låren
+    "axel": ["Axelskydd", "Axelband"],  # följer överarmen nästan helt (sträcks inte isär)
     "bal": ["Balte", "Vaska", "Emblem", "Ringbrynja"],   # följer bara bål/bäcken
     # dold yta: inre lager → yttre lager som täcker dem (namn innehåller …)
     "dold_yta": {
@@ -60,6 +61,12 @@ KONFIG = {
         "Hosor": ["Stovlar", "Kjol", "Tabard"],
         "Vaddering_Kjol": ["Tabard"],
     },
+    "huvud_skala": 1.06,               # lite större huvud (som riddarna), runt nacken
+    "hjalm_flytt": (0.0, -0.006, -0.02),
+    "hjalm_kupa": 0.96,                # kupans storlek (måste rymma huvudet)
+    "hjalm_bratte": 0.6,               # hur långt brättet når utanför kupan (1 = som i Blender)  # hjälmen djupare ned på huvudet (Blender: y bakåt, z upp)
+    "baka": True,                      # baka alla material till en gemensam textur (färg, roughness,
+    "atlas": 2048,                     #   metallic, normal map och skuggning i vecken)
     "kropp_tris": 7000,                # kroppen efter bantning
     "mal_tris": 19000,                 # hela modellen (kropp + utrustning + hjälm)
     "lagfarg": ["Tyg_Bla"],            # material som tar spelarens färg
@@ -205,6 +212,18 @@ def posera_armar(rig):
                             break
                         ben.rotation_euler = gammal
                 steg *= 0.5
+        # knuten hand runt ett grepp (som riddarnas): fingrarna böjs in mot handflatan
+        fingrar = []
+        for f, vinkel in (("index", -72), ("middle", -76), ("ring", -80), ("pinky", -84), ("thumb", -35)):
+            for led in (1, 2, 3):
+                b = pb.get(f"c_{f}{led}.{s}")
+                if b is None or (f == "thumb" and led == 1):
+                    continue
+                fingrar.append((b, b.rotation_mode, b.rotation_euler.copy()))
+                b.rotation_mode = "XYZ"
+                b.rotation_euler = Euler((math.radians(vinkel), 0, 0))
+        sparat[s] = sparat[s] + (fingrar,)
+        bpy.context.view_layer.update()
         a, e, w = varld(rig, S), varld(rig, E), varld(rig, W)
         R.append(f"  arm {s}: överarm {math.degrees(math.atan2(Vector((e - a).xy).length, -(e - a).z)):.1f}° "
                  f"från lodrätt, underarm {math.degrees(math.atan2(Vector((w - e).xy).length, -(w - e).z)):.1f}°")
@@ -214,7 +233,10 @@ def posera_armar(rig):
 
 def aterstall_pose(rig, sparat):
     pb = rig.pose.bones
-    for s, (sw, m1, e1, m2, e2) in sparat.items():
+    for s, (sw, m1, e1, m2, e2, fingrar) in sparat.items():
+        for b, m, e in fingrar:
+            b.rotation_euler = e
+            b.rotation_mode = m
         pb[f"c_hand_ik.{s}"]["ik_fk_switch"] = sw
         pb[f"c_arm_fk.{s}"].rotation_euler = e1
         pb[f"c_arm_fk.{s}"].rotation_mode = m1
@@ -287,6 +309,273 @@ def likform(Jm0, Jm1, Jk0, Jk1):
         u2 = u + dm * a * (s - 1.0)
         return Jk0 + rot @ u2
     return f, rot
+
+
+# =============================================================== 4. bakning till en gemensam textur
+def lin_fran_hex(h):
+    h = h.lstrip("#")
+    rgb = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    return [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+
+
+def baka_atlas(objs, K, mapp):
+    """Bakar utrustningens procedurella material till EN textur (färg+skuggning, roughness/metallic,
+    normal map). Kropp och ögon behåller sina bilder. Lagfärgens tyg bakas i gråskala så att spelet
+    kan färga det. Resultat: 2 utrustningsmaterial i stället för ett per plagg."""
+    import numpy as np
+    sc = bpy.context.scene
+    motor = sc.render.engine
+    sc.render.engine = "CYCLES"
+    sc.cycles.device = "CPU"
+    stl = int(K.get("atlas", 2048))
+    texmapp = os.path.join(mapp, "texturer")
+    os.makedirs(texmapp, exist_ok=True)
+
+    def har_bild(m):
+        return m is not None and m.node_tree is not None and any(n.type == "TEX_IMAGE" and n.image for n in m.node_tree.nodes)
+
+    # andra objekt syns inte vid bakningen (skuggningen ska bara komma från modellen själv)
+    dolda = [o for o in bpy.context.view_layer.objects if o not in objs and not o.hide_render]
+    for o in dolda:
+        o.hide_render = True
+
+    # arbetskopior av materialen (originalen rörs inte)
+    original = {}
+    kopia = {}
+    for o in objs:
+        for i, sl in enumerate(o.material_slots):
+            m = sl.material
+            if m is None:
+                continue
+            if m not in kopia:
+                kopia[m] = m.copy()
+                original[kopia[m]] = m
+            o.data.materials[i] = kopia[m]
+
+    # ny UV-karta "Atlas": bara utrustningens ytor packas (kroppens hud har egen bild)
+    for o in objs:
+        me = o.data
+        uv = me.uv_layers.get("Atlas") or me.uv_layers.new(name="Atlas")
+        me.uv_layers.active = uv
+        uv.active_render = True
+    for o in bpy.context.view_layer.objects:
+        o.select_set(False)
+    for o in objs:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = objs[0]
+    bpy.ops.object.mode_set(mode="EDIT")
+    for o in objs:
+        bm = bmesh.from_edit_mesh(o.data)
+        for f in bm.faces:
+            m = o.material_slots[f.material_index].material if f.material_index < len(o.material_slots) else None
+            f.select = m is not None and not har_bild(m)
+        bmesh.update_edit_mesh(o.data)
+    bpy.ops.uv.smart_project(angle_limit=math.radians(60), island_margin=0.003, area_weight=0.0,
+                             correct_aspect=True, scale_to_bounds=False)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    def bild(namn, data):
+        img = bpy.data.images.get(namn)
+        if img:
+            bpy.data.images.remove(img)
+        img = bpy.data.images.new(namn, stl, stl, alpha=False, float_buffer=False)
+        img.colorspace_settings.name = "Non-Color" if data else "sRGB"
+        return img
+
+    attrapp = bpy.data.images.get("TMP_attrapp") or bpy.data.images.new("TMP_attrapp", 8, 8)
+    mats = list(kopia.values())
+    tmp = {}
+    for m in mats:
+        nt = m.node_tree
+        t = nt.nodes.new("ShaderNodeTexImage")
+        t.name = "TMP_BAKMAL"
+        nt.nodes.active = t
+        if har_bild(original[m]):
+            t.image = attrapp                       # kroppens/ögonens bilder skrivs aldrig över
+            tmp[m] = None
+            continue
+        bsdf = next((n for n in nt.nodes if n.type == "BSDF_PRINCIPLED"), None)
+        ut = next((n for n in nt.nodes if n.type == "OUTPUT_MATERIAL" and n.is_active_output), None) \
+            or next((n for n in nt.nodes if n.type == "OUTPUT_MATERIAL"), None)
+        if not bsdf or not ut:
+            tmp[m] = None
+            continue
+        yta = ut.inputs["Surface"].links[0].from_socket if ut.inputs["Surface"].is_linked else None
+        emit = nt.nodes.new("ShaderNodeEmission")
+        emit.name = "TMP_EMIT"
+        lag = har(original[m].name, K["lagfarg"])
+        regel = next((r for r in K["material"] if r[0] in original[m].name), None)
+        tmp[m] = {"t": t, "bsdf": bsdf, "ut": ut, "yta": yta, "emit": emit, "lag": lag,
+                  "k": 0.85 / max(0.02, sum(c * w for c, w in zip(lin_fran_hex(regel[1]) if regel else (0.5, 0.5, 0.5),
+                                                                      (0.2126, 0.7152, 0.0722))))}
+
+    def koppla(kanal):
+        for m, d in tmp.items():
+            if d is None:
+                continue
+            nt = m.node_tree
+            for l in list(d["emit"].inputs["Color"].links):
+                nt.links.remove(l)
+            ing = d["bsdf"].inputs[kanal]
+            if kanal == "Base Color" and d["lag"]:
+                bw = nt.nodes.get("TMP_BW") or nt.nodes.new("ShaderNodeRGBToBW")
+                bw.name = "TMP_BW"
+                mul = nt.nodes.get("TMP_MUL") or nt.nodes.new("ShaderNodeMath")
+                mul.name = "TMP_MUL"
+                mul.operation = "MULTIPLY"
+                mul.use_clamp = True
+                mul.inputs[1].default_value = d["k"]
+                if ing.is_linked:
+                    nt.links.new(ing.links[0].from_socket, bw.inputs[0])
+                else:
+                    bw.inputs[0].default_value = ing.default_value
+                nt.links.new(bw.outputs[0], mul.inputs[0])
+                nt.links.new(mul.outputs[0], d["emit"].inputs["Color"])
+            elif ing.is_linked:
+                nt.links.new(ing.links[0].from_socket, d["emit"].inputs["Color"])
+            else:
+                v = ing.default_value
+                d["emit"].inputs["Color"].default_value = tuple(v) if hasattr(v, "__len__") else (v, v, v, 1.0)
+            nt.links.new(d["emit"].outputs[0], d["ut"].inputs["Surface"])
+
+    def aterkoppla():
+        for m, d in tmp.items():
+            if d and d["yta"]:
+                m.node_tree.links.new(d["yta"], d["ut"].inputs["Surface"])
+
+    def satt_mal(img):
+        for m, d in tmp.items():
+            if d:
+                d["t"].image = img
+
+    bilder = {}
+    sc.render.bake.margin = 6
+    sc.render.bake.use_clear = True
+    try:
+        for kanal, nyckel, data in (("Base Color", "C", False), ("Roughness", "R", True), ("Metallic", "M", True)):
+            img = bild(f"T_{K['nyckel']}_{nyckel}", data)
+            satt_mal(img)
+            koppla(kanal)
+            sc.cycles.samples = 1
+            bpy.ops.object.bake(type="EMIT")
+            bilder[nyckel] = img
+        aterkoppla()
+        img = bild(f"T_{K['nyckel']}_N", True)
+        satt_mal(img)
+        sc.cycles.samples = 4
+        sc.render.bake.normal_space = "TANGENT"
+        bpy.ops.object.bake(type="NORMAL")
+        bilder["N"] = img
+        img = bild(f"T_{K['nyckel']}_AO", True)
+        satt_mal(img)
+        sc.cycles.samples = 24
+        ls = sc.world.light_settings if sc.world else None
+        gammal_dist = ls.distance if ls else None
+        if ls:
+            ls.distance = 0.035                    # bara veck och överlapp (3,5 cm), inte hela kroppen
+        bpy.ops.object.bake(type="AO")
+        if ls:
+            ls.distance = gammal_dist
+        bilder["AO"] = img
+    finally:
+        aterkoppla()
+        for m, d in tmp.items():
+            nt = m.node_tree
+            for n in [n for n in nt.nodes if n.name.startswith("TMP_")]:
+                nt.nodes.remove(n)
+        for o in dolda:
+            o.hide_render = False
+        sc.render.engine = motor
+
+    # färg × skuggning i vecken, roughness + metallic i en bild (glTF: G = roughness, B = metallic)
+    def px(img):
+        a = np.empty(stl * stl * 4, dtype=np.float32)
+        img.pixels.foreach_get(a)
+        return a.reshape(-1, 4)
+    c, r, mt, ao = px(bilder["C"]), px(bilder["R"]), px(bilder["M"]), px(bilder["AO"])
+    f = 0.62 + 0.38 * np.clip(ao[:, :1], 0, 1)
+    c[:, :3] *= f
+    bilder["C"].pixels.foreach_set(c.ravel())
+    orm = np.ones_like(c)
+    orm[:, 1] = r[:, 0]
+    orm[:, 2] = mt[:, 0]
+    imo = bild(f"T_{K['nyckel']}_ORM", True)
+    imo.pixels.foreach_set(orm.ravel())
+    for nyckel, img in (("C", bilder["C"]), ("ORM", imo), ("N", bilder["N"])):
+        img.filepath_raw = os.path.join(texmapp, f"T_{K['nyckel']}_{nyckel}.png")
+        img.file_format = "PNG"
+        img.save()
+    for n in ("R", "M", "AO"):
+        bpy.data.images.remove(bilder[n])
+
+    # två material (vanligt + lagfärg) med samma bilder
+    def slutmaterial(namn, lag):
+        m = bpy.data.materials.get(namn)
+        if m:
+            bpy.data.materials.remove(m)
+        m = bpy.data.materials.new(namn)
+        if m.node_tree is None:
+            m.use_nodes = True
+        nt = m.node_tree
+        b = nt.nodes.get("Principled BSDF")
+        tc = nt.nodes.new("ShaderNodeTexImage")
+        tc.image = bilder["C"]
+        to = nt.nodes.new("ShaderNodeTexImage")
+        to.image = imo
+        tn = nt.nodes.new("ShaderNodeTexImage")
+        tn.image = bilder["N"]
+        sep = nt.nodes.new("ShaderNodeSeparateColor")
+        nm = nt.nodes.new("ShaderNodeNormalMap")
+        nt.links.new(tc.outputs["Color"], b.inputs["Base Color"])
+        nt.links.new(to.outputs["Color"], sep.inputs[0])
+        nt.links.new(sep.outputs[1], b.inputs["Roughness"])
+        nt.links.new(sep.outputs[2], b.inputs["Metallic"])
+        nt.links.new(tn.outputs["Color"], nm.inputs["Color"])
+        nt.links.new(nm.outputs["Normal"], b.inputs["Normal"])
+        m["lag"] = 1 if lag else 0
+        m.diffuse_color = (0.8, 0.8, 0.8, 1) if lag else (0.5, 0.42, 0.35, 1)
+        return m
+
+    utr = slutmaterial(f"MAT_{K['nyckel']}_Utrustning", False)
+    utr_lag = slutmaterial(f"MAT_{K['nyckel']}_Utrustning_Lag", True)
+
+    # ytorna får de nya materialen; atlasens UV flyttas till den vanliga UV-kartan
+    for o in objs:
+        me = o.data
+        gamla = [sl.material for sl in o.material_slots]
+        nya = []
+        def idx(m):
+            if m not in nya:
+                nya.append(m)
+            return nya.index(m)
+        karta = {}
+        for i, m in enumerate(gamla):
+            if m is None:
+                karta[i] = idx(utr)
+            elif har_bild(original.get(m, m)):
+                karta[i] = idx(original.get(m, m))
+            else:
+                karta[i] = idx(utr_lag if har(original.get(m, m).name, K["lagfarg"]) else utr)
+        uv0 = me.uv_layers.get("UVMap") or me.uv_layers[0]
+        uva = me.uv_layers["Atlas"]
+        nya_index = []
+        for p in me.polygons:
+            gm = gamla[p.material_index] if p.material_index < len(gamla) else None
+            if gm is None or not har_bild(original.get(gm, gm)):
+                for li in p.loop_indices:
+                    uv0.data[li].uv = uva.data[li].uv
+            nya_index.append(karta.get(p.material_index, 0))
+        me.materials.clear()                       # (nollställer ytornas materialnummer)
+        for m in nya:
+            me.materials.append(m)
+        me.polygons.foreach_set("material_index", nya_index)
+        me.update()
+        me.uv_layers.remove(me.uv_layers["Atlas"])
+        me.uv_layers.active = me.uv_layers[0]
+    for m in list(kopia.values()):
+        bpy.data.materials.remove(m)
+    R.append(f"Bakat: {stl}px färg (med skuggning i vecken), roughness/metallic och normal map → "
+             f"{texmapp}")
 
 
 # =============================================================== huvudprogram
@@ -369,6 +658,14 @@ def kor():
                         ("hoftR", "thigh_twist.r"), ("knaR", "leg_stretch.r"), ("vristR", "foot.r"),
                         ("nacke", "neck.x"), ("huvud", "head.x")):
         J[nyckel] = varld(rig, ben).copy()
+    pbn = rig.pose.bones
+    for S, s in (("L", "l"), ("R", "r")):
+        pts = []
+        for f in ("index", "middle", "ring", "pinky"):
+            b1, b3 = pbn.get(f"c_{f}1.{s}"), pbn.get(f"c_{f}3.{s}")
+            if b1 and b3:
+                pts += [rig.matrix_world @ b1.head, rig.matrix_world @ b3.tail]
+        J["grepp" + S] = (sum(pts, Vector()) / len(pts)) if pts else J["hand" + S] + Vector((0, 0, -0.07))
     data = {}     # kopia → (co-lista, spelvikter-lista, mesh)
     for k in kopior:
         ev = k.evaluated_get(dg)
@@ -386,6 +683,12 @@ def kor():
                 if not w:
                     w = normera(KV.narmast(v.co))
                 sv.append(normera(w))
+            if har(k.name, K.get("axel", [])):
+                sv = []
+                for v in me.vertices:
+                    S = "L" if v.co.x > 0 else "R"
+                    w_ua = 0.72 + 0.28 * smooth(0.0, 0.07, J["axel" + S].z - v.co.z)
+                    sv.append({"upperArm" + S: w_ua, "torso": 1 - w_ua})
         elif klass[k] == "hjalm":
             sv = [{"head": 1.0} for _ in me.vertices]
         elif klass[k] == "kjol":
@@ -430,9 +733,9 @@ def kor():
     nacke = J["nacke"] + upp
     T["head"] = lambda v, d=(Jk["head"] - nacke): v + upp + d
     for S, s in (("L", "L"), ("R", "R")):
-        fa, _ = likform(J["axel" + S] + upp, J["armb" + S] + upp, Jk["upperArm" + S], Jk["forearm" + S])
-        fu, ru = likform(J["armb" + S] + upp, J["hand" + S] + upp, Jk["forearm" + S], Jk["hand" + S])
-        hand0 = J["hand" + S] + upp
+        fa, _ = likform(J["axel" + S], J["armb" + S], Jk["upperArm" + S], Jk["forearm" + S])
+        fu, ru = likform(J["armb" + S], J["hand" + S], Jk["forearm" + S], Jk["hand" + S])
+        hand0 = J["hand" + S]
         T["upperArm" + S] = fa
         T["forearm" + S] = fu
         T["hand" + S] = lambda v, h0=hand0, r=ru, hk=Jk["hand" + S]: hk + r @ (v - h0)
@@ -453,6 +756,50 @@ def kor():
                 tot += x
             v.co = ny / tot if tot > 0 else p + upp
         me.update()
+    hs = K.get("huvud_skala", 1.0)
+    hf = Vector(K.get("hjalm_flytt", (0, 0, 0)))
+    for k, sv in data.items():
+        me = k.data
+        for v, w in zip(me.vertices, sv):
+            h = w.get("head", 0.0)
+            if hs != 1.0 and h > 0:
+                v.co = Jk["head"] + (v.co - Jk["head"]) * (1 + (hs - 1) * h)
+            if klass[k] == "hjalm":
+                v.co += hf
+        me.update()
+    # mindre hjälm: kupan lite, brättet mer (mätt från hjälmens mittaxel)
+    hv = [v.co for k in data if klass[k] == "hjalm" for v in k.data.vertices]
+    if hv:
+        cx = (min(p.x for p in hv) + max(p.x for p in hv)) / 2
+        cy = (min(p.y for p in hv) + max(p.y for p in hv)) / 2
+        ztopp = max(p.z for p in hv)
+        rk = 0.0
+        for p in hv:                               # kupans radie: bredaste punkten 6–9 cm under toppen
+            if ztopp - 0.13 < p.z < ztopp - 0.09:
+                rk = max(rk, Vector((p.x - cx, p.y - cy)).length)
+        rk = rk or 0.13
+        ks, bs = K.get("hjalm_kupa", 1.0), K.get("hjalm_bratte", 1.0)
+        zfot = ztopp - 0.2
+        for k in data:
+            if klass[k] != "hjalm":
+                continue
+            for v in k.data.vertices:
+                d = Vector((v.co.x - cx, v.co.y - cy))
+                r = d.length
+                rn = r * ks if r <= rk else rk * ks + (r - rk) * bs
+                if r > 1e-6:
+                    d *= rn / r
+                z = zfot + (v.co.z - zfot) * ks
+                if r > rk:                         # brättet följer med kupans kant nedåt/uppåt
+                    z += (r - rk) * (1 - bs) * 0.25
+                v.co = Vector((cx + d.x, cy + d.y, z))
+            k.data.update()
+        R.append(f"Hjälm: kupa ×{ks}, brätte ×{bs} (kuparadie {rk:.3f} m)")
+    grepp = {}
+    for S in ("L", "R"):
+        g = T["hand" + S](J["grepp" + S]) - Jk["hand" + S]
+        grepp[S] = [round(g.x, 4), round(g.z, 4), round(-g.y, 4)]       # riddarens koordinater (y upp, z fram)
+    R.append(f"Grepp (knuten hand, från handleden): V {grepp['L']}  H {grepp['R']}")
 
     # --- dold yta
     bpy.context.view_layer.update()
@@ -581,6 +928,25 @@ def kor():
             me.uv_layers.new(name="UVMap")
         # _REGION som punktattribut (float) finns nu i mesh.attributes
 
+    # --- slå ihop: kropp (skinnad) och hjälm (stel)
+    def sla_ihop(lista, namn):
+        if not lista:
+            return None
+        with bpy.context.temp_override(active_object=lista[0], selected_editable_objects=lista,
+                                       selected_objects=lista):
+            bpy.ops.object.join()
+        o = lista[0]
+        o.name = namn
+        o.data.name = namn
+        return o
+
+    hjalmar = [k for k in kopior if klass[k] == "hjalm"]
+    ovriga = [k for k in kopior if klass[k] != "hjalm"]
+    kroppobj = sla_ihop(ovriga, f"SM_{K['nyckel']}_Kropp")
+    hjalmobj = sla_ihop(hjalmar, f"SM_{K['nyckel']}_Hjalm")
+    if hjalmobj:
+        hjalmobj.vertex_groups.clear()
+
     # --- spelmaterial
     def spelmaterial(m):
         if m is None:
@@ -609,28 +975,13 @@ def kor():
         ut["lag"] = 1 if har(m.name, K["lagfarg"]) else 0
         return ut
 
-    for k in kopior:
-        for i, sl in enumerate(k.material_slots):
-            k.data.materials[i] = spelmaterial(sl.material)
-
-    # --- slå ihop: kropp (skinnad) och hjälm (stel)
-    def sla_ihop(lista, namn):
-        if not lista:
-            return None
-        with bpy.context.temp_override(active_object=lista[0], selected_editable_objects=lista,
-                                       selected_objects=lista):
-            bpy.ops.object.join()
-        o = lista[0]
-        o.name = namn
-        o.data.name = namn
-        return o
-
-    hjalmar = [k for k in kopior if klass[k] == "hjalm"]
-    ovriga = [k for k in kopior if klass[k] != "hjalm"]
-    kroppobj = sla_ihop(ovriga, f"SM_{K['nyckel']}_Kropp")
-    hjalmobj = sla_ihop(hjalmar, f"SM_{K['nyckel']}_Hjalm")
-    if hjalmobj:
-        hjalmobj.vertex_groups.clear()
+    slutliga = [o for o in (kroppobj, hjalmobj) if o]
+    if K.get("baka"):
+        baka_atlas(slutliga, K, mapp)
+    else:
+        for k in slutliga:
+            for i, sl in enumerate(k.material_slots):
+                k.data.materials[i] = spelmaterial(sl.material)
 
     # --- spelskelettet
     ad = bpy.data.armatures.new(f"ARM_{K['nyckel']}")
@@ -675,7 +1026,7 @@ def kor():
     meta = {"byggnad": {"tall": round(tall, 4), "broad": round(broad, 4), "armY": round(armY, 4),
                         "foreY": round(foreY, 4)},
             "brost": {"rx": 0.2 * broad, "rz": 0.15, "ar": 0.075},
-            "huvud": [round(x, 4) for x in Jk["head"]], "version": 1, "nyckel": K["nyckel"]}
+            "huvud": [round(x, 4) for x in Jk["head"]], "grepp": grepp, "version": 2, "nyckel": K["nyckel"]}
     arm["spelmodell"] = json.dumps(meta)
     kroppobj["spelmodell"] = json.dumps(meta)
 

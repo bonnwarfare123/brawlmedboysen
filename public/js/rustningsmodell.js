@@ -168,6 +168,20 @@ export function anvandRustningsmodell(knight, spec, colorHex) {
     knight.helmet.add(mesh);
   });
 
+  // 5. Vapnet och skölden i modellens knutna händer (grepp från exporten, i handens koordinater)
+  const g = spec.meta.grepp;
+  if (g) {
+    const standard = new THREE.Vector3(0, -0.069, 0.01); // där riddarens egen hand håller vapnet
+    knight.greppDelta = {
+      L: new THREE.Vector3(...g.L).sub(standard),
+      R: new THREE.Vector3(...g.R).sub(standard),
+    };
+    knight.greppLen = new THREE.Vector3(...g.L).length();
+    knight.weapon.position.add(knight.greppDelta.R);
+    knight.shield.position.add(knight.greppDelta.L);
+    knight.knuckle?.position.add(knight.greppDelta.L);
+  }
+
   knight.rustning = { delar };
   return delar.length > 0;
 }

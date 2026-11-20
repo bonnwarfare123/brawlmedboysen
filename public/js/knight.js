@@ -3300,6 +3300,7 @@ export class Knight {
     this.twoHanded = !!spec.twoHanded;
     const weapon = this.buildWeapon(kind, this.m, this.gilded);
     weapon.position.set(0, -0.06, 0.01);
+    if (this.greppDelta) weapon.position.add(this.greppDelta.R); // modellens knutna hand (rustningsmodell.js)
     weapon.rotation.x = kind === CROSSBOW ? XBOW_ROT : 2.0;
     weapon.userData.equipment = true;
     this.mergeChildren(weapon);
@@ -4742,6 +4743,9 @@ export class Knight {
       const slide = GRIP_SLIDES[si];
       if (!this.weapon.userData.gripForward && grip[1] + slide > -0.13) continue; // armborstet: vänster hand framför höger
       const target = _gTarget.set(grip[0], grip[1] + slide, grip[2]).applyMatrix4(this.weapon.matrixWorld).applyMatrix4(_inv).sub(upper.position);
+      // Modellrustningar (rustningsmodell.js): den knutna handen sitter en bit nedanför handleden,
+      // så handleden siktar lite före greppet längs armen
+      if (this.greppLen) target.multiplyScalar(Math.max(0.2, 1 - this.greppLen / Math.max(0.01, target.length())));
       const { upperX, upperZ, elbow } = solveArm([target.x, target.y, target.z], this.armLen[0], this.armLen[1]);
       const base = _q.setFromEuler(_gEuler.set(upperX, 0, upperZ));
       const axis = _gAxis.copy(target).normalize();
