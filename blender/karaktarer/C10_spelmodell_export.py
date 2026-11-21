@@ -51,7 +51,7 @@ KONFIG = {
     "hoppa_over": ["Teeth"],           # namn som innehåller detta tas inte med
     "hjalm": ["Hjalm"],                # stela delar på huvudet som kan slås av
     "kjol": ["Tabard", "Kjol"],        # hänger från höften och följer låren
-    "axel": ["Axelskydd", "Axelband"],  # följer överarmen nästan helt (sträcks inte isär)
+    "axel": ["Axelskydd", "Axelband", "Axelrem"],  # följer överarmen nästan helt (sträcks inte isär)
     "bal": ["Balte", "Vaska", "Emblem", "Ringbrynja"],   # följer bara bål/bäcken
     # dold yta: inre lager → yttre lager som täcker dem (namn innehåller …)
     "dold_yta": {
@@ -61,17 +61,24 @@ KONFIG = {
         "Hosor": ["Stovlar", "Kjol", "Tabard"],
         "Vaddering_Kjol": ["Tabard"],
     },
-    "huvud_skala": 1.06,               # lite större huvud (som riddarna), runt nacken
-    "hjalm_flytt": (0.0, -0.006, -0.02),
-    "hjalm_kupa": 0.96,                # kupans storlek (måste rymma huvudet)
-    "hjalm_bratte": 0.6,               # hur långt brättet når utanför kupan (1 = som i Blender)  # hjälmen djupare ned på huvudet (Blender: y bakåt, z upp)
+    "huvud_skala": 1.06,
+    # anatomi i spelet (skelettet är spelets; bara modellens form anpassas)
+    "axelbredd": 1.05,                 # bredare axlar/övre bröstkorg (atletisk), armarna följer med
+    "hoft_behall": True,               # benen behåller modellens höftbredd (trycks inte ihop till spelets 0,10 m)
+    "kna_hojd": 0.515,                 # var modellens knä hamnar (spelets knäled 0,50) – fördelar sträckningen
+    "dekaler": ["Emblem"],             # tunna delar som ligger på tyget: ytan under dem bantas inte (annars sjunker de in)
+    "ej_bantning": ["Axelskydd", "Axelband", "Hjalm", "Stovlar", "Manschetter"],  # handbyggda lågpolydelar      # hjälmen: bantning flyttar kupans yta över skarvbanden   # rundade delar som inte bantas (blir kantiga annars)               # lite större huvud (som riddarna), runt nacken
+    "hjalm_flytt": (0.0, 0.0, 0.0),     # (C06 placerar hjälmen rätt på huvudet)
+    "hjalm_kupa": 1.0,                # kupans storlek (måste rymma huvudet)
+    "hjalm_bratte": 1.0,               # hur långt brättet når utanför kupan (1 = som i Blender)  # hjälmen djupare ned på huvudet (Blender: y bakåt, z upp)
     "baka": True,                      # baka alla material till en gemensam textur (färg, roughness,
     "atlas": 2048,                     #   metallic, normal map och skuggning i vecken)
     "kropp_tris": 7000,                # kroppen efter bantning
     "mal_tris": 19000,                 # hela modellen (kropp + utrustning + hjälm)
-    "lagfarg": ["Tyg_Bla"],            # material som tar spelarens färg
+    "lagfarg": ["Tyg_Bla", "Malad_Bla"],            # material som tar spelarens färg
     # spelmaterial: namn innehåller → (färg, roughness, metallic)
     "material": [
+        ("Malad_Vit", "#ddd3bd", 0.45, 0.0), ("Malad_Bla", "#2b4aa0", 0.45, 0.0),
         ("Tyg_Vit", "#ddd2bb", 0.9, 0.0), ("Tyg_Bla", "#2b4aa0", 0.9, 0.0),
         ("Tyg_Guld", "#c99a36", 0.6, 0.3), ("Vaddering", "#4a3324", 0.92, 0.0),
         ("Ringbrynja", "#5a5c60", 0.5, 0.85), ("Hjalm", "#6e665e", 0.55, 0.8),
@@ -332,7 +339,9 @@ def baka_atlas(objs, K, mapp):
     os.makedirs(texmapp, exist_ok=True)
 
     def har_bild(m):
-        return m is not None and m.node_tree is not None and any(n.type == "TEX_IMAGE" and n.image for n in m.node_tree.nodes)
+        # färdiga bildmaterial (kropp, ögon) bakas inte – utom material märkta "baka" (t.ex. C11:s med BlenderKit-bilder)
+        return m is not None and not m.get("baka") and m.node_tree is not None and \
+            any(n.type == "TEX_IMAGE" and n.image for n in m.node_tree.nodes)
 
     # andra objekt syns inte vid bakningen (skuggningen ska bara komma från modellen själv)
     dolda = [o for o in bpy.context.view_layer.objects if o not in objs and not o.hide_render]
@@ -456,7 +465,7 @@ def baka_atlas(objs, K, mapp):
             img = bild(f"T_{K['nyckel']}_{nyckel}", data)
             satt_mal(img)
             koppla(kanal)
-            sc.cycles.samples = 1
+            sc.cycles.samples = 4                   # kantutjämning (fina mönster som ringbrynjan)
             bpy.ops.object.bake(type="EMIT")
             bilder[nyckel] = img
         aterkoppla()
@@ -710,7 +719,7 @@ def kor():
     axel_z = (J["axelL"].z + J["axelR"].z) / 2 + dz
     axel_x = (J["axelL"].x - J["axelR"].x) / 2
     tall = (axel_z - BAKEN_Z) / 0.41
-    broad = axel_x / 0.212
+    broad = axel_x / 0.212 * K.get("axelbredd", 1.0)
     overarm = ((J["armbL"] - J["axelL"]).length + (J["armbR"] - J["axelR"]).length) / 2
     underarm = ((J["handL"] - J["armbL"]).length + (J["handR"] - J["armbR"]).length) / 2
     armY, foreY = overarm / 0.29, underarm / 0.26
@@ -739,12 +748,18 @@ def kor():
         T["upperArm" + S] = fa
         T["forearm" + S] = fu
         T["hand" + S] = lambda v, h0=hand0, r=ru, hk=Jk["hand" + S]: hk + r @ (v - h0)
-        ft, _ = likform(J["hoft" + S], J["kna" + S], Jk["thigh" + S], Jk["shin" + S])
-        fs, rs = likform(J["kna" + S], J["vrist" + S], Jk["shin" + S], Jk["foot" + S])
+        # benens form: raka ben på modellens egen höftbredd, knät där kna_hojd säger;
+        # spelets leder (Jk) ligger kvar – höftleden sitter då lite innanför låret, som på en människa
+        hx = J["hoft" + S].x if K.get("hoft_behall") else Jk["thigh" + S].x
+        Hm = Vector((hx, 0, HOFT_Z))
+        Km = Vector((hx, 0, K.get("kna_hojd", KNA_Z)))
+        Am = Vector((hx, 0, VRIST_Z))
+        ft, _ = likform(J["hoft" + S], J["kna" + S], Hm, Km)
+        fs, rs = likform(J["kna" + S], J["vrist" + S], Km, Am)
         v0 = J["vrist" + S]
         T["thigh" + S] = ft
         T["shin" + S] = fs
-        T["foot" + S] = lambda v, a0=v0, r=rs, ak=Jk["foot" + S]: ak + r @ (v - a0)
+        T["foot" + S] = lambda v, a0=v0, r=rs, ak=Am: ak + r @ (v - a0)
     for k, sv in data.items():
         me = k.data
         for v, w in zip(me.vertices, sv):
@@ -756,6 +771,16 @@ def kor():
                 tot += x
             v.co = ny / tot if tot > 0 else p + upp
         me.update()
+    # bredare övre bröstkorg/skuldror (armarna har redan flyttats ut med sina leder)
+    ab = K.get("axelbredd", 1.0)
+    if ab != 1.0:
+        for k, sv in data.items():
+            for v, w in zip(k.data.vertices, sv):
+                wt = w.get("torso", 0.0) + w.get("pelvis", 0.0) * 0.5
+                if wt > 0:
+                    f = smooth(BAKEN_Z + 0.2, axel_z - 0.02, v.co.z) * (1 - smooth(axel_z + 0.04, axel_z + 0.14, v.co.z))
+                    v.co.x *= 1 + (ab - 1) * wt * f
+            k.data.update()
     hs = K.get("huvud_skala", 1.0)
     hf = Vector(K.get("hjalm_flytt", (0, 0, 0)))
     for k, sv in data.items():
@@ -835,6 +860,13 @@ def kor():
                     break
             if hit:
                 bort.append(f)
+        # lämna en kant av dold yta kvar (två rader) så att gränsen inte syns som hackiga tänder
+        bs = set(bort)
+        for _ in range(2):
+            kvar = [f for f in bs if any(g not in bs for e in f.edges for g in e.link_faces)]
+            for f in kvar:
+                bs.discard(f)
+        bort = list(bs)
         fore = len(bm.faces)
         bmesh.ops.delete(bm, geom=bort, context="FACES_ONLY")
         losa = [v for v in bm.verts if not v.link_faces]
@@ -859,18 +891,46 @@ def kor():
                 g[b].add([i], x, "REPLACE")
 
     # --- bantning
+    dekal_pts = [v.co.copy() for k in kopior if har(namn_av[k], K.get("dekaler", [])) for v in k.data.vertices]
+    dekal_kd = KDTree(max(1, len(dekal_pts)))
+    for i, c in enumerate(dekal_pts):
+        dekal_kd.insert(c, i)
+    dekal_kd.balance()
+
     def decimera(k, mal):
         t0 = tris_me(k.data)
         if t0 <= mal:
             return
+        # materialgränser och öppna kanter skyddas (vikt 0), så att t.ex. tabardens gula fåll,
+        # vit/blå-sömmen och ärmslutens kanter inte blir sågtandade när resten bantas
+        bmg = bmesh.new()
+        bmg.from_mesh(k.data)
+        skydd = set()
+        for e in bmg.edges:
+            if e.is_boundary or len({f.material_index for f in e.link_faces}) > 1:
+                skydd.update(v.index for v in e.verts)
+        if dekal_pts and not har(namn_av[k], K.get("dekaler", [])):
+            for v in bmg.verts:
+                if dekal_kd.find(v.co)[2] < 0.025:
+                    skydd.add(v.index)
+        bmg.free()
+        vg = k.vertex_groups.new(name="TMP_BANTNING")
+        vg.add(list(range(len(k.data.vertices))), 1.0, "REPLACE")
+        if skydd:
+            vg.add(list(skydd), 0.0, "REPLACE")
         m = k.modifiers.new("Dec", "DECIMATE")
         m.ratio = max(0.05, mal / t0)
         m.use_collapse_triangulate = True
+        m.vertex_group = vg.name
+        m.vertex_group_factor = 1.0
         dg2 = bpy.context.evaluated_depsgraph_get()
         me = bpy.data.meshes.new_from_object(k.evaluated_get(dg2), preserve_all_data_layers=True, depsgraph=dg2)
         gammal = k.data
         k.modifiers.remove(m)
         k.data = me
+        tmp = k.vertex_groups.get("TMP_BANTNING")     # (gruppnamnen ligger i meshen i nyare Blender)
+        if tmp:
+            k.vertex_groups.remove(tmp)
         bpy.data.meshes.remove(gammal)
 
     kropp_k = next(k for k in kopior if namn_av[k] == K["kropp"])
@@ -879,10 +939,11 @@ def kor():
     summa = sum(tris_me(k.data) for k in kopior)
     if summa > K["mal_tris"]:
         rest = K["mal_tris"] - tris_me(kropp_k.data)
-        stora = [k for k in ovr if tris_me(k.data) > 500]
+        stora = [k for k in ovr if tris_me(k.data) > 500 and not har(namn_av[k], K.get("ej_bantning", []))]
         sma = sum(tris_me(k.data) for k in ovr if k not in stora)
         stor = sum(tris_me(k.data) for k in stora)
         kvot = max(0.25, (rest - sma) / max(1, stor))
+        R.append(f"Bantning: {len(stora)} delar ({stor} tri) → kvot {kvot:.2f}; små/obantade delar {sma} tri")
         for k in stora:
             decimera(k, int(tris_me(k.data) * kvot))
 

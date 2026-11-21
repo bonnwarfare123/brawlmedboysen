@@ -1,4 +1,4 @@
-# Brawlmedboysen – v0.42
+# Brawlmedboysen – v0.45
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
@@ -15,6 +15,12 @@ Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 **Arenan:** tornerbarriär av plankor med järnband, lera nedtill, hängande tygdraperier och vapensköldar, upptrampad lerig sand där blodet sjunker in, eldkorgar med eld och rök, träningsdocka som snurrar när man slår på den, torn byggda av riktiga plankor (med stege, fönsterluckor och tinnar), krattad sand med småsten och halmstrån, läktare med plankbänkar, snidade räcken, tak med fransar och ståplats längst bak, levande publik (axlar, armbågar, kläder med veck, smala och runda, tydligare ansikten) med barn, gamla med käpp, damer och adelsmän (reser sig, jublar, klappar, pekar, dricker, äter, dunkar grannen i ryggen och viftar med hatten), försäljare som går runt, folk som går på marknaden, en lägereld med gryta och rök vid tälten, tätare gräs med blommor, damm som svävar i luften, hundar, fåglar och flugor runt elden, kungapar som visar tummen upp eller ner, vakter och en härold med trumpet.
 
 **Grafik:** på hög grafik (F2) får ljusa saker ett mjukt glöd-sken, och färgtonen anpassas efter dag, kväll, regn och dimma (varmare på kvällen, gråare i regn, mörka hörn). Mjuka, fluffiga moln driver sakta över himlen på båda banorna (och blir ett grått molntäcke när det regnar eller snöar). På låg grafik stängs glöd, skuggor och dammet av. **F3** visar bilder per sekund, ritanrop och hur många millisekunder varje bild tar. Alla shaders byggs när banan laddas (inga ryck första gången något syns), bara de 4 eldarna närmast det du tittar på lyser upp omgivningen, och molnen och tyget kostar mindre.
+
+**Stadsvakten – tyg, läder och material (v0.45):** ringbrynjan har riktiga ringar (metallglans, mörka hål, anlöpning), tabarden mjuka veck, A-form, vikt guldfåll och linnevävens struktur, ärmarnas quiltning är längsgående sömkanaler i stället för rutor. Nya stövlar efter fotens form med egen sula, sömmar, veck vid vristen och nedvikt krage; handskar med sömmar på handryggen och veck vid lederna; manschetter som vidgar sig längs underarmen; tunnare bälte med kantsömmar, rund spännram och hälla; väska med lock, flik med mässingsknopp och remmar runt bältet. Åldrat läder, smitt järn i hjälmen och axelskydd som målade stålplåtar med nötta kanter (det blå tar fortfarande lagfärgen). Materialen bygger på gratis BlenderKit-texturer (royalty free) som bakas in i modellens egen textur. Skript: `blender/karaktarer/C08`–`C11` (kör C08 → C09 → C11 → C10). 21 162 trianglar, 5 ritanrop, 2,4 MB.
+
+**Stadsvakten – anatomi (v0.44):** benen behåller modellens höftbredd (förr trycktes de 3 cm inåt per sida till spelets höftleder så att låren gick in i varandra), knät fördelar sträckningen (lår +7 % / underben −4 % i stället för +11 / −7 %), och axlarna/övre bröstkorgen är 5 % bredare. Axelpuffarna bantas inte längre (rundare). Spelets skelett och animationer är oförändrade.
+
+**Kungaborgen – konstruktioner (v0.43):** (`blender/07_konstruktioner.py`) kärntornets och två murtorns tak är riktiga sadeltak med lodräta murade gavlar (förr stack sneda stentrianglar upp genom taken), kämpeportarna är täckta portar med en andra portram, hammarband, knutband och sadeltak med gaveln mot arenan (förr ett vridet tak som hängde 2 m ut utan stöd), och vaktkuren på norra tornet står mitt på taket i stället för inne i tinnarna. Trianglar 52 996 → 53 564, inga nya material, glb 5,19 → 5,23 MB.
 
 **Stadsvakten, rättningar (v0.42):** skuggningen i vecken bakas bara inom 3,5 cm (förr 10 m, som gjorde stövelskaft, ärmar och hals nästan svarta), så stövlarna har samma läderfärg hela vägen. Hjälmen är mindre: kupan 4 % och brättet når 40 % kortare ut.
 
