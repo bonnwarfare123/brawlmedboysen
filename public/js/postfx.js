@@ -90,7 +90,7 @@ const GRADES = {
   snow: { saturation: 0.74, contrast: 1.12, tint: [0.96, 0.985, 1.03], lift: [0.008, 0.012, 0.02], vignette: 0.42, bloom: 0.4, threshold: 1.0 },
   winter: { saturation: 0.78, contrast: 1.1, tint: [0.965, 0.99, 1.03], lift: [0.006, 0.01, 0.02], vignette: 0.4, bloom: 0.3, threshold: 1.15 },
   // Kungaborgen: neutral dag med lite extra kontrast, ljusa skuggor (grå sten ska se grå ut)
-  borg: { saturation: 1.0, contrast: 1.1, tint: [1.0, 1.0, 1.0], lift: [0.016, 0.016, 0.02], vignette: 0.18, bloom: 0.25, threshold: 1.3 },
+  borg: { saturation: 1.02, contrast: 1.08, tint: [1.02, 1.0, 0.97], lift: [0.02, 0.018, 0.018], vignette: 0.18, bloom: 0.25, threshold: 1.3 },
   borgEvening: { saturation: 0.98, contrast: 1.08, tint: [1.04, 0.99, 0.95], lift: [0.022, 0.018, 0.024], vignette: 0.26, bloom: 0.5, threshold: 0.95 },
   borgRain: { saturation: 0.86, contrast: 1.08, tint: [0.99, 0.99, 1.0], lift: [0.02, 0.02, 0.024], vignette: 0.26, bloom: 0.28, threshold: 1.1 },
   borgFog: { saturation: 0.88, contrast: 1.0, tint: [1.0, 1.0, 1.0], lift: [0.04, 0.038, 0.036], vignette: 0.2, bloom: 0.4, threshold: 1.0 },

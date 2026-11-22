@@ -28,7 +28,7 @@ import time
 
 BAKA_STORLEK_MAX = 1024     # högsta upplösning (materialets "bake_res" används, aldrig mer än detta)
 NORMAL_HALV = True          # normal maps i halva upplösningen för material under 1024 px
-WEBP_KVALITET = 82
+WEBP_KVALITET = 78
 
 UTMAPP_TEX = "texturer"
 UTMAPP_EXPORT = "export"
@@ -291,12 +291,24 @@ def exportera(exp, R):
                     bytta.append((s, s.material))
                     s.material = b
     ut = os.path.join(exp, "borg.glb")
+    # Färgattributet "Vind" (tyg och eld, skript 10) följer med som COLOR_0: spelet använder det
+    # för vind i flaggor och fladder i lågor. Namnen på exportinställningen skiljer mellan Blender-versioner.
+    farg = {}
+    props = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
+    if "export_vertex_color" in props:
+        farg["export_vertex_color"] = "ACTIVE"
+        if "export_active_vertex_color_when_no_material" in props:
+            farg["export_active_vertex_color_when_no_material"] = True
+        if "export_all_vertex_colors" in props:
+            farg["export_all_vertex_colors"] = False
+    elif "export_colors" in props:
+        farg["export_colors"] = True
     try:
         bpy.ops.export_scene.gltf(
             filepath=ut, export_format="GLB", use_visible=True, export_apply=True, export_yup=True,
             export_texcoords=True, export_normals=True, export_tangents=False,
             export_materials="EXPORT", export_image_format="WEBP", export_image_quality=WEBP_KVALITET,
-            export_extras=True, export_lights=False, export_cameras=False, export_animations=False)
+            export_extras=True, export_lights=False, export_cameras=False, export_animations=False, **farg)
     finally:
         for s, mat in bytta:
             s.material = mat
@@ -314,6 +326,14 @@ def kor_allt():
     R.append("Bakade material:")
     antal_bilder = 0
     for m in bakbara_material():
+        if m.get("bk_kalla"):                    # BlenderKit-material (08): bilderna finns redan – ingen bakning
+            bilder = {k: bpy.data.images.get(f"T_{m.name}_{k}") for k in "CRMN"}
+            bilder = {k: v for k, v in bilder.items() if v}
+            if "C" in bilder and "N" in bilder and "R" in bilder:
+                exportmaterial(m, bilder, float(m.get("tile_u", 1.0)), float(m.get("tile_v", 1.0)))
+                antal_bilder += len(bilder)
+                R.append(f"  {m.name:24s} BlenderKit ({m['bk_kalla']}) – ingen bakning")
+                continue
         res = baka_material(m, tex, R)
         if res:
             bilder, tu, tv = res

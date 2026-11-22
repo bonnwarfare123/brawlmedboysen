@@ -385,9 +385,10 @@ function borgAtmosphere(evening, rain, fog) {
   scene.fog.far = fog ? 55 : rain ? 120 : evening ? 190 : 280;
   const dim = rain ? 0.45 : fog ? 0.6 : 1;
   skyLight.color.set(evening ? 0x8a88b0 : rain || fog ? 0xc4ccd4 : 0xc2d4ea);
-  skyLight.groundColor.set(evening ? 0x6a5444 : 0x7c766c);
-  skyLight.intensity = evening ? 1.4 : 1.6;
-  sun.color.set(evening ? 0xffaa6a : rain || fog ? 0xe4e8ec : 0xfff6ea);
+  // varmt studsljus från sand och sten lyfter skuggsidorna (trä och detaljer drunknar inte i mörker)
+  skyLight.groundColor.set(evening ? 0x725a46 : 0x8c7c66);
+  skyLight.intensity = evening ? 1.5 : 1.75;
+  sun.color.set(evening ? 0xffaa6a : rain || fog ? 0xe4e8ec : 0xfff0dc);
   sun.intensity = (evening ? 2.4 : 3.3) * dim;
   if (evening) sun.position.set(28, 8, -12);
   else sun.position.set(8, 40, 10);
