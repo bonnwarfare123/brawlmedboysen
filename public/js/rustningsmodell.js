@@ -17,6 +17,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 // rustningens nyckel (KIT_STYLES / ARMOR_STYLES i knight.js) → fil
 export const MODELLER = {
   guard: "models/rustningar/guard.glb",
+  plate: "models/rustningar/plate.glb",
 };
 
 // Kroppsdelarna i samma ordning som i exportskriptet (_REGION i modellen är ett index här)
@@ -168,22 +169,54 @@ export function anvandRustningsmodell(knight, spec, colorHex) {
     knight.helmet.add(mesh);
   });
 
-  // 5. Vapnet och skölden i modellens knutna händer (grepp från exporten, i handens koordinater)
+  // 5. Vapnet och skölden i modellens knutna händer. Greppet mäts på själva modellen: mitten av
+  //    den knutna handens fingrar (i handens koordinater), så att skaftet går genom näven och inte
+  //    hamnar bredvid den. Exportens grepp (fingerbenens mitt) används bara om mätningen misslyckas.
   const g = spec.meta.grepp;
-  if (g) {
-    const standard = new THREE.Vector3(0, -0.069, 0.01); // där riddarens egen hand håller vapnet
-    knight.greppDelta = {
-      L: new THREE.Vector3(...g.L).sub(standard),
-      R: new THREE.Vector3(...g.R).sub(standard),
-    };
-    knight.greppLen = new THREE.Vector3(...g.L).length();
+  const standard = new THREE.Vector3(0, -0.069, 0.01); // där riddarens egen hand håller vapnet
+  const nave = { L: knytnave(delar, seg.handL, vila.handL), R: knytnave(delar, seg.handR, vila.handR) };
+  const grepp = (S) => nave[S] || (g ? new THREE.Vector3(...g[S]) : null);
+  if (grepp("L") && grepp("R")) {
+    knight.greppDelta = { L: grepp("L").sub(standard), R: grepp("R").sub(standard) };
+    knight.greppLen = grepp("R").length();
     knight.weapon.position.add(knight.greppDelta.R);
     knight.shield.position.add(knight.greppDelta.L);
     knight.knuckle?.position.add(knight.greppDelta.L);
   }
+  knight.greppMatt = nave; // för felsökning
 
   knight.rustning = { delar };
   return delar.length > 0;
+}
+
+// Mitten av den knutna handens fingrar i handens egna koordinater (vilopose), eller null.
+// Hörn som till största delen följer handen; bara den nedre delen (fingrarna, inte handryggen
+// vid handleden och inte handskens krage).
+function knytnave(delar, handSeg, vilaHand) {
+  const inv = vilaHand.clone().invert();
+  const pts = [];
+  const v = new THREE.Vector3();
+  for (const { mesh } of delar) {
+    const bi = mesh.skeleton.bones.indexOf(handSeg);
+    if (bi < 0) continue;
+    const pos = mesh.geometry.attributes.position;
+    const si = mesh.geometry.attributes.skinIndex;
+    const sw = mesh.geometry.attributes.skinWeight;
+    for (let i = 0; i < pos.count; i++) {
+      let w = 0;
+      for (let c = 0; c < 4; c++) if (si.getComponent(i, c) === bi) w += sw.getComponent(i, c);
+      if (w < 0.6) continue;
+      v.fromBufferAttribute(pos, i).applyMatrix4(inv);
+      if (v.length() < 0.16) pts.push(v.clone());
+    }
+  }
+  if (pts.length < 30) return null;
+  const ymin = Math.min(...pts.map((p) => p.y));
+  const fingrar = pts.filter((p) => p.y < ymin + 0.055);
+  if (fingrar.length < 15) return null;
+  const c = new THREE.Vector3();
+  for (const p of fingrar) c.add(p);
+  return c.multiplyScalar(1 / fingrar.length);
 }
 
 // En led huggs av: hörnen på den lösa delen följer bara den, resten följer leden innanför

@@ -365,6 +365,7 @@ function applyAtmosphere() {
   renderer.toneMappingExposure = evening ? 1.12 : 1.08;
   setEnvironment(environmentFor(evening));
   arena.setTime(evening);
+  effects.setLight(evening ? 0.62 : 1);
   arena.setOvercast?.(rain || fog);
   motes.hidden = false;
   motes.set(weatherKind, evening);
@@ -386,15 +387,17 @@ function borgAtmosphere(evening, rain, fog) {
   const dim = rain ? 0.45 : fog ? 0.6 : 1;
   skyLight.color.set(evening ? 0x8a88b0 : rain || fog ? 0xc4ccd4 : 0xc2d4ea);
   // varmt studsljus från sand och sten lyfter skuggsidorna (trä och detaljer drunknar inte i mörker)
-  skyLight.groundColor.set(evening ? 0x725a46 : 0x8c7c66);
-  skyLight.intensity = evening ? 1.5 : 1.75;
+  // v0.48: mer studsljus så att trä under tak och läktare går att läsa, lite mindre sol så att sanden inte bränns ut
+  skyLight.groundColor.set(evening ? 0x7a604a : 0x9a8872);
+  skyLight.intensity = evening ? 1.6 : 1.95;
   sun.color.set(evening ? 0xffaa6a : rain || fog ? 0xe4e8ec : 0xfff0dc);
-  sun.intensity = (evening ? 2.4 : 3.3) * dim;
+  sun.intensity = (evening ? 2.4 : 3.1) * dim;
   if (evening) sun.position.set(28, 8, -12);
   else sun.position.set(8, 40, 10);
   renderer.toneMappingExposure = evening ? 1.12 : rain || fog ? 1.16 : 1.1;
   setEnvironment(environmentFor(evening));
   arena.setTime(evening);
+  effects.setLight(evening ? 0.62 : 1);
   arena.setOvercast?.(rain || fog);
   motes.hidden = true; // inga svävande prickar här (de såg ut som snö)
   motes.set(weatherKind, evening);
@@ -402,6 +405,13 @@ function borgAtmosphere(evening, rain, fog) {
 }
 
 const effects = new Effects(scene);
+// Vilken sorts blodstänk ger ett vapen och en attack? Trubbigt krossar, stötar och spjut sticker, resten hugger.
+function bloodKind(attacker, k) {
+  const spec = weaponSpec(weaponOf(attacker));
+  if (spec.blunt) return "krossa";
+  if (k === "t" || spec.key === "spear" || spec.key === "shortspear") return "stick";
+  return "hugg";
+}
 // Större dammoln (fall, knuffar, ny runda) rör också upp dammet i luften
 {
   const dust = effects.dust.bind(effects);
@@ -1428,7 +1438,7 @@ const net = new Net({
     const dir = new THREE.Vector3(msg.dir[0], 0, msg.dir[1]);
     if (dir.lengthSq() < 0.001) dir.set(1, 0, 0);
     dir.normalize();
-    effects.blood(spot, msg.dead ? 22 : 10, dir, 1);
+    effects.blood(spot, msg.dead ? 22 : 10, dir, 1, { typ: attacker ? bloodKind(attacker, msg.k) : "hugg", tung: msg.k === "h" });
     sound.hit(spot, msg.k === "h", soundWeapon(attacker));
     if (attacker?.knight) attacker.knight.bloodySword();
     if (!msg.dead) {
@@ -1898,7 +1908,7 @@ const net = new Net({
     const heavy = msg.k === "h";
 
     if (bleeding) {
-      effects.blood(chest.clone().setY(0.3), 4, dir, 0.4);
+      effects.blood(chest.clone().setY(0.3), 4, dir, 0.4, { typ: "dropp" });
       if (victim === me) renderHp();
       else knight.setHp(msg.hp);
     } else {
@@ -1908,7 +1918,7 @@ const net = new Net({
       // Blodet sprutar där träffen landade (den siktade kroppsdelen), annars från bröstet
       const spot = (msg.seg && knight.segmentPosition(msg.seg, new THREE.Vector3())) || chest;
       const blunt = weaponSpec(weaponOf(attacker)).blunt;
-      effects.blood(spot, heavy ? 26 : blunt ? 10 : 14, dir, heavy ? 1.3 : 1);
+      effects.blood(spot, heavy ? 26 : blunt ? 12 : 14, dir, heavy ? 1.3 : 1, { typ: bloodKind(attacker, msg.k), tung: heavy });
       sound.hit(spot, heavy, soundWeapon(attacker));
       if (!msg.dead && !msg.sev) sound.hurt(spot, voiceOf(victim), heavy ? 1 : 0.55);
 
@@ -1960,7 +1970,7 @@ const net = new Net({
       const part = knight.sever(msg.sev, [dir.x * speed, up, dir.z * speed], scene, RAGDOLL_BOUNDS);
       debris.add(part);
       if (part) poolLater(part, 0.45);
-      effects.blood(chest, 20, dir, 1.2);
+      effects.blood(chest, 20, dir, 1.2, { typ: "hugg", tung: true });
       sound.sever(chest);
       if (!msg.dead) sound.roar(chest, voiceOf(victim)); // vrålar av smärta
       sound.crowd(msg.sev === "neck" || msg.sev === "waist" ? 1 : 0.6);
@@ -2003,7 +2013,7 @@ const net = new Net({
 
     if (msg.dead) {
       victim.dead = true;
-      effects.blood(chest, bleeding ? 10 : 30, dir, 1.4);
+      effects.blood(chest, bleeding ? 10 : 30, dir, 1.4, { typ: bleeding ? "dropp" : bloodKind(attacker, msg.k), tung: !bleeding });
       sound.scream(chest, voiceOf(victim));
       arena.cheer(1);
       arena.royalReact(Math.random() < 0.7); // kungen visar tummen upp (eller ner)
@@ -4361,7 +4371,7 @@ function updateBleeding(dt) {
       } else if (strength > 0 && Math.floor(b1 - 0.22) !== Math.floor(b0 - 0.22)) {
         effects.spurt(pos, dir, strength * 0.45); // andra slaget i "dunk-dunk"
       } else if (Math.random() < dt * (2 + 6 * strength)) {
-        effects.blood(pos, 1, dir, 0.25);
+        effects.blood(pos, 1, dir, 0.25, { typ: "dropp" });
       }
     });
   }

@@ -63,6 +63,31 @@ REP = (0.62, 0.52, 0.36)
 CELL_H = 448            # banérrutor: 4 x 2 rutor à 256 x 448 px, sedan en remsa 128 px med 8 småbitar
 
 
+# Heraldiska zoner: varje del av arenan får sina egna vapen och färger
+#   nord – kungen (rött och guld, krona), väst – blå ätten (sol, liljor),
+#   öst – röda ätten (sparrar, bjälke), syd – staden vid porten (vitt och rött, kors, borg)
+ZONER = {
+    "nord": {"celler": (0, 5), "vimpel": (2, 4), "festong": (6, 4)},
+    "vast": {"celler": (1, 4), "vimpel": (3, 4), "festong": (3, 7)},
+    "ost": {"celler": (3, 7), "vimpel": (2, 5), "festong": (2, 6)},
+    "syd": {"celler": (2, 6), "vimpel": (5, 2), "festong": (5, 2)},
+}
+
+
+def zon(p):
+    x, y = p[0], p[1]
+    if y > 10.5:
+        return "nord"
+    if y < -9.0 and abs(x) < 12.5:
+        return "syd"
+    return "vast" if x < 0 else "ost"
+
+
+def zcell(p, k=0):
+    c = ZONER[zon(p)]["celler"]
+    return c[k % len(c)]
+
+
 def cell_uv(i):
     """UV-rektangel (u0, v0, u1, v1) för banérruta i (0–7). v1 = överkant."""
     c, r = i % 4, i // 4
@@ -489,6 +514,17 @@ class Bygg:
         return o
 
 
+def varld(o):
+    """Världsmatris räknad från objektets egen placering. Objekt i en utesluten samling uppdateras inte
+    av Blender, så deras matrix_world kan vara inaktuell."""
+    m = o.matrix_basis.copy()
+    p = o.parent
+    while p is not None:
+        m = p.matrix_basis @ o.matrix_parent_inverse @ m
+        o, p = p, p.parent
+    return m
+
+
 def ram(n):
     """Lokala axlar för något som sitter på en vägg med normalen n: (höger, upp, ut)."""
     n = Vector((n.x, n.y, 0)).normalized()
@@ -542,30 +578,35 @@ def cell_mapp_vriden(cell):
     return lambda s, t: (u0 + 0.02 + t * (u1 - u0 - 0.04), v1 - 0.01 - s * (v1 - v0 - 0.02))
 
 
-def baner_vagg(B, topp, n, bredd, hojd, cell, form="svans", seed=0, avstand=0.13, stang=True, typ=0.0):
-    """Stort hängande banér på en vägg, med järnstång, konsoler och hällor."""
+def baner_vagg(B, topp, n, bredd, hojd, cell, form="svans", seed=0, avstand=0.12, stang=True, typ=0.0):
+    """Stort hängande banér på en vägg: hällor runt en järnstång som hänger i ett snöre från en krok.
+    Vecken samlas mot hällorna och vidgas nedåt; tyget går aldrig närmare väggen än 'avstand'."""
     rng = random.Random(seed)
     h_, u_, n_ = ram(n)
-    prof = kant_profil(form, 0.16)
+    prof = kant_profil(form, rng.uniform(0.12, 0.2))
     fas = rng.random()
-    veck_k = rng.choice((2.0, 2.5, 3.0))
-    veck_f = rng.random() * 6.28
+    veck = [(rng.choice((2.0, 2.5, 3.0)), rng.random() * 6.28, 1.0), (rng.choice((4.5, 5.5)), rng.random() * 6.28, 0.35)]
+    vrid = rng.uniform(-0.07, 0.07)          # nederkanten vriden lite åt ena hållet
+    hall_s = [0.06 + 0.88 * k / 4 for k in range(5)]
 
     def pos(s, t):
         tt = t * prof(s)
-        veck = (0.012 + 0.045 * tt) * math.sin(2 * math.pi * veck_k * s + veck_f + tt * 0.8)
-        buk = 0.03 * math.sin(math.pi * s) * tt
-        bredd_t = 1 + 0.03 * tt
-        return Vector(topp) + h_ * ((s - 0.5) * bredd * bredd_t) - u_ * (tt * hojd) + n_ * (avstand + veck + buk)
+        v = sum(w * (0.5 + 0.5 * math.sin(2 * math.pi * k * s + f + tt * 1.2)) for k, f, w in veck) / 1.35
+        amp = 0.01 + 0.06 * tt ** 0.8
+        buk = 0.025 * math.sin(math.pi * s) * tt
+        # överkanten sjunker lite mellan hällorna
+        mellan = min(abs(s - q) for q in hall_s)
+        hang = 0.025 * min(1.0, mellan / 0.11) * max(0.0, 1 - tt * 6)
+        sned = (s - 0.5) * bredd * math.sin(vrid) * tt
+        return (Vector(topp) + h_ * ((s - 0.5) * bredd * (1 + 0.03 * tt)) - u_ * (tt * hojd + hang)
+                + n_ * (avstand + amp * v + buk + max(0.0, sned)))
 
     uvf = cell_mapp(cell, hojd / bredd)
-    tyg_yta(B, ATLAS, 6, 12, pos, lambda s, t: uvf(s, t * prof(s)), lambda s, t: (t * prof(s), typ, fas))
-    # hällor runt stången
+    tyg_yta(B, ATLAS, 8, 14, pos, lambda s, t: uvf(s, t * prof(s)), lambda s, t: (t * prof(s) * 0.8, typ, fas))
     if stang:
         mi = B.mat(ATLAS)
         hy = 0.075
-        for k in range(5):
-            s = 0.06 + 0.88 * k / 4
+        for s in hall_s:
             bx = 0.05
             p = Vector(topp) + h_ * ((s - 0.5) * bredd) + n_ * avstand
             a = [p - h_ * bx, p + h_ * bx, p + h_ * bx + u_ * hy, p - h_ * bx + u_ * hy]
@@ -574,31 +615,46 @@ def baner_vagg(B, topp, n, bredd, hojd, cell, form="svans", seed=0, avstand=0.13
             uvp = uvf(s, 0.0)
             B.face([ids[0], ids[1], ids[2], ids[3]], [uvp] * 4, mi)
             B.face([ids[3], ids[2], ids[4], ids[5]], [uvp] * 4, mi)
-        # järnstång med knoppar, två konsoler in i väggen
+        # järnstång med knoppar
         y = Vector(topp) + u_ * (hy - 0.01) + n_ * (avstand - 0.025)
         a, b = y - h_ * (bredd / 2 + 0.1), y + h_ * (bredd / 2 + 0.1)
         B.cyl(a, b, 0.017, 0.017, 6, "MAT_Metall_Jarn")
         for p in (a, b):
             B.svarv(p - Vector((0, 0, 0.035)), [(0.0, 0.0), (0.03, 0.02), (0.035, 0.035), (0.02, 0.06), (0.0, 0.075)], 6, "MAT_Metall_Jarn")
-        for p in (a + h_ * 0.06, b - h_ * 0.06):
-            B.lada(p - n_ * (avstand / 2), (0.025, 0.025, avstand), Matrix((h_, u_, n_)).transposed(), "MAT_Metall_Jarn")
+        # snöre från stångens ändar upp till en smidd krok i väggen
+        krok = Vector(topp) + u_ * (0.45 + bredd * 0.18) + n_ * 0.02
+        M = Matrix((h_, u_, n_)).transposed()
+        B.lada(krok - n_ * 0.005, (0.08, 0.12, 0.012), M, "MAT_Metall_Jarn")
+        B.cyl(krok, krok + n_ * 0.06, 0.012, 0.012, 4, "MAT_Metall_Jarn", smooth=False)
+        B.cyl(krok + n_ * 0.06, krok + n_ * 0.06 + u_ * 0.04, 0.012, 0.008, 4, "MAT_Metall_Jarn", smooth=False)
+        for p in (a + h_ * 0.04, b - h_ * 0.04):
+            rep(B, [krok + n_ * 0.06, p + u_ * 0.01], r=0.007)
 
 
-def stangflagga(B, fäste, rikt, langd, hojd, uv_fn, seed=0, form="svans", typ=1.0):
-    """Flagga som sitter i en stång och vajar ut åt 'rikt' (vågrät)."""
+def stangflagga(B, fäste, rikt, langd, hojd, uv_fn, seed=0, form="svans", typ=1.0, stang_r=0.06):
+    """Flagga som sitter i en stång med tre ringar och vajar ut åt 'rikt'. Varje flagga hänger lite olika."""
     rng = random.Random(seed)
     r = Vector((rikt.x, rikt.y, 0)).normalized()
     sida = UP.cross(r).normalized()
     fas = rng.random()
-    prof = kant_profil(form, 0.3)       # svans i fria änden
+    prof = kant_profil(form, rng.uniform(0.22, 0.34))
+    hang_k = rng.uniform(0.08, 0.22)        # hur mycket den fria änden sjunker
+    vag_a = rng.uniform(0.08, 0.15)
+    vag_k = rng.uniform(2.6, 3.6)
+    start_off = stang_r + 0.015
 
     def pos(s, t):
         ss = s * prof(t)
-        vag = math.sin(ss * math.pi * 3.2 + fas * 6.28) * 0.13 * ss + math.sin(t * 2.5 + ss * 4) * 0.03 * ss
-        hang = 0.12 * ss * ss
-        return Vector(fäste) + r * (ss * langd) - UP * (t * hojd + hang) + sida * vag
+        vag = math.sin(ss * math.pi * vag_k + fas * 6.28) * vag_a * ss + math.sin(t * 2.5 + ss * 4) * 0.03 * ss
+        return Vector(fäste) + r * (start_off + ss * langd) - UP * (t * hojd + hang_k * ss * ss) + sida * vag
 
-    tyg_yta(B, ATLAS, 10, 4, pos, lambda s, t: uv_fn(s * prof(t), t), lambda s, t: (s * prof(t), typ, fas))
+    tyg_yta(B, ATLAS, 12, 4, pos, lambda s, t: uv_fn(s * prof(t), t), lambda s, t: (s * prof(t), typ, fas))
+    axel = Vector(fäste)
+    for t in (0.04, 0.5, 0.96):
+        z = axel - UP * (t * hojd)
+        B.cyl(z - UP * 0.008, z + UP * 0.008, stang_r + 0.012, stang_r + 0.012, 8, "MAT_Metall_Jarn")
+    # kantlina längs flaggans inre kant
+    rep(B, [axel + r * start_off + UP * 0.02, axel + r * start_off - UP * (hojd + 0.03)], r=0.006)
 
 
 def flaggstang(B, fot, hojd, seed):
@@ -611,6 +667,8 @@ def flaggstang(B, fot, hojd, seed):
     for k in range(3):
         z = 0.6 + k * 0.08
         B.cyl(fot + Vector((0, 0, z)), fot + Vector((0, 0, z + 0.03)), 0.08, 0.08, 8, "MAT_Metall_Jarn")
+    # klamp för flagglinan
+    B.lada(fot + Vector((0.075, 0, 1.15)), (0.03, 0.04, 0.16), Matrix.Identity(3), "MAT_Metall_Jarn")
     return topp
 
 
@@ -755,14 +813,14 @@ def eld_material_blender():
     sep = nt.nodes.new("ShaderNodeSeparateColor")
     nt.links.new(at.outputs["Color"], sep.inputs[0])
     cr = nt.nodes.new("ShaderNodeValToRGB")
-    cr.color_ramp.elements[0].color = (1.0, 0.78, 0.38, 1)
+    cr.color_ramp.elements[0].color = (1.0, 0.62, 0.22, 1)
     cr.color_ramp.elements[1].position = 1.0
-    cr.color_ramp.elements[1].color = (0.95, 0.22, 0.04, 1)
-    mid = cr.color_ramp.elements.new(0.45)
-    mid.color = (1.0, 0.5, 0.12, 1)
+    cr.color_ramp.elements[1].color = (0.75, 0.12, 0.02, 1)
+    mid = cr.color_ramp.elements.new(0.4)
+    mid.color = (1.0, 0.36, 0.06, 1)
     nt.links.new(sep.outputs[0], cr.inputs["Fac"])
     em = nt.nodes.new("ShaderNodeEmission")
-    em.inputs["Strength"].default_value = 2.5
+    em.inputs["Strength"].default_value = 1.6
     nt.links.new(cr.outputs["Color"], em.inputs["Color"])
     ut = nt.nodes.new("ShaderNodeOutputMaterial")
     nt.links.new(em.outputs[0], ut.inputs["Surface"])
@@ -839,27 +897,222 @@ def eldkorg(B, fot, seed):
 
 
 def lykta(B, krok, n_kedja, seed):
-    """Hängande smideslykta: krok = punkten i taket den hänger i."""
+    """Hängande smideslykta: öppen ram (inget vitt glas), ett talgljus med en liten låga inuti.
+    krok = punkten i taket den hänger i. Returnerar lågans position."""
     krok = Vector(krok)
     z = krok.copy()
+    B.lada(krok - UP * 0.01, (0.07, 0.07, 0.02), Matrix.Identity(3), "MAT_Metall_Jarn")
     for k in range(n_kedja):
         rot = Matrix.Rotation(math.pi / 2 * (k % 2), 3, "Z")
-        B.lada(z - UP * 0.04, (0.035, 0.008, 0.07), rot, "MAT_Metall_Jarn")
-        z -= UP * 0.06
-    B.cyl(z - UP * 0.02, z, 0.025, 0.025, 6, "MAT_Metall_Jarn")
-    topp = z - UP * 0.02
-    B.svarv(topp - UP * 0.11, [(0.13, 0.0), (0.13, 0.015), (0.0, 0.11)], 4, "MAT_Metall_Jarn", smooth=False, vrid=0)
-    kropp_ö = topp - UP * 0.11
-    kropp_n = kropp_ö - UP * 0.30
-    rot45 = Matrix.Rotation(math.pi / 4, 3, "Z")
-    for k in range(4):
-        a = math.pi / 4 + k * math.pi / 2
-        d = Vector((math.cos(a), math.sin(a), 0)) * 0.12
-        B.lada((kropp_ö + kropp_n) / 2 + d, (0.022, 0.022, 0.30), rot45, "MAT_Metall_Jarn")
-    B.lada(kropp_n - UP * 0.015, (0.2, 0.2, 0.03), Matrix.Identity(3), "MAT_Metall_Jarn")
-    B.lada((kropp_ö + kropp_n) / 2, (0.15, 0.15, 0.26), Matrix.Identity(3), "MAT_Fonster_Varm")
-    B.svarv(kropp_n - UP * 0.08, [(0.0, 0.0), (0.04, 0.05), (0.05, 0.065)], 4, "MAT_Metall_Jarn", smooth=False)
-    return (kropp_ö + kropp_n) / 2
+        B.lada(z - UP * 0.045, (0.03, 0.007, 0.065), rot, "MAT_Metall_Jarn")
+        z -= UP * 0.055
+    # bygel och tak
+    B.cyl(z - UP * 0.005, z - UP * 0.045, 0.008, 0.008, 4, "MAT_Metall_Jarn", smooth=False)
+    tak = z - UP * 0.14
+    B.svarv(tak, [(0.125, 0.0), (0.125, 0.012), (0.07, 0.06), (0.025, 0.09), (0.02, 0.095)], 4, "MAT_Metall_Jarn", smooth=False)
+    ram_ö = tak
+    ram_n = tak - UP * 0.26
+    I = Matrix.Identity(3)
+    B.lada(ram_ö - UP * 0.01, (0.2, 0.2, 0.02), I, "MAT_Metall_Jarn")
+    B.lada(ram_n - UP * 0.012, (0.21, 0.21, 0.024), I, "MAT_Metall_Jarn")
+    B.svarv(ram_n - UP * 0.075, [(0.0, 0.0), (0.04, 0.04), (0.06, 0.05), (0.06, 0.055)], 4, "MAT_Metall_Jarn", smooth=False)
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            B.lada((ram_ö + ram_n) / 2 + Vector((sx * 0.092, sy * 0.092, 0)), (0.018, 0.018, 0.26), I, "MAT_Metall_Jarn")
+    # galler: ett lodrätt och ett vågrätt band på varje sida
+    mitt = (ram_ö + ram_n) / 2
+    for d, M in ((Vector((0.092, 0, 0)), I), (Vector((-0.092, 0, 0)), I), (Vector((0, 0.092, 0)), I), (Vector((0, -0.092, 0)), I)):
+        bred = (0.01, 0.17, 0.012) if d.x else (0.17, 0.01, 0.012)
+        hog = (0.01, 0.01, 0.24)
+        B.lada(mitt + d, bred, M, "MAT_Metall_Jarn")
+        B.lada(mitt + d, hog, M, "MAT_Metall_Jarn")
+    # ljus och låga
+    ljusfot = ram_n
+    B.cyl(ljusfot, ljusfot + UP * 0.08, 0.022, 0.02, 6, "MAT_Sten_Huggen", lock=(False, True))
+    lagor(B, ljusfot + UP * 0.08, 0.08, seed, antal=1, bredd=0.4)
+    return ljusfot + UP * 0.12
+
+
+# =====================================================================
+# 4b. BIBLIOTEK – BlenderKit-modeller (förenklade, borgens järnmaterial, instanser)
+# =====================================================================
+BIB = "COL_Atmosfar_Bibliotek"
+# namn: (BlenderKit-id, sökord, rotobjektets namn efter nedladdning, mål-trianglar, licens)
+BK_LJUS = {
+    "vaggfackla": ("b1523e97", "medieval torch", "Medieval torch", 480, "CC0"),
+    "eldkorg": ("5d92abcf", "fire basket", "Fire basket", 1100, "BlenderKit royalty free"),
+    "stativ": ("f0100763", "medieval torch stand", "Medieval Torch Stand", 900, "BlenderKit royalty free"),
+}
+BK_UTAN = ("fire", "flame", "domain", "emitter", "wick", "docht", "light")
+
+
+def bk_utesluten(namn):
+    """Eld, lågor, ljus och simuleringsdomäner tas inte med (men 'fire basket' är själva korgen)."""
+    n = namn.lower()
+    return "basket" not in n and any(w in n for w in BK_UTAN)
+
+
+def bk_starta_nedladdning(saknas):
+    try:
+        fil = os.path.join(bpy.path.abspath("//"), "08_blenderkit_material.py")
+        spec = importlib.util.spec_from_file_location("bk8", fil)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        paths, utils, cl, S_, D, headers = m.bk()
+        for k, (id8, sok, rot, _, _) in enumerate(saknas):
+            url = f"{paths.BLENDKIT_API}/search/?query={sok.replace(' ', '+')}+asset_type:model+is_free:true&page_size=20&dict_parameters=1"
+            res = cl.blocking_request(url, "GET", headers).json().get("results", [])
+            hit = [x for x in res if x["assetBaseId"].startswith(id8)]
+            if hit:
+                D.start_download(S_.parse_result(hit[0]), model_location=(400 + k * 5, 0, 0), model_rotation=(0, 0, 0), resolution="resolution_1K")
+                R.append(f"  BlenderKit: laddar ner {hit[0]['name']} – kör skriptet igen när den är klar")
+    except Exception as e:
+        R.append(f"  BlenderKit: kunde inte starta nedladdning ({e})")
+
+
+def bk_mesh(namn, rotnamn, maltris, bib):
+    """Slår ihop modellens delar (utan eld/ljus), förenklar till ungefär maltris trianglar,
+    ger järn (och trä där originalet var trä) och UV i meter. Returnerar (mesh, punkter i rotens rum)."""
+    me_namn = f"SM_BK_{namn}"
+    rot = bpy.data.objects.get(rotnamn)
+    if rot is None:
+        return None
+    dg = bpy.context.evaluated_depsgraph_get()
+    inv = varld(rot).inverted()
+    V, F, FM = [], [], []
+    jarn, tra = bpy.data.materials["MAT_Metall_Jarn"], bpy.data.materials["MAT_Tra_Konstruktion"]
+    for k in [rot] + list(rot.children_recursive):
+        if k.type != "MESH" or bk_utesluten(k.name):
+            continue
+        ev = k.evaluated_get(dg)
+        m = ev.to_mesh()
+        M = inv @ varld(k)
+        bas = len(V)
+        V += [M @ v.co for v in m.vertices]
+        for p in m.polygons:
+            mat = m.materials[p.material_index] if p.material_index < len(m.materials) else None
+            mn = (mat.name.lower() if mat else "")
+            if bk_utesluten(mn):
+                continue
+            F.append([bas + i for i in p.vertices])
+            FM.append(1 if any(w in mn for w in ("wood", "holz", "tra")) else 0)
+        ev.to_mesh_clear()
+    if not F:
+        return None
+    gammal = bpy.data.meshes.get(me_namn)
+    tmp = bpy.data.meshes.new(me_namn + "_tmp")
+    tmp.from_pydata([tuple(v) for v in V], [], F)
+    tmp.materials.append(jarn)
+    tmp.materials.append(tra)
+    tmp.polygons.foreach_set("material_index", FM)
+    tmp.validate()
+    tris = sum(len(p.vertices) - 2 for p in tmp.polygons)
+    o = bpy.data.objects.new(me_namn + "_tmp", tmp)
+    bpy.context.scene.collection.objects.link(o)      # måste synas i scenen för att förenklingen ska räknas
+    if tris > maltris:
+        mod = o.modifiers.new("Forenkla", "DECIMATE")
+        mod.ratio = maltris / tris
+        mod.use_collapse_triangulate = True
+    bpy.context.view_layer.update()
+    dg = bpy.context.evaluated_depsgraph_get()
+    ny = bpy.data.meshes.new_from_object(o.evaluated_get(dg))
+    bpy.data.objects.remove(o)
+    bpy.data.meshes.remove(tmp)
+    if gammal is not None:
+        gammal.user_remap(ny)
+        bpy.data.meshes.remove(gammal)
+    ny.name = me_namn
+    return ny
+
+
+def bk_uv_meter(me, skala=1.0):
+    """Lådprojicerad UV i meter (borgens kakelmaterial upprepas per meter)."""
+    uvl = me.uv_layers.get("UVMap") or me.uv_layers.new(name="UVMap")
+    me.uv_layers.active = uvl
+    for p in me.polygons:
+        n = p.normal
+        ax = max(range(3), key=lambda i: abs(n[i]))
+        for li in p.loop_indices:
+            co = me.vertices[me.loops[li].vertex_index].co * skala
+            uvl.data[li].uv = (co.y, co.z) if ax == 0 else ((co.x, co.z) if ax == 1 else (co.x, co.y))
+
+
+def bk_kanonisk(me, typ):
+    """Flyttar modellen till ett gemensamt läge. Vägg: x höger, y upp, z ut från väggen, origo mitt på plattan.
+    Golv: z upp, origo mitt under foten. Returnerar (skala, lågans punkt i det nya läget)."""
+    P = np.array([tuple(v.co) for v in me.vertices])
+    mn, mx = P.min(axis=0), P.max(axis=0)
+    if typ == "vaggfackla":
+        platta = P[P[:, 2] < mn[2] + 0.03 * (mx[2] - mn[2]) + 0.01]
+        org = np.array([platta[:, 0].mean(), platta[:, 1].mean(), mn[2]])
+        sk = 1.15
+        topp = P[P[:, 1] > mx[1] - 0.15 * (mx[1] - mn[1])]
+        eld = (topp.mean(axis=0) - org) * sk
+        eld[1] = (mx[1] - org[1]) * sk - 0.03
+    else:
+        org = np.array([(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, mn[2]])
+        if typ == "eldkorg":
+            sk = 0.8 / max(mx[0] - mn[0], mx[1] - mn[1])
+            eld = np.array([0.0, 0.0, (mx[2] - mn[2]) * sk * 0.75])
+        else:
+            sk = 2.25 / (mx[2] - mn[2])
+            topp = P[P[:, 2] > mx[2] - 0.12 * (mx[2] - mn[2])]
+            eld = np.array([(topp[:, 0].mean() - org[0]) * sk, (topp[:, 1].mean() - org[1]) * sk, (mx[2] - mn[2]) * sk * 0.93])
+    for v in me.vertices:
+        v.co = (Vector(v.co) - Vector(org)) * sk
+    me.update()
+    return sk, Vector(eld)
+
+
+def bygg_bibliotek():
+    """Bygger (eller hittar) biblioteksmeshen. Returnerar {namn: (mesh, lågpunkt)}; saknade modeller laddas ner."""
+    bib = samling(BIB, exkludera=True)
+    anvanda = {v[2] for v in BK_LJUS.values()}
+    for namn in ("Old wrought iron oil wick torch", "Medieval oil wick torch."):
+        rot = bpy.data.objects.get(namn)
+        if rot is not None and namn not in anvanda:
+            for o in list(rot.children_recursive) + [rot]:
+                data = o.data
+                bpy.data.objects.remove(o)
+                if isinstance(data, bpy.types.Mesh) and data.users == 0:
+                    bpy.data.meshes.remove(data)
+            c = bpy.data.collections.get(namn)
+            if c is not None and not c.objects:
+                bpy.data.collections.remove(c)
+            R.append(f"  Tog bort oanvänd BlenderKit-modell: {namn}")
+    ut, saknas = {}, []
+    for namn, (id8, sok, rotnamn, maltris, lic) in BK_LJUS.items():
+        rot = bpy.data.objects.get(rotnamn)
+        if rot is None:
+            saknas.append((id8, sok, rotnamn, maltris, lic))
+            continue
+        for o in [rot] + list(rot.children_recursive):
+            for c in list(o.users_collection):
+                if c != bib:
+                    c.objects.unlink(o)
+            if bib not in o.users_collection:
+                bib.objects.link(o)
+        me = bk_mesh(namn, rotnamn, maltris, bib)
+        if me is None:
+            continue
+        sk, eld = bk_kanonisk(me, namn)
+        bk_uv_meter(me)
+        me.polygons.foreach_set("use_smooth", [True] * len(me.polygons))
+        if hasattr(me, "set_sharp_from_angle"):
+            me.set_sharp_from_angle(angle=math.radians(45))
+        me["bk_kalla"] = f"{rotnamn} ({id8}, {lic})"
+        ut[namn] = (me, eld)
+        R.append(f"  Bibliotek: {namn} ← {rotnamn} ({lic}), {sum(len(p.vertices) - 2 for p in me.polygons)} trianglar")
+    if saknas:
+        bk_starta_nedladdning(saknas)
+    return ut
+
+
+def instans_mesh(saml, me, namn, mtx):
+    o = bpy.data.objects.new(namn, me)
+    o.matrix_world = mtx
+    saml.objects.link(o)
+    return o
 
 
 # =====================================================================
@@ -972,13 +1225,13 @@ class Scen:
         return None
 
     def mark(self, x, y, z0=6.0):
-        h = self.stråle((x, y, z0), (0, 0, -1), 20)
+        h = self.stråle((x, y, z0), (0, 0, -1), z0 + 5)
         return h
 
-    def fri(self, x, y, r, hojd=2.0):
-        """Är golvet plant och fritt i en cirkel med radien r?"""
-        c = self.mark(x, y)
-        if not c or c[1].z < 0.9:
+    def fri(self, x, y, r, hojd=2.0, max_z=0.6):
+        """Är marken plan och fri i en cirkel med radien r, och fritt uppåt till 'hojd'? (inte uppe på tak)"""
+        c = self.mark(x, y, 12.0)
+        if not c or c[1].z < 0.9 or c[0].z > max_z:
             return None
         z = c[0].z
         for k in range(8):
@@ -1031,33 +1284,39 @@ def murplatser(S, bef, antal=10):
     rng = random.Random(5)
     rng.shuffle(kand)
     kand.sort(key=lambda c: -c[0].z)
-    for p, n in kand:
-        if any((p - q).length < 6.5 for q, *_ in valda) or any((p - q).length < 4 for q in bef):
-            continue
-        hojd = 4.4 if p.z > 11 else 3.6
-        bredd = 1.5 if hojd > 4 else 1.3
-        topp = p + UP * 1.2
-        if topp.z - hojd < 3.0:
-            continue
+    def passar(p, n, topp, bredd, hojd):
         h_, u_, n_ = ram(n)
-        ok = True
-        for s in (-0.6, 0.0, 0.6):
-            for t in (-0.05, 0.25, 0.5, 0.75, 1.0):
+        snore = (0.45 + bredd * 0.18 + 0.1) / hojd
+        # tätt: plan sten bakom tyget, stången och snöret upp till kroken (inga gesimser eller fönster)
+        for s in (-0.6, -0.3, 0.0, 0.3, 0.6):
+            for t in [-snore + k * 0.07 for k in range(int((1.0 + snore) / 0.07) + 2)]:
                 q = topp + h_ * (s * bredd * 1.1) - UP * (t * hojd) + n_ * 0.6
                 hh = S.stråle(q, -n_, 1.0)
                 if not hh or abs((hh[0] - q).length - 0.6) > 0.09 or hh[1].dot(n_) < 0.96 or not hh[3] or "Sten" not in hh[3]:
-                    ok = False
-                    break
-            if not ok:
-                break
-        if not ok:
-            continue
+                    return False
+        # inget utsprång eller tak i volymen som tyget tar upp
+        for s in (-0.55, 0.0, 0.55):
+            for t in [-snore + k * 0.1 for k in range(int((1.0 + snore) / 0.1) + 2)]:
+                q = topp + h_ * (s * bredd) - UP * (t * hojd) + n_ * 0.03
+                if S.stråle(q, n_, 0.4) or S.stråle(q + n_ * 0.2, UP, 0.25):
+                    return False
         # inget framför banéret (tak, läktare)
         for t in (0.2, 0.6, 0.95):
             if S.stråle(topp - UP * (t * hojd) + n_ * 0.15, n_, 2.5):
-                ok = False
-        if ok:
-            valda.append((p, n, topp, bredd, hojd))
+                return False
+        return True
+
+    for p, n in kand:
+        if any((p - q).length < 6.0 for q, *_ in valda) or any((p - q).length < 4 for q in bef):
+            continue
+        # stort banér om det får plats, annars mindre
+        for hojd, bredd, lyft in ((4.4, 1.5, 1.2), (3.6, 1.3, 1.0), (2.8, 1.1, 0.8)):
+            topp = p + UP * lyft
+            if topp.z - hojd < 3.0:
+                continue
+            if passar(p, n, topp, bredd, hojd):
+                valda.append((p, n, topp, bredd, hojd))
+                break
         if len(valda) >= antal:
             break
     return valda
@@ -1068,7 +1327,7 @@ def murplatser(S, bef, antal=10):
 # =====================================================================
 def bygg_om_baner(o, S, saml):
     me = o.data
-    mw = o.matrix_world
+    mw = varld(o)
     P = np.array([tuple(mw @ v.co) for v in me.vertices])
     mn, mx = P.min(axis=0), P.max(axis=0)
     ext = mx - mn
@@ -1085,20 +1344,11 @@ def bygg_om_baner(o, S, saml):
     mat = me.materials[0].name
     hojd = ext[2]
     if vertikal:
-        # var sitter väggen?
-        n = None
-        for sg in (1, -1):
-            d = Vector((0, 0, 0))
-            d[tunn] = sg
-            h = S.stråle(Vector(c) - d * 0.02, -d, 0.6)
-            if h:
-                n = d
-                break
-        fritt = n is None
-        if fritt:
-            d = Vector((0, 0, 0))
-            d[tunn] = 1 if -c[tunn] > 0 else -1
-            n = d
+        # banéret vänds alltid mot arenan; finns det en vägg bakom det hänger det på väggen, annars fritt
+        n = Vector((0, 0, 0))
+        n[tunn] = 1 if -c[tunn] > 0 else -1
+        bakom = S.stråle(Vector(c) + n * 0.1, -n, 0.7)
+        fritt = bakom is None
         h_, u_, n_ = ram(n)
         s_of = lambda p: (np.dot(p - c, np.array(h_)) / ext[lang] + 0.5)
         t_of = lambda p: (mx[2] - p[..., 2]) / hojd
@@ -1141,6 +1391,16 @@ def bygg_om_baner(o, S, saml):
         pf = lambda tt: float(np.interp(tt, [0, 0.25, 0.5, 0.75, 1.0], prof))
     kung = o.name.startswith("Baner_Kungaloge")
     B = Bygg(("Kungaloge_Fana_" + o.name[-1]) if kung else o.name + "_ny")
+    # tyget flyttas in i tygatlasen och får vapnet för sin del av arenan (de gamla tygmaterialen behövs inte)
+    k_ = sum(map(ord, o.name)) % 2
+    cell = 0 if kung else zcell(c, k_)
+    mat = ATLAS
+    if vertikal:
+        uvc = cell_mapp(cell, (hojd - ((mx[2] - 3.76) if kung else 0)) / bredd)
+        uvmap = lambda ss, tt: uvc(ss, tt)
+    else:
+        uvc = cell_mapp_vriden(cell)
+        uvmap = lambda ss, tt: uvc(ss, tt)
     rng = random.Random(hash(o.name) % 1000)
     fas = rng.random()
     if vertikal:
@@ -1149,17 +1409,22 @@ def bygg_om_baner(o, S, saml):
         if kung:
             topp.z = 3.76
             hojd_ny = hojd - (mx[2] - 3.76)
-        topp[tunn] = (mn[tunn] if n[tunn] > 0 else mx[tunn]) if not fritt else c[tunn]
-        avst = 0.0 if fritt else 0.035
+        topp[tunn] = (mx[tunn] if n[tunn] > 0 else mn[tunn]) if not fritt else c[tunn]   # framsidan (mot arenan)
+        avst = 0.0 if fritt else 0.05
         vk = rng.choice((2.0, 2.5, 3.0))
+        vk2 = rng.choice((4.5, 5.5))
+        f2 = rng.random() * 6.28
 
         def pos(ss, tt):
             t2 = tt * pf(ss)
-            amp = 0.008 + 0.03 * t2
-            veck = amp * math.sin(2 * math.pi * vk * ss + fas * 6 + t2)
-            return topp + h_ * ((ss - 0.5) * bredd) - UP * (t2 * hojd_ny) + n_ * (avst + abs(veck) * (0 if fritt else 1) + (veck if fritt else 0))
-        tyg_yta(B, mat, 6, 12, pos, lambda ss, tt: uvmap(ss, tt * pf(ss)),
-                lambda ss, tt: (tt * pf(ss), 0.3 if fritt else 0.0, fas))
+            amp = 0.008 + 0.035 * t2
+            v = (math.sin(2 * math.pi * vk * ss + fas * 6 + t2) + 0.35 * math.sin(2 * math.pi * vk2 * ss + f2)) / 1.35
+            if fritt:
+                return topp + h_ * ((ss - 0.5) * bredd) - UP * (t2 * hojd_ny) + n_ * (amp * v)
+            return topp + h_ * ((ss - 0.5) * bredd) - UP * (t2 * hojd_ny) + n_ * (avst + amp * (0.5 + 0.5 * v))
+        # tyg mot en vägg rör sig mindre i vinden (r halveras), fritt hängande lite mer
+        tyg_yta(B, mat, 8, 14, pos, lambda ss, tt: uvmap(ss, tt * pf(ss)),
+                lambda ss, tt: (tt * pf(ss) * (1.0 if fritt else 0.5), 0.3 if fritt else 0.0, fas))
         # ringar i överkanten
         if True:
             for k in range(4):
@@ -1175,7 +1440,7 @@ def bygg_om_baner(o, S, saml):
             s2 = ss * pf(tt)
             vag = math.sin(s2 * math.pi * 2.2 + fas * 6.28) * 0.07 * s2
             return fäste + rikt * (s2 * bredd) - UP * (tt * hojd + 0.08 * s2 * s2) + sida * vag
-        tyg_yta(B, mat, 10, 4, pos, lambda ss, tt: uvmap(ss * pf(tt), tt), lambda ss, tt: (ss * pf(tt), 1.0, fas))
+        tyg_yta(B, mat, 12, 4, pos, lambda ss, tt: uvmap(ss * pf(tt), tt), lambda ss, tt: (ss * pf(tt), 1.0, fas))
     return B.objekt(saml)
 
 
@@ -1282,11 +1547,11 @@ def kor(exportera=True):
     for n in GAMLA_TYG:
         o = bpy.data.objects.get(n)
         if o:
-            bef.append(o.matrix_world @ (sum((Vector(b) for b in o.bound_box), Vector()) / 8))
+            bef.append(varld(o) @ (sum((Vector(b) for b in o.bound_box), Vector()) / 8))
     B = Bygg("SM_Baner_Murar")
-    platser = murplatser(S, bef, antal=10)
+    platser = murplatser(S, bef, antal=8)
     for k, (p, n, topp, bredd, hojd) in enumerate(platser):
-        cell = [0, 1, 4, 6, 5, 2, 3, 7][k % 8]
+        cell = zcell(p, k)
         baner_vagg(B, topp, n, bredd, hojd, cell, form=("svans", "spets", "rak")[k % 3], seed=k)
         räkna("stora banér på murar")
     if platser:
@@ -1304,19 +1569,29 @@ def kor(exportera=True):
     stanger = []
     for k, (x, y, rikt) in enumerate([(14.5, -10.0, (1, 0)), (-14.5, -10.0, (-1, 0)), (14.6, 9.2, (1, 0)), (-14.6, 9.2, (-1, 0)),
                                        (4.2, -9.95, (1, 0)), (-4.2, -9.95, (-1, 0))]):
-        f = hitta_fri(S, x, y, 0.22, 3.0, 0.3)
+        hojd = (8.3 if y > 0 else 7.0) if abs(x) > 10 else 6.2      # norra stängerna når över läktartaken
+        langd = 2.4 if abs(x) > 10 else 1.9
         z = None
-        if f:
-            x, y, z = f
+        for d in [0.0] + [0.2 * k for k in range(1, 7)]:
+            for a in range(0, 360, 45 if d else 360):
+                xx, yy = x + math.cos(math.radians(a)) * d, y + math.sin(math.radians(a)) * d
+                zz = S.fri(xx, yy, 0.22, hojd + 0.4)
+                if zz is None:
+                    continue
+                # flaggans svep: inget får finnas där den hänger och vajar
+                tom = all(not S.stråle((xx, yy, zz + hojd - 0.12 - dz), (rikt[0], rikt[1], 0), langd + 0.3) for dz in (0.0, 0.4, 0.9))
+                if tom:
+                    x, y, z = xx, yy, zz
+                    break
+            if z is not None:
+                break
         if z is None:
             R.append(f"  Flaggstång ({x}, {y}) – inte fri plats, hoppar över")
             continue
-        hojd = 7.0 if abs(x) > 10 else 6.2
         topp = flaggstang(B, (x, y, z), hojd, k)
-        cell = [1, 1, 2, 2, 5, 5][k]
-        langd = 2.4 if abs(x) > 10 else 1.9
+        cell = zcell((x, y), k)
         stangflagga(B, topp - UP * 0.12, Vector(rikt), langd, 0.75, cell_mapp_vriden(cell), seed=k, form="svans")
-        rep(B, [topp - UP * 0.1 + Vector((0.07, 0, 0)), Vector((x + 0.08, y, z + 1.1))])
+        rep(B, [topp - UP * 0.1 + Vector((0.07, 0, 0)), Vector((x + 0.075, y, z + 1.22))], r=0.006)
         stanger.append(Vector((x, y, z)) + UP * (hojd - 0.3))
         räkna("flaggstänger runt planen")
     B.objekt(saml)
@@ -1335,7 +1610,8 @@ def kor(exportera=True):
         if len(sid) == 2:
             rader.append((tuple(sid[0] - UP * 1.6), tuple(sid[1] - UP * 1.6), 0.45))
     for k, (a, b, sank) in enumerate(rader):
-        vimpelrad(B, a, b, sank, seed=k, farger=((2, 4, 3, 5) if k % 2 else (3, 5, 2, 4)))
+        mitt = (Vector(a) + Vector(b)) / 2
+        vimpelrad(B, a, b, sank, seed=k, farger=ZONER[zon(mitt)]["vimpel"])
         räkna("vimpelrader")
     B.objekt(saml)
 
@@ -1356,8 +1632,9 @@ def kor(exportera=True):
                         break
                 if topp:
                     xf = topp[0] - 0.01 * sg
+                    zf = ZONER["ost" if sg > 0 else "vast"]["festong"]
                     festong(B, (xf, y, topp[1] - 0.02), (xf, y2, topp[1] - 0.02), 0.32, Vector((-sg, 0, 0)),
-                            2 if sg > 0 else 3, seed=int(y * 10))
+                            zf[int(y * 10) % 2], seed=int(y * 10))
                     räkna("festonger")
             y = y2 + 0.05
     festong(B, (-4.3, 11.12, 6.95), (0.0, 11.12, 6.95), 0.38, Vector((0, -1, 0)), 6, seed=1, avstand=-0.02)
@@ -1377,7 +1654,7 @@ def kor(exportera=True):
                 break
         if overkant:
             p = overkant[0] + n_ * 0.02 + UP * 0.22
-            festong(B, p - h_ * (bredd / 2), p + h_ * (bredd / 2), 0.3, n_, 7 if "Ost" in namn else (3 if "Vast" in namn else 6), seed=7)
+            festong(B, p - h_ * (bredd / 2), p + h_ * (bredd / 2), 0.3, n_, ZONER[zon(mitt)]["festong"][0], seed=7)
             räkna("festonger")
         else:
             R.append(f"  {namn}: hittade inte portens överkant – ingen festong")
@@ -1386,23 +1663,25 @@ def kor(exportera=True):
     # ---------- 6. Sköldar på skranket och över portarna ----------
     B = Bygg("SM_Skoldar")
     mål = [(x, 9.4) for x in (-10, -6, -2, 2, 6, 10)] + [(x, -9.4) for x in (-10, -6.5, 6.5, 10)] + \
-          [(sg * 13.4, y) for sg in (1, -1) for y in (-0.5, 3.5, 7.0)]
+          [(sg * 13.4, y) for sg in (1, -1) for y in (-0.5, 3.0, 6.2)]
     for k, (x, y) in enumerate(mål):
         d = Vector((x, y, 0)).normalized()
         h = S.stråle((0, 0, 0.85), Vector((x, y, 0)), 16)
         if not h or not h[3] or "Barriar" not in h[3]:
             continue
         n = Vector((h[1].x, h[1].y, 0)).normalized()
-        cell = (1, 4, 6) [k % 3] if x < -12 else ((0, 5, 7)[k % 3] if x > 12 else [0, 1, 2, 3, 4, 5, 6, 7][k % 8])
-        skold(B, h[0] + UP * 0.02, n, 0.52, cell)
+        # skranket: sidorna efter sin ätt, norr kungens, söder staden; mitt på varje sida växlar vapnen
+        cell = zcell((x * 1.2, y * 1.2), k)
+        skold(B, h[0] + UP * 0.02 + n * 0.015, n, 0.6, cell)
         räkna("sköldar på skranket")
     for namn, mitt, n in [("Kampeport_Vast", (-13.0, -5.0), Vector((1, 0, 0))), ("Kampeport_Ost", (13.0, -5.0), Vector((-1, 0, 0))),
                           ("Turneringsport_Syd", (0.0, -9.5), Vector((0, 1, 0)))]:
         h_, u_, n_ = ram(n)
-        q = Vector((mitt[0], mitt[1], 4.05)) + n_ * 1.2
+        zq, sk = (4.12, 0.5) if "Turn" in namn else (3.8, 0.66)
+        q = Vector((mitt[0], mitt[1], zq)) + n_ * 1.2
         h = S.stråle(q, -n_, 1.8)
         if h:
-            skold(B, h[0] + UP * 0.05, n_, 0.75, {"Kampeport_Vast": 4, "Kampeport_Ost": 0, "Turneringsport_Syd": 6}[namn], tjock=0.04)
+            skold(B, h[0] + n_ * 0.015, n_, sk, zcell(mitt if "Turn" not in namn else (0, -10), 0), tjock=0.04)
             räkna("sköldar över portar")
     B.objekt(saml)
 
@@ -1422,9 +1701,10 @@ def kor(exportera=True):
                 continue
             st, comp = [v], []
             sedd.add(v.index)
+            mw = varld(o)
             while st:
                 x = st.pop()
-                comp.append(o.matrix_world @ x.co)
+                comp.append(mw @ x.co)
                 for e in x.link_edges:
                     y = e.other_vert(x)
                     if y.index not in sedd:
@@ -1434,7 +1714,9 @@ def kor(exportera=True):
             mx = Vector([max(p[i] for p in comp) for i in range(3)])
             gamla.append(((mn + mx) / 2, mx - mn))
         bm.free()
+    bibl = bygg_bibliotek()
     Bf = Bygg("SM_Facklor_Smide")
+    Bfl = Bygg("SM_Lagor")
     eldpunkter = []
     for k, (c, st) in enumerate(gamla):
         bast = None
@@ -1447,14 +1729,33 @@ def kor(exportera=True):
         if bast and bast[0] < 0.8:
             h = bast[1]
             n = Vector((h[1].x, h[1].y, 0)).normalized()
-            vagg = Vector((h[0].x, h[0].y, c.z - 0.36))
-            eldpunkter.append(vaggfackla(Bf, vagg, n, seed=k))
+            if "vaggfackla" in bibl:
+                me, eld = bibl["vaggfackla"]
+                h_, u_, n_ = ram(n)
+                M3 = Matrix((h_, u_, n_)).transposed()
+                vagg = Vector((h[0].x, h[0].y, c.z - 0.12 - eld.y))
+                mtx = Matrix.Translation(vagg) @ M3.to_4x4()
+                instans_mesh(saml, me, f"Fackla_BK_{k:02d}", mtx)
+                lagpunkt = mtx @ eld
+                lagor(Bfl, lagpunkt - UP * 0.04, 0.4, seed=k, antal=3, bredd=1.5)
+                eldpunkter.append(lagpunkt + UP * 0.17)
+            else:
+                vagg = Vector((h[0].x, h[0].y, c.z - 0.36))
+                eldpunkter.append(vaggfackla(Bf, vagg, n, seed=k))
             räkna("väggfacklor (ersätter de gamla)")
         else:
             z = S.mark(c.x, c.y)
             fot = Vector((c.x, c.y, z[0].z if z else 0.0))
-            eldpunkter.append(fackelstolpe(Bf, fot, c.z - 0.42 - fot.z, seed=k))
-            räkna("fackelstolpar (ersätter de gamla)")
+            if "stativ" in bibl:
+                me, eld = bibl["stativ"]
+                mtx = Matrix.Translation(fot) @ Matrix.Rotation(k * 1.3, 4, "Z")
+                instans_mesh(saml, me, f"Fackelstativ_BK_{k:02d}", mtx)
+                lagpunkt = mtx @ eld
+                lagor(Bfl, lagpunkt, 0.45, seed=k, antal=3, bredd=1.5)
+                eldpunkter.append(lagpunkt + UP * 0.22)
+            else:
+                eldpunkter.append(fackelstolpe(Bf, fot, c.z - 0.42 - fot.z, seed=k))
+            räkna("fackelstativ (ersätter de gamla stolparna)")
     Bf.objekt(saml)
     Be = Bygg("SM_Eldkorgar")
     eldkorgar = []
@@ -1468,7 +1769,19 @@ def kor(exportera=True):
         if z is None:
             R.append(f"  Eldkorg ({x}, {y}) – inte fri plats")
             continue
-        eldkorgar.append(eldkorg(Be, (x, y, z), seed=k))
+        if "eldkorg" in bibl:
+            me, eld = bibl["eldkorg"]
+            fot = Vector((x, y, z))
+            Be.lada(fot + UP * 0.22, (0.62, 0.62, 0.44), Matrix.Rotation(k * 0.5, 3, "Z"), "MAT_Sten_Huggen")
+            Be.lada(fot + UP * 0.465, (0.7, 0.7, 0.05), Matrix.Rotation(k * 0.5, 3, "Z"), "MAT_Sten_Huggen")
+            mtx = Matrix.Translation(fot + UP * 0.49) @ Matrix.Rotation(k * 0.9, 4, "Z")
+            instans_mesh(saml, me, f"Eldkorg_BK_{k:02d}", mtx)
+            lagpunkt = mtx @ eld
+            Be.cyl(lagpunkt - UP * 0.1, lagpunkt, 0.26, 0.24, 8, "MAT_Metall_Jarn", lock=(False, True))
+            lagor(Bfl, lagpunkt, 0.6, seed=k + 50, antal=4, bredd=2.3)
+            eldkorgar.append(lagpunkt + UP * 0.3)
+        else:
+            eldkorgar.append(eldkorg(Be, (x, y, z), seed=k))
         räkna("eldkorgar")
     Be.objekt(saml)
     Bl = Bygg("SM_Lyktor")
@@ -1486,12 +1799,15 @@ def kor(exportera=True):
             räkna("lyktor")
     if lyktor:
         Bl.objekt(saml)
+    Bfl.objekt(saml)
     befintliga = [o.matrix_world.translation for o in bpy.context.view_layer.objects if o.type == "LIGHT" and o.data.type == "POINT"]
     for k, p in enumerate(eldpunkter):
         if not any((q - p).length < 0.9 for q in befintliga):
             ljus(saml, f"LJ_Fackla_{k:02d}", p, 25)
     for k, p in enumerate(eldkorgar):
-        ljus(saml, f"LJ_Eldkorg_{k:02d}", p, 70, 0.2)
+        ljus(saml, f"LJ_Eldkorg_{k:02d}", p, 60, 0.2)
+    for k, p in enumerate(lyktor):
+        ljus(saml, f"LJ_Lykta_{k:02d}", p, 6, 0.04)
 
     # ---------- 8. Järnbeslag på portar och dörrar ----------
     Bb = Bygg("SM_Beslag")
@@ -1537,21 +1853,22 @@ def kor(exportera=True):
     grupper = [
         ("Rustplats väst", (-16.6, -9.3), [("ovning", 0, 0, math.pi / 2), ("tunna", 1.1, 0.25, 0), ("sack", 1.0, -0.45, 0)]),
         ("Rustplats öst", (18.1, -8.8), [("lada", 0, 0, 0.3), ("rep", -0.7, 0.1, 0), ("tunna", 0.2, 0.85, 0)]),
-        ("Gården sydväst", (-8.1, -13.6), [("lada", 0, 0, 0.2), ("lada", 0.85, 0.05, -0.1), ("lada2", 0.4, 0.0, 0.5), ("tunna", -0.9, 0.1, 0), ("sack", -0.6, -0.65, 0)]),
+        ("Gården sydväst", (-8.1, -13.6), [("lada", 0, 0, 0.2), ("lada2", 0.0, 0.0, 0.5), ("lada", 0.85, 0.05, -0.1), ("tunna", -0.9, 0.1, 0), ("sack", -0.6, -0.65, 0)]),
         ("Gården sydost", (8.1, -13.6), [("tunna", 0, 0, 0), ("tunna", 0.8, 0.15, 1), ("rep", -0.75, -0.2, 0), ("sack", 0.2, -0.7, 0), ("sack", 0.65, -0.75, 0)]),
         ("Läktarslut nordost", (17.4, 10.9), [("tunna", 0, 0, 0), ("sack", 0.65, -0.2, 0), ("sack", 0.9, 0.35, 0)]),
         ("Stallet", (-14.2, -13.4), [("ho", 0, 0, 0), ("ho", 0.85, 0.2, 0), ("sack", 0.4, -0.7, 0)]),
     ]
     for gnamn, (gx, gy), saker in grupper:
         lagda = 0
+        senaste_lada = None
         for k, (typ, dx, dy, rot) in enumerate(saker):
             x, y = gx + dx, gy + dy
-            r = {"ovning": 0.85, "spjut": 0.95, "tunna": 0.42, "lada": 0.45, "lada2": 0.3, "sack": 0.25, "rep": 0.25, "ho": 0.5}[typ]
+            r = {"ovning": 0.85, "spjut": 0.95, "tunna": 0.42, "lada": 0.62, "lada2": 0.3, "sack": 0.25, "rep": 0.25, "ho": 0.5}[typ]
             if typ == "lada2":
-                z = S.mark(x, y, 3.0)
-                if z is None:
+                if senaste_lada is None:
                     continue
-                instans(lada_, x, y, z[0].z, rot, f"Lada_Atm_{gnamn[:4]}_{k}")
+                lx, ly, lz = senaste_lada
+                instans(lada_, lx + 0.05, ly - 0.03, lz + 0.8, rot, f"Lada_Atm_{gnamn[:4]}_{k}")
                 lagda += 1
                 continue
             f = hitta_fri(S, x, y, r, 1.2 if typ not in ("ovning", "spjut") else 2.4, 0.6)
@@ -1562,6 +1879,7 @@ def kor(exportera=True):
                 instans(tunna, x, y, z, rot, f"Tunna_Atm_{gnamn[:4]}_{k}")
             elif typ == "lada":
                 instans(lada_, x, y, z, rot, f"Lada_Atm_{gnamn[:4]}_{k}")
+                senaste_lada = (x, y, z)
             elif typ == "spjut":
                 instans(stall, x, y, z, rot, f"Spjutstall_Atm_{gnamn[:4]}_{k}")
             elif typ == "ovning":
@@ -1577,10 +1895,6 @@ def kor(exportera=True):
         R.append(f"  {gnamn}: {lagda} av {len(saker)} föremål fick plats")
     Bs.objekt(saml)
     Bo.objekt(saml)
-    # lådan ovanpå: lyft den andra lådan i gruppen sydväst
-    for o in saml.objects:
-        if o.name.startswith("Lada_Atm_Gård") and o.name.endswith("_2"):
-            o.location.z += 0.8
 
     for k, v in antal.items():
         R.append(f"  {k}: {v}")

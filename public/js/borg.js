@@ -151,7 +151,8 @@ function fireMaterial() {
       .replace("#include <common>", "#include <common>\nattribute vec3 vind;\nuniform float uTid;\nvarying float vEldH;\nvarying float vEldF;")
       .replace("#include <begin_vertex>", `#include <begin_vertex>
         vEldH = vind.r;
-        vEldF = vind.b * 6.2832;
+        // fas: egen per låga (b) plus läget, så att likadana facklor inte fladdrar i takt
+        vEldF = vind.b * 6.2832 + position.x * 2.1 + position.z * 1.7;
         float ef = vind.r;
         transformed.x += (sin(uTid * 9.0 + vEldF) * 0.02 + sin(uTid * 15.0 + vEldF * 2.0) * 0.01) * ef;
         transformed.z += cos(uTid * 8.0 + vEldF * 1.3) * 0.02 * ef;
@@ -159,8 +160,9 @@ function fireMaterial() {
     shader.fragmentShader = shader.fragmentShader
       .replace("#include <common>", "#include <common>\nuniform float uTid;\nvarying float vEldH;\nvarying float vEldF;")
       .replace("vec4 diffuseColor = vec4( diffuse, opacity );", `vec4 diffuseColor = vec4( diffuse, opacity );
-        diffuseColor.rgb = mix(vec3(1.0, 0.86, 0.5), vec3(1.0, 0.36, 0.07), smoothstep(0.05, 0.95, vEldH));
-        diffuseColor.rgb *= 1.0 + 0.1 * sin(uTid * 13.0 + vEldF);`);
+        // varmt gul vid basen, djupt orange mot spetsen – inget vitt
+        diffuseColor.rgb = mix(vec3(1.0, 0.68, 0.28), vec3(0.85, 0.22, 0.04), smoothstep(0.05, 0.9, vEldH));
+        diffuseColor.rgb *= 0.95 + 0.1 * sin(uTid * 13.0 + vEldF);`);
   };
   mat.customProgramCacheKey = () => "borg-eld";
   return mat;
@@ -482,10 +484,15 @@ export function buildBorgArena() {
     return { pts, pos, seed, base: pos.slice(), mat };
   })();
   group.add(dust.pts);
+  // Av som standard: svävande prickar på borgen har tidigare sett ut som snö (se main.js, motes)
+  const VISA_DAMM = false;
+  dust.pts.visible = VISA_DAMM;
 
-  // Publiken
+  // Publiken (dold tills figurerna har fått nytt utseende – sätt VISA_PUBLIK = true för att få tillbaka den)
+  const VISA_PUBLIK = false;
+  const VISA_KUNGAPAR = false;
   const crowd = new Crowd(crowdSpots(), 31);
-  group.add(crowd.group);
+  if (VISA_PUBLIK) group.add(crowd.group);
 
   // Kungen och drottningen på stolarna i kungalogen, härolden framme vid bröstvärnet, vakter på sidorna
   const royals = makeRoyals();
@@ -495,8 +502,10 @@ export function buildBorgArena() {
     fig.group.userData.noMerge = true;
     group.add(fig.group);
   };
-  place(royals.king, B(-0.9, 13.92 - THRONE_FWD, 3.73 + THRONE_LIFT));
-  place(royals.queen, B(0.9, 13.92 - THRONE_FWD, 3.73 + THRONE_LIFT));
+  if (VISA_KUNGAPAR) {
+    place(royals.king, B(-0.9, 13.92 - THRONE_FWD, 3.73 + THRONE_LIFT));
+    place(royals.queen, B(0.9, 13.92 - THRONE_FWD, 3.73 + THRONE_LIFT));
+  }
   // Tronpallen: en träpall med röd matta under tronerna
   {
     const dais = new THREE.Mesh(new THREE.BoxGeometry(3.3 * S, THRONE_LIFT * S, 1.5 * S), wood);
@@ -543,8 +552,10 @@ export function buildBorgArena() {
     time += dt;
     excitement = Math.max(0, excitement - dt * 0.35);
     if (focusPoint) focus.lerp(focusPoint, Math.min(1, dt * 2));
-    crowd.setFocus(focus);
-    crowd.update(dt, time, excitement);
+    if (VISA_PUBLIK) {
+      crowd.setFocus(focus);
+      crowd.update(dt, time, excitement);
+    }
     royals.update(dt);
     podium.update(dt);
     quintain.update(dt);
@@ -573,10 +584,11 @@ export function buildBorgArena() {
     cheer: (strength = 1) => (excitement = Math.min(1.5, excitement + strength)),
     royalReact: (up) => royals.react(up),
     heraldBlow: () => royals.blow(),
-    kingThrow: (onRelease) => royals.throwBow(onRelease),
+    // Utan synlig kung kommer armborstet från logen (main.js har en reserv för det)
+    kingThrow: VISA_KUNGAPAR ? (onRelease) => royals.throwBow(onRelease) : null,
     setQuality(low) {
       for (const l of torches) l.visible = !low || l === torches[0];
-      dust.pts.visible = !low && !this.overcast;
+      dust.pts.visible = VISA_DAMM && !low && !this.overcast;
       this.lowQuality = low;
     },
     // Regn: blötare, mörkare sand
@@ -588,7 +600,7 @@ export function buildBorgArena() {
     setOvercast(on) {
       this.overcast = on;
       deck.visible = on;
-      dust.pts.visible = !on && !this.lowQuality; // damm syns bara i sol
+      dust.pts.visible = VISA_DAMM && !on && !this.lowQuality; // damm syns bara i sol
       const cm = getCloudMaterial();
       if (on) {
         sky.material.uniforms.top.value.set(this.evening ? 0x3a3446 : 0x76838f);

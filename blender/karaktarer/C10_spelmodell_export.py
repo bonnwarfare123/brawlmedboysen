@@ -30,6 +30,7 @@ Exporten hamnar i samlingen COL_Spelexport_<nyckel> (dold) för granskning.
 Kan köras om – den gamla exporten tas bort först.  Testat i Blender 5.3.
 """
 
+# MARK: C10 kropp_bort2
 import bpy
 import bmesh
 import json
@@ -61,6 +62,7 @@ KONFIG = {
         "Hosor": ["Stovlar", "Kjol", "Tabard"],
         "Vaddering_Kjol": ["Tabard"],
     },
+    "kropp_bort": ["handL", "handR"],  # läderhandskarna täcker hela handen: hudens fingrar bort (sticker annars ut i näven)
     "huvud_skala": 1.06,
     # anatomi i spelet (skelettet är spelets; bara modellens form anpassas)
     "axelbredd": 1.05,                 # bredare axlar/övre bröstkorg (atletisk), armarna följer med
@@ -829,8 +831,29 @@ def kor():
     # --- dold yta
     bpy.context.view_layer.update()
     dg = bpy.context.evaluated_depsgraph_get()
-    bvh = {k: BVHTree.FromObject(k, dg) for k in kopior}
     namn_av = {k: k.name[4:] for k in kopior}
+    # kroppens händer helt bort när rustningen har heltäckande handskar (KONFIG "kropp_bort": ["handL", "handR"]):
+    # i den knutna handen sticker annars fingertopparna (hud) ut genom handskens skal
+    if K.get("kropp_bort"):
+        for k in kopior:
+            if namn_av[k] != K["kropp"]:
+                continue
+            sv = data[k]
+            dom = [max(w, key=w.get) if w else "" for w in sv]
+            bm = bmesh.new()
+            bm.from_mesh(k.data)
+            dl = bm.verts.layers.int.new("_idx")
+            for i, v in enumerate(bm.verts):
+                v[dl] = i
+            bort = [f for f in bm.faces if all(dom[v.index] in K["kropp_bort"] for v in f.verts)]
+            bmesh.ops.delete(bm, geom=bort, context="FACES_ONLY")
+            bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+            data[k] = [sv[v[dl]] for v in bm.verts]
+            bm.verts.layers.int.remove(dl)
+            bm.to_mesh(k.data)
+            bm.free()
+            R.append(f"  kroppen: {len(bort)} ytor på {', '.join(K['kropp_bort'])} borttagna (täcks av handskarna)")
+    bvh = {k: BVHTree.FromObject(k, dg) for k in kopior}
     for k in kopior:
         nm = namn_av[k]
         nyckel = next((n for n in sorted(K["dold_yta"], key=len, reverse=True)
