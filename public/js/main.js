@@ -3,7 +3,7 @@
 import * as THREE from "three";
 import { CONFIG } from "./config.js";
 import {
-  COLORS, ARENA_RX, ARENA_RZ, clampToArena, arenaShape, ROOM_CODE_RE, VERSION, COMBAT, MATCH, ARMORS, HELMETS, SHIELDS, WEAPONS, CAPES, MODE_NAMES, TEAMS,
+  COLORS, ARENA_RX, ARENA_RZ, clampToArena, arenaShape, ROOM_CODE_RE, VERSION, COMBAT, MATCH, ARMORS, ARMORS_SYNLIGA, HELMETS, SHIELDS, WEAPONS, CAPES, MODE_NAMES, TEAMS,
   attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, TIME_NAMES, MAX_BOTS, WEATHERS, AWARDS,
   MAPS, MAP_NAMES, INTRO_SECONDS, CROSSBOW, KING_BOW, weaponName, GOBLIN,
 } from "./shared.js";
@@ -125,6 +125,46 @@ function environmentFor(evening) {
   return envMaps[key];
 }
 setEnvironment(environmentFor(false));
+
+// SPELÅTERGIVNING (v0.53): blank metall (rustningar, vapen) speglar den RIKTIGA banan – en kubkarta tagen
+// från planens mitt när banan, tiden eller vädret byts – i stället för en enkel himmel och en sandfärgad
+// skiva. Med den gamla speglade plåten nästan bara sand och såg ut som mässing. Kostar en kubkarta
+// (6 × 256 px) och en PMREM per byte, inget per bildruta. ?rendering=gammal i adressen ger den gamla.
+const GAMMAL_RENDERING = /[?&]rendering=gammal/.test(location.search);
+let omgivningRT = null;
+let omgivningTex = null;
+let omgivningNr = 0;
+function fangaOmgivning() {
+  if (GAMMAL_RENDERING) return;
+  const nr = ++omgivningNr;
+  Promise.resolve(arena.ready).then(() => requestAnimationFrame(() => {
+    if (nr !== omgivningNr) return;
+    try {
+      omgivningRT ??= new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType });
+      const cc = new THREE.CubeCamera(0.1, 400, omgivningRT);
+      cc.position.set(0, 1.6, 0);
+      // bara banan och ljusen: riddare, väder och effekter syns inte i speglingen
+      const dolda = scene.children.filter((c) => c !== arena.group && !c.isLight && c.visible);
+      for (const c of dolda) c.visible = false;
+      cc.update(renderer, scene);
+      for (const c of dolda) c.visible = true;
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      const tex = pmrem.fromCubemap(omgivningRT.texture).texture;
+      pmrem.dispose();
+      setEnvironment(tex);
+      // riddare som redan finns får den nya speglingen
+      let g = null;
+      try { g = gob; } catch { /* finns inte än */ }
+      for (const p of [...allPlayers(), g].filter(Boolean)) {
+        for (const m of p.knight?.materials || []) if (m.envMap) m.envMap = tex;
+      }
+      omgivningTex?.dispose();
+      omgivningTex = tex;
+    } catch (err) {
+      console.warn("[omgivning] kunde inte fånga banan, använder den enkla speglingen", err);
+    }
+  }));
+}
 
 // Banan: tornerplatsen byggs direkt, borggården först när någon väljer den
 let arena = buildArena();
@@ -260,10 +300,13 @@ function makeWarmProps() {
   const g = new THREE.Group();
   g.position.set(0, -80, 0);
   try {
-    const gob = new Knight(GOBLIN.color, null, GOBLIN.look, { goblin: true, seed: 1 });
-    gob.group.scale.setScalar(GOBLIN.scale);
-    g.add(gob.group);
-    const bow = gob.buildItemModel(CROSSBOW);
+    const gob = GOBLIN.enabled ? new Knight(GOBLIN.color, null, GOBLIN.look, { goblin: true, seed: 1 }) : null;
+    if (gob) {
+      gob.group.scale.setScalar(GOBLIN.scale);
+      g.add(gob.group);
+    }
+    // (armory-riddaren deklareras längre ned i filen: här en egen, osynlig byggare)
+    const bow = (gob || new Knight(0x8a8a8a, null, { a: 0, h: 2, s: 0, w: 0, c: 0 }, { seed: 3 })).buildItemModel(CROSSBOW);
     if (bow) g.add(bow);
     const basic = (opts) => new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.1), new THREE.MeshBasicMaterial(opts));
     g.add(basic({ color: 0xffc94a, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
@@ -364,6 +407,7 @@ function applyAtmosphere() {
   else sun.position.set(14, 24, 10);
   renderer.toneMappingExposure = evening ? 1.12 : 1.08;
   setEnvironment(environmentFor(evening));
+  fangaOmgivning();
   arena.setTime(evening);
   effects.setLight(evening ? 0.62 : 1);
   arena.setOvercast?.(rain || fog);
@@ -393,9 +437,12 @@ function borgAtmosphere(evening, rain, fog) {
   sun.color.set(evening ? 0xffaa6a : rain || fog ? 0xe4e8ec : 0xfff0dc);
   sun.intensity = (evening ? 2.4 : 3.1) * dim;
   if (evening) sun.position.set(28, 8, -12);
-  else sun.position.set(8, 40, 10);
+  // v0.55: solen lite lägre (ca 50° i stället för 72°, samma väderstreck som förut) – längre skuggor
+  // från byggnaderna, som i Blender. Tillsammans med AO-bilden får borgen djup.
+  else sun.position.set(16, 30, 20);
   renderer.toneMappingExposure = evening ? 1.12 : rain || fog ? 1.16 : 1.1;
   setEnvironment(environmentFor(evening));
+  fangaOmgivning();
   arena.setTime(evening);
   effects.setLight(evening ? 0.62 : 1);
   arena.setOvercast?.(rain || fog);
@@ -533,6 +580,23 @@ function soundWeapon(player) {
   const w = weaponOf(player);
   return w === FISTS ? 3 : HIT_SOUND[w] ?? 0;
 }
+// v0.58: vilken sorts inspelad parerings-smäll två vapen ger (tyngsta sorten vinner):
+// klubba/hammare > träskaft (stångvapen) > yxa > klinga
+const SKAFTVAPEN = new Set(["spear", "shortspear", "halberd", "glaive", "poleaxe"]);
+function ljudKlass(w) {
+  if (w === FISTS || w == null) return "blad";
+  const s = weaponSpec(w);
+  if (s.blunt || s.key === "flail") return "trubbig";
+  if (SKAFTVAPEN.has(s.key)) return "skaft";
+  if (s.key === "axe" || s.key === "daneaxe") return "yxa";
+  return "blad";
+}
+const KLASS_ORDNING = ["blad", "yxa", "skaft", "trubbig"];
+function paringsKlass(a, b) {
+  const ka = ljudKlass(a), kb = ljudKlass(b);
+  return KLASS_ORDNING.indexOf(ka) > KLASS_ORDNING.indexOf(kb) ? ka : kb;
+}
+
 // Vapnet riddaren håller i just nu (kan vara ett upplockat vapen, eller FISTS = inget)
 function weaponOf(player) {
   return player?.cw ?? player?.look?.w ?? 0;
@@ -1865,7 +1929,7 @@ const net = new Net({
       // Tvåhandsvapen och knytnävar parerar med stål, de andra med skölden
       const w = weaponOf(defender);
       const shield = w !== FISTS && !weaponSpec(w).twoHanded && !weaponSpec(w).noShield && !defender.knight.seg.handL.userData.detached;
-      sound.clang(spot, shield ? "shield" : "blade");
+      sound.clang(spot, shield ? "shield" : "blade", paringsKlass(w, attacker ? weaponOf(attacker) : null));
       if (shield) effects.dust(spot, 2, 0.4); // flisor från skölden
       arena.cheer(0.4);
     }
@@ -2887,7 +2951,11 @@ document.querySelectorAll("[data-look]").forEach((button) => {
     const key = button.dataset.look;
     const list = LOOK_LISTS[key];
     const look = { w: 0, c: 0, ...me.look };
-    look[key] = (look[key] + Number(button.dataset.dir) + list.length) % list.length;
+    if (key === "a") {
+      // v0.56: bara de uppgraderade rustningarna
+      const i = Math.max(0, ARMORS_SYNLIGA.indexOf(look.a));
+      look.a = ARMORS_SYNLIGA[(i + Number(button.dataset.dir) + ARMORS_SYNLIGA.length) % ARMORS_SYNLIGA.length];
+    } else look[key] = (look[key] + Number(button.dataset.dir) + list.length) % list.length;
     net.send({ t: "look", look });
   });
 });

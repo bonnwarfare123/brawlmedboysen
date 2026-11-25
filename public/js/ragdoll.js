@@ -126,8 +126,14 @@ function jointLimits(side) {
 const BODY_LIMITS = [
   ...jointLimits("L"), ...jointLimits("R"),
   { a: ["head", 1], b: ["torso", 0], rel: [0.86, 1.03] },  // nacken
-  { a: ["torso", 1], b: ["pelvis", 1], rel: [0.82, 1.06] }, // ryggen
-  { a: ["torso", 1], b: ["pelvis", 2], rel: [0.82, 1.06] },
+  // Ryggen: en rustad bål (bröstplåt, fauld, bälte) viker sig inte dubbel mot höften – högst ~35–40°
+  // framåt, bakåt eller åt sidan (förut kunde den vika ~90° och bältet blev en lös ring runt höften).
+  { a: ["torso", 1], b: ["pelvis", 1], rel: [0.9, 1.05] },
+  { a: ["torso", 1], b: ["pelvis", 2], rel: [0.9, 1.05] },
+  { a: ["torso", 2], b: ["pelvis", 1], rel: [0.88, 1.06] }, // vänster sida
+  { a: ["torso", 3], b: ["pelvis", 2], rel: [0.88, 1.06] }, // höger sida
+  { a: ["torso", 4], b: ["pelvis", 1], rel: [0.86, 1.08] }, // bröstet mot höften (framåt)
+  { a: ["torso", 4], b: ["pelvis", 2], rel: [0.86, 1.08] },
 ];
 
 const TENSION_TIME = 0.45; // så länge musklerna fortfarande håller emot (sekunder)

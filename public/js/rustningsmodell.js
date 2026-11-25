@@ -18,6 +18,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 export const MODELLER = {
   guard: "models/rustningar/guard.glb",
   plate: "models/rustningar/plate.glb",
+  hedge: "models/rustningar/hedge.glb", // v0.57: Vandrande riddare (C14/C15)
 };
 
 // Kroppsdelarna i samma ordning som i exportskriptet (_REGION i modellen är ett index här)
@@ -84,6 +85,8 @@ export function byggnadFor(spec) {
 }
 
 const LAG_SMUTS = new THREE.Color(0x3a332c);
+// ?rendering=gammal i adressen: spelåtergivningen före v0.53 (för jämförelse)
+const GAMMAL_RENDERING = typeof location !== "undefined" && /[?&]rendering=gammal/.test(location.search);
 
 // Byter riddarens kropp mot modellen. Anropas i slutet av Knight-konstruktorn (vilopose).
 export function anvandRustningsmodell(knight, spec, colorHex) {
@@ -117,7 +120,8 @@ export function anvandRustningsmodell(knight, spec, colorHex) {
       if (m.userData?.lag) k.color.set(colorHex).lerp(LAG_SMUTS, 0.17);
       if (k.metalness >= 0.3 && knight.m.steel?.envMap) {
         k.envMap = knight.m.steel.envMap; // blank metall speglar omgivningen, som riddarnas
-        k.envMapIntensity = 1.25;
+        // v0.53: speglingen är nu den riktiga banan (main.js fangaOmgivning) – full styrka, som i Blender
+        k.envMapIntensity = GAMMAL_RENDERING ? 1.25 : 1.0;
       }
       k.userData.baseColor = k.color.clone();
       knight.materials.push(k);
@@ -164,6 +168,10 @@ export function anvandRustningsmodell(knight, spec, colorHex) {
     const geo = o.geometry.clone();
     geo.applyMatrix4(o.matrixWorld);
     geo.translate(-huvud.x, -huvud.y, -huvud.z);
+    // Hjälmgruppen är förstorad (reshape skalar huvudets grupper ×1,1 för de kodbyggda huvudena), men
+    // modellens ansikte är inte det – utan det här blev hjälmen 10 % för stor och satt ~3 cm för högt.
+    knight.helmet.updateMatrix();
+    geo.applyMatrix4(knight.helmet.matrix.clone().invert());
     const mesh = new THREE.Mesh(geo, material(o.material));
     mesh.castShadow = mesh.receiveShadow = true;
     knight.helmet.add(mesh);

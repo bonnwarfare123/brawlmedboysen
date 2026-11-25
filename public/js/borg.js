@@ -15,6 +15,10 @@ import {
 import { plankTexture, rakedSandTexture } from "./textures.js";
 
 const MODEL_URL = "models/borg.glb";
+// v0.55: skuggning i vrår (AO), bakad i Blender (11_ao_bake.py) till EN bild för hela borgen.
+// Den läses med borgens andra UV-kanal (TEXCOORD_1 → uv1). Ytor utan den kanalen läser bildens vita ram.
+const AO_URL = "models/borg_ao.webp";
+const AO_STYRKA = 1.0;
 // Blenders borg är byggd i meter men skranket är lite för trångt för ovalen: skala upp hela borgen
 const S = 1.12;
 // Blender (x, y = norrut, z = upp) -> spelet. Borgen vrids ett halvt varv så att kungalogen hamnar på +z.
@@ -269,6 +273,9 @@ async function loadGlb(url) {
     g.setAttribute("position", accessor(p.attributes.POSITION));
     if (p.attributes.NORMAL !== undefined) g.setAttribute("normal", accessor(p.attributes.NORMAL));
     if (p.attributes.TEXCOORD_0 !== undefined) g.setAttribute("uv", accessor(p.attributes.TEXCOORD_0));
+    // AO-kanalen (nollor = bildens vita hörn = ingen skuggning; alla delar måste ha den för att slås ihop)
+    g.setAttribute("uv1", p.attributes.TEXCOORD_1 !== undefined ? accessor(p.attributes.TEXCOORD_1)
+      : new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
     if (p.indices !== undefined) g.setIndex(accessor(p.indices));
     // Alla delar måste ha samma attribut för att kunna slås ihop
     if (!g.attributes.uv) g.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
@@ -410,7 +417,21 @@ export function buildBorgArena() {
       varmMat.emissiveIntensity = kvall ? 0.45 : 0.6;
     }
   };
-  const ready = loadGlb(MODEL_URL).then(({ nodes, materials }) => {
+  const aoBild = new Promise((ok) => new THREE.TextureLoader().load(AO_URL, ok, undefined, () => ok(null)));
+  const ready = Promise.all([loadGlb(MODEL_URL), aoBild]).then(([{ nodes, materials }, ao]) => {
+    if (ao) {
+      ao.flipY = false; // samma håll som glb-bilderna
+      ao.channel = 1;
+      ao.colorSpace = THREE.NoColorSpace;
+      ao.anisotropy = 4;
+      ao.needsUpdate = true;
+      for (const m of materials) {
+        if (m.name === "MAT_Eld" || !m.isMeshStandardMaterial) continue;
+        m.aoMap = ao;
+        m.aoMapIntensity = AO_STYRKA;
+        m.needsUpdate = true;
+      }
+    }
     const holder = new THREE.Group();
     arenaMat = materials.find((m) => m.name === "MAT_Mark_Arena") || null;
     varmMat = materials.find((m) => m.name === "MAT_Fonster_Varm") || null;

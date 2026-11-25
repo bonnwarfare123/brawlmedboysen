@@ -9,6 +9,8 @@
 //   aj-1.mp3, aj-2.mp3 …     stön när man blir träffad (så många du vill, i nummerordning)
 //   skrik-1.mp3, skrik-2.mp3 … skrik när man dör
 //   musik.mp3                 bakgrundsmusik (spelas i loop)
+//   parera-blad-1.mp3 …       inspelade vapen-mot-vapen-smällar vid parering (v0.58), en grupp per
+//   parera-yxa-, parera-skaft-, parera-trubbig-  vapensort: klinga, yxa, träskaft, klubba/hammare
 //
 // Webbläsare tillåter bara ljud efter ett klick, därför anropas unlock() vid knapptryck.
 
@@ -72,7 +74,8 @@ export class Sound {
     this.sfxVolume = sfxVolume;     // 0–1, från reglaget
     this.listener = { x: 0, y: 0, z: 0 };
     this.strings = new Map(); // färdigräknade lutsträngar per ton
-    this.files = { aj: [], skrik: [], musik: null };
+    this.files = { aj: [], skrik: [], musik: null, parera: { blad: [], yxa: [], skaft: [], trubbig: [] } };
+    this.senastParera = null;
     this.music = { playing: false, battle: false, step: 0, nextTime: 0, timer: null, fileSource: null };
   }
 
@@ -139,6 +142,13 @@ export class Sound {
         const buffer = await load(`${kind}-${i}.mp3`);
         if (!buffer) break;
         this.files[kind].push(buffer);
+      }
+    }
+    for (const klass of Object.keys(this.files.parera)) {
+      for (let i = 1; i <= 20; i++) {
+        const buffer = await load(`parera-${klass}-${i}.mp3`);
+        if (!buffer) break;
+        this.files.parera[klass].push(buffer);
       }
     }
     this.files.musik = await load("musik.mp3");
@@ -1002,10 +1012,27 @@ export class Sound {
   }
 
   // Parering. kind = "blade": stål mot stål (tvåhandsvapen och knytnävar), "shield": mot en träsköld med metallkant.
-  clang(pos, kind = "blade") {
+  // klass: "blad", "yxa", "skaft" eller "trubbig" – vilken sorts vapen som möts (bara för kind "blade")
+  clang(pos, kind = "blade", klass = "blad") {
     if (!this.ready()) return;
     const v = this.volumeAt(pos);
     const t = this.ctx.currentTime;
+    // v0.58: inspelade smällar (public/audio/parera-*.mp3) om de finns – aldrig samma två gånger i rad,
+    // lite olika tonhöjd varje gång, och en gnutta efterklang
+    const lista = kind === "blade" ? (this.files.parera[klass]?.length ? this.files.parera[klass] : this.files.parera.blad) : null;
+    if (lista && lista.length) {
+      let b = this.pick(lista);
+      if (b === this.senastParera && lista.length > 1) b = lista[(lista.indexOf(b) + 1) % lista.length];
+      this.senastParera = b;
+      const src = this.playBuffer(b, 0.95 * v, this.sfx, 0.94 + Math.random() * 0.12);
+      if (this.reverb) {
+        const send = this.ctx.createGain();
+        send.gain.value = 0.18 * v;
+        src.connect(send);
+        send.connect(this.reverb);
+      }
+      return;
+    }
     // Själva smällen: ett mycket kort, skarpt knäpp över alla frekvenser
     this.noiseBurst({ volume: 0.75 * v, attack: 0.001, decay: 0.012, type: "highpass", freq: 3000, q: 0.5 });
     this.noiseBurst({ volume: 0.45 * v, attack: 0.001, decay: 0.035, type: "bandpass", freq: 2200, q: 1.5 });

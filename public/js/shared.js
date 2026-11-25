@@ -47,6 +47,9 @@ export const COMBAT = {
 };
 
 // UTSEENDE – bara kosmetiskt, alla är lika starka
+// v0.56: bara de uppgraderade (Blender-modellerade) rustningarna går att välja och används av botarna:
+// Plåtrustning (0), Vandrande riddare (6, v0.57) och Stadsvakt (11). Övriga finns kvar i koden men visas inte.
+export const ARMORS_SYNLIGA = [0, 6, 11];
 export const ARMORS = ["Plåtrustning", "Ringbrynja", "Läderrustning", "Praktrustning", "Bonde", "Gycklare", "Vandrande riddare", "Gambeson", "Surcoat-riddare", "Plåtrock", "Brigandin", "Stadsvakt", "Legoknekt", "Halvplåt", "Korsriddare"];
 export const HELMETS = ["Tunnhjälm", "Visirhjälm", "Järnhatt", "Hornhjälm", "Plymhjälm", "Kastrull", "Halmhatt", "Ringbrynjehuva", "Sjal", "Pälsmössa", "Barhuvad", "Näshjälm", "Öppet bascinet", "Cervellière", "Fotfolkshjälm", "Öppen tunnhjälm", "Krigarduk", "Läderhätta", "Bucklig hjälm"];
 export const SHIELDS = ["Rund", "Droppformad", "Riddarsköld", "Bucklare", "Pavis"];
@@ -105,7 +108,7 @@ export const KING_BOW = { damage: 45, speed: 55, range: 26, minDelay: 20, maxDel
 // GOBLINEN: i Alla mot alla springer en goblin in och jagar den som leder med mer än två rundvinster.
 // lead = hur många rundor ledaren måste leda med, hits = hur många slag som dödar den, damage = skada per knivhugg,
 // every = tid mellan huggen, windup = hur länge den tar sats, speed = fart (m/s), delay = sekunder in i rundan
-export const GOBLIN = { lead: 3, hits: 2, damage: 6, every: 1.0, windup: 0.28, reach: 1.25, speed: 4.6, delay: 3, scale: 0.5, look: { a: 15, h: 19, s: 0, w: 10, c: 1 }, color: 0x9a2a1e };
+export const GOBLIN = { enabled: false, lead: 3, hits: 2, damage: 6, every: 1.0, windup: 0.28, reach: 1.25, speed: 4.6, delay: 3, scale: 0.5, look: { a: 15, h: 19, s: 0, w: 10, c: 1 }, color: 0x9a2a1e };
 
 export function weaponName(w) {
   return w === CROSSBOW ? "Kungens armborst" : WEAPONS[w];

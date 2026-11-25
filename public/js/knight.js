@@ -30,6 +30,7 @@ import { Ragdoll } from "./ragdoll.js";
 import { FootPlanner, solveLeg, solveArm, gaitStride, gaitStance, gaitRun, gaitSprint } from "./ik.js";
 import { Cloth, Chain } from "./cloth.js";
 import { rustningsmodell, byggnadFor, anvandRustningsmodell, rustningHuggAv } from "./rustningsmodell.js";
+import { vapenmodell, anvandVapenmodell, skoldmodell, anvandSkoldmodell } from "./vapenmodell.js";
 import { KIT_STYLES, CLOSED_HELMETS, HOOD_HELMETS, kitMaterials, buildKitTorso, buildKitLimbs, buildKitHelmet } from "./kit.js";
 import { rollFeatures, sculptHead as sculptFace, faceTexture, buildHair, beardShell, BEARD_REGION, BEARD_THICK, noseGeometry as wedgeNose } from "./face.js";
 import {
@@ -460,10 +461,31 @@ MOVES.crossbow = { q: [XBOW_RECOIL], h: XBOW_RECOIL, t: XBOW_RECOIL };
 const LEG_PARTS = ["thigh", "shin", "foot"];
 const SPRING_PART = {};
 // Återanvända hjälpvärden för vänsterhandens grepp (solveLeftGrip)
-const GRIP_SLIDES = [0, 0.08, 0.16, -0.1, -0.2];
+const GRIP_SLIDES = [0, 0.04, 0.08, 0.16, 0.3, -0.05, -0.1, -0.2, -0.35];
+// Var vänster hand får sitta på tvåhandsvapnens grepp/skaft (y längs vapnet): inte förbi knappen eller
+// skaftets ände och inte uppe på höger hand (som håller vid y 0). IK:n låter handen glida inom området.
+const GRIP_RANGE = {
+  twohander: [-0.16, -0.105], zweihander: [-0.3, -0.115], daneaxe: [-0.54, -0.1], halberd: [-0.68, -0.1],
+  spear: [-0.5, -0.1], maul: [-0.38, -0.1], glaive: [-0.68, -0.1], poleaxe: [-0.54, -0.1], goedendag: [-0.38, -0.1],
+};
 const GRIP_TURNS = [0, 0.35, -0.35, 0.7, -0.7, 1.0];
-const _grip = { has: false, score: 0, q: new THREE.Quaternion(), elbow: 0, pen: 0, miss: 0 };
+// vänsterhandens rullning runt skaftet (prövas om armen inte når med högerhandens vridning)
+const GRIP_ROLLS = [0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.4, -2.4, 3.14];
+const _grip = { has: false, score: 0, q: new THREE.Quaternion(), elbow: 0, pen: 0, miss: 0, hand: new THREE.Quaternion(), gripW: new THREE.Vector3() };
+const _gRollQ = new THREE.Quaternion();
+const _pHandQ = new THREE.Quaternion();
+const _pFore = new THREE.Quaternion();
+const _pSh = new THREE.Vector3();
+const _pWr = new THREE.Vector3();
+const _gHandAx = new THREE.Vector3();
+const _gGripW = new THREE.Vector3();
 const _gTarget = new THREE.Vector3();
+// Vänsterhandens grepp (v0.54): näven – inte handleden – läggs på skaftet, vriden som högerhanden
+const _gHandQ = new THREE.Quaternion();
+const _gForeW = new THREE.Quaternion();
+const _gFist = new THREE.Vector3();
+const _gFistL = new THREE.Vector3();
+const _gStd = new THREE.Vector3(0, -0.069, 0.01); // där riddarens egen knutna hand håller vapnet
 const _gAxis = new THREE.Vector3();
 const _gMidP = new THREE.Vector3();
 const _gEuler = new THREE.Euler();
@@ -661,6 +683,8 @@ export class Knight {
     const glbSpec = opts.goblin ? null : rustningsmodell(style);
     this.glb = glbSpec ? byggnadFor(glbSpec) : null;
     this.style = style;
+    // v0.55: hur tung rustningen känns i rörelserna (0–1). Bara utseende: farten och slagens tider är desamma.
+    this.tyngd = { plate: 1, hedge: 0.75, guard: 0.6 }[style] ?? 0; // bara de uppgraderade rustningarna (övriga senare)
     this.wIndex = look.w; // vapnet riddaren håller just nu (FISTS = inget)
     const wspec = weaponSpec(look.w);
     this.weaponKey = wspec.key;
@@ -1855,7 +1879,16 @@ export class Knight {
   // Alla vapen hålls i handen med greppet i origo och pekar längs +Y. Eggen (yxans blad) vänds mot +Z,
   // som är hållet vapnet rör sig åt i ett nedåtgående hugg.
 
+  // Vapnet: kodbyggt (buildWeaponKod), och finns en modell från Blender (vapenmodell.js) byts
+  // formerna mot den – grepp, slagspår, blod och eggar är kvar från den kodbyggda versionen.
   buildWeapon(kind, m, gilded) {
+    const g = this.buildWeaponKod(kind, m, gilded);
+    const vm = vapenmodell(kind);
+    if (vm) anvandVapenmodell(this, g, vm, gilded);
+    return g;
+  }
+
+  buildWeaponKod(kind, m, gilded) {
     const g = new THREE.Group();
     const add = (...a) => g.add(this.shape(...a));
     const fit = gilded ? m.gold : m.steelDark;
@@ -2173,7 +2206,7 @@ export class Knight {
       add(new THREE.SphereGeometry(0.008, 6, 5), hilt, [0, -0.272, 0]);
       g.userData.trail = { tip: [0, 1.38, 0], base: [0, 0.45, 0] };
       g.userData.blood = { w: 0.055, len: 0.8, y: 0.85 };
-      g.userData.grip2 = [0, -0.17, 0];
+      g.userData.grip2 = [0, -0.135, 0]; // strax ovanför knappen, en näve under höger hand
     } else if (kind === 4) {
       // Stridsyxa (dansk yxa): ovalt askskaft med svag böj, två lindade grepp och ett tunt, brett blad
       // med lång böjd egg, smitt i flera lager (ränder), en holk med "öron" och en tygremsa i spelarens färg
@@ -2292,7 +2325,7 @@ export class Knight {
       add(new THREE.SphereGeometry(0.01, 6, 5), hilt, [0, -0.43, 0]);
       g.userData.trail = { tip: [0, 1.95, 0], base: [0, 0.7, 0] };
       g.userData.blood = { w: 0.07, len: 1.0, y: 1.2 };
-      g.userData.grip2 = [0, -0.25, 0];
+      g.userData.grip2 = [0, -0.21, 0];
     } else {
       // Svärd (riddarsvärd): klinga som smalnar mot spetsen med linsformat tvärsnitt och en nedsänkt
       // blodränna, nedåtböjd parerstång, läderlindat fäste med tråd och en hjulformad knapp
@@ -2541,13 +2574,22 @@ export class Knight {
 
   // ---------- Sköldar ----------
 
+  // Skölden: kodbyggd, och finns en modell (vapenmodell.js) byts allt utom den målade framsidan
   buildShield(kind, m, colorHex) {
+    const shield = this.buildShieldKod(kind, m, colorHex);
+    const sm = skoldmodell(kind);
+    if (sm) anvandSkoldmodell(this, shield, sm, this.style === "gilded");
+    return shield;
+  }
+
+  buildShieldKod(kind, m, colorHex) {
     const shield = new THREE.Group();
     const add = (...a) => shield.add(this.shape(...a));
     const trim = this.style === "gilded" ? m.gold : m.steelDark;
     // Målad framsida där plankorna syns (springor och ådring)
     const face = this.mat(0xffffff, 0.78, 0, { map: heraldryTexture(colorHex, 0, true), bumpMap: plankBumpTexture(), bumpScale: 2 });
     face.userData.baseColor = face.color.clone();
+    face.userData.skoldMalning = true; // vapenmodell.js behåller den målade framsidan
     if (kind === 0 || kind === 3) {
       // Rund sköld (målad, med nitar och buckla), eller liten bucklare i metall
       const r = kind === 3 ? 0.16 : 0.3;
@@ -4241,8 +4283,11 @@ export class Knight {
     const accF = this.prevFwd === undefined ? 0 : (motion.forward - this.prevFwd) / Math.max(dt, 1e-3);
     this.prevFwd = motion.forward;
     const kAcc = 1 - Math.exp(-dt * 6);
-    this.accLean = (this.accLean || 0) + (Math.max(-0.26, Math.min(0.26, accF * 0.03)) - (this.accLean || 0)) * kAcc;
-    this.turnLean = (this.turnLean || 0) + (Math.max(-0.2, Math.min(0.2, -Math.max(-4, Math.min(4, yawRate)) * speed * 0.012)) - (this.turnLean || 0)) * kAcc;
+    // v0.55 tung rustning: kroppen tar längre tid på sig att luta in och räta upp sig (massa), lutar lite mer
+    const tyngd = this.tyngd || 0;
+    const kAccT = 1 - Math.exp(-dt * (6 - 1.8 * tyngd));
+    this.accLean = (this.accLean || 0) + (Math.max(-0.3, Math.min(0.3, accF * 0.03 * (1 + 0.25 * tyngd))) - (this.accLean || 0)) * kAccT;
+    this.turnLean = (this.turnLean || 0) + (Math.max(-0.23, Math.min(0.23, -Math.max(-4, Math.min(4, yawRate)) * speed * 0.012 * (1 + 0.2 * tyngd))) - (this.turnLean || 0)) * kAccT;
     // Varje riddare har sin egen takt när han står still (andas, flyttar vikten, rättar till greppet)
     this.idleSeed ??= Math.random() * 100;
     const idleT = this.time + this.idleSeed;
@@ -4251,8 +4296,9 @@ export class Knight {
     // ----- Höfterna -----
     // Lägre när man står i stridsställning (böjda knän) och när man springer, gungar i takt med stegen
     // Kroppen är lägst mitt i varje steg (när foten bär vikten) och högst mitt emellan (svävfasen när man springer)
-    const bob = -Math.cos(2 * (this.phase - Math.PI * stance)) * lerp(0.016, 0.04, run) * amp;
-    let pelvisY = lerp(0.95, 0.925 - 0.04 * run, moving) + bob;
+    // v0.55 tung rustning: djupare knän i stridsställningen och tyngre nedslag i varje steg
+    const bob = -Math.cos(2 * (this.phase - Math.PI * stance)) * lerp(0.016, 0.04, run) * amp * (1 + 0.3 * tyngd);
+    let pelvisY = lerp(0.95 - 0.014 * tyngd, 0.925 - 0.04 * run - 0.008 * tyngd, moving) + bob;
     let pelvisRotY = lerp(-0.22, Math.sin(this.phase) * (0.16 + 0.08 * sprint) * amp * dirFwd, moving); // stilla: vänster höft fram
     // Höften sjunker på den sida där benet svingar, och vikten flyttas över foten man står på
     let pelvisRotZ = Math.sin(this.phase) * 0.07 * amp + this.turnLean * 0.5;
@@ -4265,7 +4311,7 @@ export class Knight {
     if (this.landT >= 0) {
       this.landT += dt;
       if (this.landT > 0.35) this.landT = -1;
-      else pelvisY -= Math.sin((this.landT / 0.35) * Math.PI) * 0.12; // knäböj vid landning
+      else pelvisY -= Math.sin((this.landT / 0.35) * Math.PI) * 0.12 * (1 + 0.3 * tyngd); // knäböj vid landning
     }
     // Hukad: höfterna sänks (benlösaren böjer knäna) och kroppen lutar fram
     this.crouchAmt += ((this.crouching ? 1 : 0) - this.crouchAmt) * Math.min(1, dt * 10);
@@ -4302,11 +4348,13 @@ export class Knight {
         armK = kFast;
         // Kroppen följer med: lutar, kliver fram, sjunker ner i tunga slag och lutar i svepen
         const [bLean, bStep, bDip, bBend] = sampleKeys(move.body, this.attack.t);
-        lunge = bLean / 0.25;
+        // v0.55: i tung rustning går mer av slaget genom kroppen (vridning, tyngd ner i benen) –
+        // armens kurva och tiderna är oförändrade, så träffarna sker som förut
+        lunge = (bLean / 0.25) * (1 + 0.15 * tyngd);
         pelvisZ = bStep;
-        pelvisY -= bDip;
-        attackBend = bBend;
-        pelvisRotY += pose[3] * 0.5;
+        pelvisY -= bDip * (1 + 0.25 * tyngd);
+        attackBend = bBend * (1 + 0.1 * tyngd);
+        pelvisRotY += pose[3] * (0.5 + 0.15 * tyngd);
       }
     }
     // Tvåhandsvapen: parera genom att lyfta vapnet på tvären
@@ -4375,7 +4423,7 @@ export class Knight {
     }
 
     // ----- Bålen: lutar in i rörelsen, motvrids mot höfterna, andas -----
-    let lean = 0.06 * moving + (0.07 * run + 0.15 * sprint) * dirFwd + Math.sin(idleT * 1.9) * 0.016 + (1 - moving) * 0.05 + lunge * 0.25 + this.crouchAmt * 0.28 + this.accLean;
+    let lean = 0.06 * moving + (0.07 * run + 0.15 * sprint) * dirFwd + Math.sin(idleT * (1.9 - 0.4 * tyngd)) * (0.016 + 0.006 * tyngd) + (1 - moving) * (0.05 + 0.02 * tyngd) + lunge * 0.25 + this.crouchAmt * 0.28 + this.accLean;
     let torsoZ = attackBend + this.turnLean - pelvisRotZ * 0.6; // överkroppen rätar upp sig mot höftens lutning
     // Stilla: rullar på axlarna och rättar till greppet då och då
     let fidget = 0;
@@ -4669,6 +4717,13 @@ export class Knight {
       // Först höger arm ut ur bröstet (den håller vapnet), sedan räknas vänster arm efter greppet
       this.keepArmsOut(["R"]);
       this.solveLeftGrip(g);
+      // Når vänster hand inte skaftet (t.ex. mitt i ett brett tvåhandsslag) dras vapenhanden in mot
+      // vänster axel så mycket som behövs, med vapnets vinkel kvar – båda händerna håller alltid vapnet.
+      for (let f = 0; f < 2 && _grip.has && _grip.miss > 0.008; f++) {
+        this.pullRightToward(this.seg.upperArmL, _grip.gripW, Math.min(0.45, _grip.miss + 0.015));
+        this.keepArmsOut(["R"]);
+        this.solveLeftGrip(g);
+      }
     } else {
       this.ikLeft = false;
     }
@@ -4739,43 +4794,102 @@ export class Knight {
     this.group.updateMatrixWorld(true);
     _inv.copy(torso.matrixWorld).invert();
     // Handen kan glida längs skaftet: närmare höger hand (når lättare) eller längre bort (armen går fri från kroppen)
-    for (let si = 0; si < GRIP_SLIDES.length; si++) {
-      const slide = GRIP_SLIDES[si];
-      if (!this.weapon.userData.gripForward && grip[1] + slide > -0.13) continue; // armborstet: vänster hand framför höger
-      const target = _gTarget.set(grip[0], grip[1] + slide, grip[2]).applyMatrix4(this.weapon.matrixWorld).applyMatrix4(_inv).sub(upper.position);
-      // Modellrustningar (rustningsmodell.js): den knutna handen sitter en bit nedanför handleden,
-      // så handleden siktar lite före greppet längs armen
-      if (this.greppLen) target.multiplyScalar(Math.max(0.2, 1 - this.greppLen / Math.max(0.01, target.length())));
-      const { upperX, upperZ, elbow } = solveArm([target.x, target.y, target.z], this.armLen[0], this.armLen[1]);
-      const base = _q.setFromEuler(_gEuler.set(upperX, 0, upperZ));
-      const axis = _gAxis.copy(target).normalize();
-      const miss = Math.max(0, target.length() - reach); // når inte ända fram
-      for (let ti = 0; ti < GRIP_TURNS.length; ti++) {
-        const turn = GRIP_TURNS[ti];
-        const q = _q2.setFromAxisAngle(axis, turn).multiply(base);
-        // armbågens och underarmens läge (i bålens mått)
-        const elbowP = _mid.set(0, -this.armLen[0], 0).applyQuaternion(q).add(upper.position);
-        const foreQ = _gFore.copy(q).multiply(_gBend.setFromAxisAngle(_xAxis, elbow));
-        const midP = _gMidP.set(0, -this.armLen[1] * 0.5, 0).applyQuaternion(foreQ).add(elbowP);
-        const pen = inside(elbowP) + inside(midP);
-        // poäng: inte i kroppen, armbågen utåt (vänster = +x) och lite nedåt, så lite vridning som möjligt
-        const score = pen * 10 + miss * 25 - (elbowP.x - upper.position.x) * 2 + Math.abs(turn) * 0.15 + Math.abs(slide) * 0.6;
-        if (!B.has || score < B.score) {
-          B.has = true;
-          B.score = score;
-          B.q.copy(q);
-          B.elbow = elbow;
-          B.pen = pen;
-          B.miss = miss;
+    this.seg.handR.getWorldQuaternion(_gHandQ);
+    _gHandAx.set(0, 1, 0).transformDirection(this.weapon.matrixWorld); // skaftets riktning
+    _gFist.copy(_gStd);
+    if (this.greppDelta) _gFist.add(this.greppDelta.L); // modellens knutna vänsterhand (rustningsmodell.js)
+    const fistLocal = _gFistL.copy(_gFist);
+    rollLoop: for (let ri = 0; ri < GRIP_ROLLS.length; ri++) {
+      const roll = GRIP_ROLLS[ri];
+      // Vänster hand vrids som höger hand (näven runt samma skaft), rullad runt skaftet om det behövs
+      const handQ = _gRollQ.setFromAxisAngle(_gHandAx, roll).multiply(_gHandQ);
+      for (let si = 0; si < GRIP_SLIDES.length; si++) {
+        const slide = GRIP_SLIDES[si];
+        if (!this.weapon.userData.gripForward && grip[1] + slide > -0.13 && !GRIP_RANGE[this.weaponKey]) continue; // armborstet: vänster hand framför höger
+        const omr = GRIP_RANGE[this.weaponKey];
+        if (omr && (grip[1] + slide < omr[0] || grip[1] + slide > omr[1])) continue; // inte förbi greppets ände
+        // handleden ska sitta där näven hamnar på greppunkten: greppunkt − (handens vridning × nävens mitt)
+        _gGripW.set(grip[0], grip[1] + slide, grip[2]).applyMatrix4(this.weapon.matrixWorld);
+        const target = _gTarget.copy(_gGripW).sub(_gFist.copy(fistLocal).applyQuaternion(handQ));
+        target.applyMatrix4(_inv).sub(upper.position);
+        const { upperX, upperZ, elbow } = solveArm([target.x, target.y, target.z], this.armLen[0], this.armLen[1]);
+        const base = _q.setFromEuler(_gEuler.set(upperX, 0, upperZ));
+        const axis = _gAxis.copy(target).normalize();
+        const miss = Math.max(0, target.length() - reach); // når inte ända fram
+        for (let ti = 0; ti < GRIP_TURNS.length; ti++) {
+          const turn = GRIP_TURNS[ti];
+          const q = _q2.setFromAxisAngle(axis, turn).multiply(base);
+          // armbågens och underarmens läge (i bålens mått)
+          const elbowP = _mid.set(0, -this.armLen[0], 0).applyQuaternion(q).add(upper.position);
+          const foreQ = _gFore.copy(q).multiply(_gBend.setFromAxisAngle(_xAxis, elbow));
+          const midP = _gMidP.set(0, -this.armLen[1] * 0.5, 0).applyQuaternion(foreQ).add(elbowP);
+          const pen = inside(elbowP) + inside(midP);
+          // poäng: inte i kroppen, når fram, armbågen utåt (vänster = +x) och lite nedåt, så lite vridning som möjligt
+          const score = pen * 10 + miss * 25 - (elbowP.x - upper.position.x) * 2 + Math.abs(turn) * 0.15 + Math.abs(slide) * 0.6 + Math.abs(roll) * 0.12;
+          if (!B.has || score < B.score) {
+            B.has = true;
+            B.score = score;
+            B.q.copy(q);
+            B.elbow = elbow;
+            B.pen = pen;
+            B.miss = miss;
+            B.hand.copy(handQ);
+            B.gripW.copy(_gGripW);
+          }
         }
+        if (B.has && B.pen === 0 && B.miss === 0) break rollLoop;
       }
-      if (B.has && B.pen === 0 && B.miss === 0) break;
     }
     if (!B.has) return;
+    this._gripDbg = { miss: +B.miss.toFixed(3), pen: +B.pen.toFixed(3) };
     upper.quaternion.copy(B.q);
     fore.rotation.set(B.elbow, 0, 0);
+    // Handen vrids som högerhanden, så att näven sluter sig runt skaftet (inte bredvid det)
+    const hand = this.seg.handL;
+    if (!hand.userData.detached) {
+      upper.updateMatrixWorld(true);
+      fore.getWorldQuaternion(_gForeW);
+      hand.quaternion.copy(_gForeW.invert().multiply(B.hand));
+    }
   }
 
+
+  // Flytta höger hand (handleden) en sträcka mot en punkt (vänster axel), med handens vridning i världen
+  // kvar, och lös höger arm igen (armbågen utåt och inte in i kroppen).
+  pullRightToward(shoulderSeg, fromW, dist) {
+    const upper = this.seg.upperArmR;
+    const fore = this.seg.forearmR;
+    const hand = this.seg.handR;
+    if (upper.userData.detached || fore.userData.detached || hand.userData.detached) return;
+    this.group.updateMatrixWorld(true);
+    const handQ = _pHandQ;
+    hand.getWorldQuaternion(handQ);
+    const sh = _pSh.setFromMatrixPosition(shoulderSeg.matrixWorld);
+    const dir = sh.sub(fromW).normalize();
+    const wrist = _pWr.setFromMatrixPosition(hand.matrixWorld).addScaledVector(dir, dist);
+    _inv.copy(this.seg.torso.matrixWorld).invert();
+    const t = wrist.applyMatrix4(_inv).sub(upper.position);
+    const { upperX, upperZ, elbow } = solveArm([t.x, t.y, t.z], this.armLen[0], this.armLen[1]);
+    const base = _q.setFromEuler(_gEuler.set(upperX, 0, upperZ));
+    const axis = _gAxis.copy(t).normalize();
+    let bestQ = null;
+    let best = Infinity;
+    for (const turn of GRIP_TURNS) {
+      const q = _q2.setFromAxisAngle(axis, -turn).multiply(base);
+      const elbowP = _mid.set(0, -this.armLen[0], 0).applyQuaternion(q).add(upper.position);
+      const score = (elbowP.x - upper.position.x) * 2 + Math.abs(turn) * 0.15; // höger armbåge utåt = −x
+      if (score < best) {
+        best = score;
+        bestQ = (bestQ || new THREE.Quaternion()).copy(q);
+      }
+    }
+    upper.quaternion.copy(bestQ);
+    fore.rotation.set(elbow, 0, 0);
+    upper.updateMatrixWorld(true);
+    fore.getWorldQuaternion(_pFore);
+    hand.quaternion.copy(_pFore.invert().multiply(handQ));
+    this.group.updateMatrixWorld(true);
+  }
 
   keepArmsOut(sides = ["L", "R"]) {
     const body = this.chestBody;

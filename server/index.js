@@ -20,7 +20,7 @@ import {
   MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, MATCH, ARENA_RX, ARENA_RZ, insideArena, clampToArena, arenaExtent,
   JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS, AIM_JOINT, ARMORS, HELMETS, SHIELDS,
   WEAPONS, CAPES, MODES, attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, MAX_BOTS, BOT_NAMES, WEATHERS, AWARDS,
-  MAPS, INTRO_SECONDS, CROSSBOW, KING_BOW, GOBLIN,
+  MAPS, INTRO_SECONDS, CROSSBOW, KING_BOW, GOBLIN, ARMORS_SYNLIGA,
 } from "../public/js/shared.js";
 
 export default {
@@ -80,7 +80,7 @@ function cleanName(value) {
 function cleanLook(look) {
   const pick = (v, list) => (Number.isInteger(v) && v >= 0 && v < list.length ? v : 0);
   return {
-    a: pick(look?.a, ARMORS), h: pick(look?.h, HELMETS), s: pick(look?.s, SHIELDS),
+    a: ARMORS_SYNLIGA.includes(look?.a) ? look.a : ARMORS_SYNLIGA[0], h: pick(look?.h, HELMETS), s: pick(look?.s, SHIELDS),
     w: pick(look?.w, WEAPONS), c: pick(look?.c, CAPES),
   };
 }
@@ -734,7 +734,7 @@ export class GameRoom extends DurableObject {
       const info = {
         id: "bot" + randomId().slice(0, 3), name, bot: true,
         color: Math.max(0, COLORS.findIndex((_, i) => !taken.has(i))),
-        look: { a: r(ARMORS.length), h: r(HELMETS.length), s: r(SHIELDS.length), w: r(WEAPONS.length), c: r(CAPES.length) },
+        look: { a: ARMORS_SYNLIGA[r(ARMORS_SYNLIGA.length)], h: r(HELMETS.length), s: r(SHIELDS.length), w: r(WEAPONS.length), c: r(CAPES.length) },
         team: null,
       };
       const bot = newPlayerState(info);
@@ -899,7 +899,7 @@ export class GameRoom extends DurableObject {
       if (this.bots().length) this.botTick(roundToken);
       // Leder någon för mycket i Alla mot alla kommer en goblin och jagar den
       this.goblin = null;
-      this.later(GOBLIN.delay, roundToken, () => this.maybeGoblin(roundToken));
+      if (GOBLIN.enabled) this.later(GOBLIN.delay, roundToken, () => this.maybeGoblin(roundToken));
       // Kungen kastar in sitt armborst en gång, någon gång mitt i rundan
       const delay = this.kingBowDelay ?? KING_BOW.minDelay + Math.random() * (KING_BOW.maxDelay - KING_BOW.minDelay);
       this.later(delay, roundToken, () => this.kingThrowsCrossbow(roundToken));
