@@ -1230,8 +1230,18 @@ export function gritPass(root, sat = 0.7, light = 0.95) {
     for (const m of Array.isArray(obj.material) ? obj.material : [obj.material]) {
       if (!m || done.has(m) || !(m.isMeshStandardMaterial || m.isMeshLambertMaterial || m.isMeshPhongMaterial)) continue;
       done.add(m);
-      if (m.userData.noGrit || m.blending === THREE.AdditiveBlending) continue;
+      if (m.userData.noGrit || m.userData.gritInVC || m.blending === THREE.AdditiveBlending) continue;
       gritColor(m.color, sat, light);
+    }
+    const vc = obj.userData.gritVC && obj.geometry.attributes.color;
+    if (vc && !done.has(vc) && !obj.material.userData.noGrit) {
+      done.add(vc);
+      for (let i = 0; i < vc.count; i++) {
+        tmp.setRGB(vc.getX(i), vc.getY(i), vc.getZ(i));
+        gritColor(tmp, sat, light);
+        vc.setXYZ(i, tmp.r, tmp.g, tmp.b);
+      }
+      vc.needsUpdate = true;
     }
     if (obj.isInstancedMesh && obj.instanceColor && !done.has(obj.instanceColor)) {
       done.add(obj.instanceColor);
@@ -1245,18 +1255,53 @@ export function gritPass(root, sat = 0.7, light = 0.95) {
   });
 }
 
+// Material som bara skiljer sig i färg slås ihop: färgen bakas in i hörnfärgerna (vertex colors), så
+// hundratals små material blir ett fåtal ritanrop. Material med egna shaders (vind i gräset o.d.) rörs inte.
+const MERGE_TYPES = new Set(["MeshStandardMaterial", "MeshLambertMaterial", "MeshPhongMaterial", "MeshBasicMaterial"]);
+const _ckey = new THREE.Color();
+function materialKey(m) {
+  // (material som ändras medan man spelar, t.ex. blöt sand i regn, behåller sitt eget material)
+  if (!MERGE_TYPES.has(m.type) || m.userData.dryColor || m.onBeforeCompile !== THREE.Material.prototype.onBeforeCompile || (m.defines && Object.keys(m.defines).some((d) => d !== "STANDARD"))) return "u" + m.uuid;
+  const id = (t) => (t ? t.uuid : "-");
+  return [m.type, m.name, id(m.bumpMap), m.bumpScale, id(m.lightMap), id(m.displacementMap), id(m.specularMap), id(m.map), id(m.normalMap), id(m.roughnessMap), id(m.metalnessMap), id(m.aoMap), id(m.emissiveMap), id(m.alphaMap), id(m.envMap),
+    m.roughness?.toFixed(3), m.metalness?.toFixed(3), m.emissive?.getHexString(), m.emissiveIntensity, m.side, m.transparent, m.opacity, m.alphaTest,
+    m.depthWrite, m.depthTest, m.flatShading, m.fog, m.toneMapped, m.blending, m.envMapIntensity, m.shininess, m.polygonOffset, m.polygonOffsetFactor,
+    m.normalScale?.x, m.aoMapIntensity, m.wireframe, m.userData.noGrit ? 1 : 0].join("|");
+}
 function mergeStatic(root) {
   root.updateMatrixWorld(true);
   const buckets = new Map();
   const toRemove = [];
 
   root.traverse((obj) => {
-    if (!obj.isMesh || obj.isInstancedMesh) return;
+    if (!obj.isMesh || obj.isInstancedMesh || Array.isArray(obj.material)) return;
     for (let o = obj; o; o = o.parent) if (o.userData.noMerge) return; // himmel och moln hålls separata
-    const key = obj.material.uuid + (obj.castShadow ? ":s" : ":n");
+    const mat = obj.material;
     const geometry = obj.geometry.index ? obj.geometry.toNonIndexed() : obj.geometry.clone();
     geometry.applyMatrix4(obj.matrixWorld);
-    if (!buckets.has(key)) buckets.set(key, { material: obj.material, castShadow: obj.castShadow, geometries: [] });
+    const mk = materialKey(mat);
+    const byColor = mk[0] !== "u";
+    if (byColor) {
+      // materialets färg (× ev. befintliga hörnfärger) bakas in i hörnfärgerna
+      const n = geometry.attributes.position.count;
+      const old = mat.vertexColors && geometry.attributes.color;
+      const col = new Float32Array(n * 3);
+      _ckey.copy(mat.color);
+      for (let i = 0; i < n; i++) {
+        col[i * 3] = _ckey.r * (old ? old.getX(i) : 1);
+        col[i * 3 + 1] = _ckey.g * (old ? old.getY(i) : 1);
+        col[i * 3 + 2] = _ckey.b * (old ? old.getZ(i) : 1);
+      }
+      geometry.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    }
+    for (const name of Object.keys(geometry.attributes)) if (!["position", "normal", "uv", "uv1", "color"].includes(name)) geometry.deleteAttribute(name);
+    if (!geometry.attributes.normal) geometry.computeVertexNormals();
+    if (mat.map || mat.normalMap || mat.roughnessMap || mat.aoMap || mat.alphaMap || mat.bumpMap) {
+      if (!geometry.attributes.uv) geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(geometry.attributes.position.count * 2), 2));
+    } else if (geometry.attributes.uv && byColor) geometry.deleteAttribute("uv");
+    const sig = Object.keys(geometry.attributes).sort().join(",");
+    const key = mk + (obj.castShadow ? ":s" : ":n") + ":" + sig;
+    if (!buckets.has(key)) buckets.set(key, { material: mat, byColor, castShadow: obj.castShadow, geometries: [] });
     buckets.get(key).geometries.push(geometry);
     toRemove.push(obj);
   });
@@ -1264,12 +1309,22 @@ function mergeStatic(root) {
   toRemove.forEach((obj) => obj.removeFromParent());
 
   const merged = new THREE.Group();
+
   for (const bucket of buckets.values()) {
     const geometry = mergeGeometries(bucket.geometries);
     bucket.geometries.forEach((g) => g.dispose());
-    const m = new THREE.Mesh(geometry, bucket.material);
+    if (!geometry) continue;
+    let material = bucket.material;
+    if (bucket.byColor) {
+      material = bucket.material.clone();
+      material.color.set(0xffffff);
+      material.vertexColors = true;
+      material.userData.gritInVC = true;
+    }
+    const m = new THREE.Mesh(geometry, material);
     m.castShadow = bucket.castShadow;
     m.receiveShadow = true;
+    if (bucket.byColor) m.userData.gritVC = true; // smutsas ner i hörnfärgerna (se gritPass)
     merged.add(m);
   }
   return merged;

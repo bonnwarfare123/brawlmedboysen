@@ -1069,3 +1069,279 @@ button.primary {
 #event-banner { background: var(--ui-bg); border: 1px solid rgba(226, 176, 74, 0.55); border-radius: 12px; backdrop-filter: blur(6px); font-family: var(--ui-font); }
 #event-banner b { text-shadow: none; color: var(--ui-accent); }
 #event-banner span { font-family: var(--ui-font); font-style: normal; color: var(--ui-dim); }
+
+/* =====================================================================
+   v0.60: KUNGABORGEN-STIL – smitt järn och mörk ek, tunna mässingslinjer,
+   heraldiskt rött bara på huvudknappen. Samma familj som stridens HUD.
+   ===================================================================== */
+:root {
+  --k-panel: linear-gradient(180deg, rgba(27, 25, 22, 0.9), rgba(13, 12, 11, 0.92));
+  --k-solid: #141210;
+  --k-raise: rgba(255, 240, 210, 0.045);
+  --k-raise-2: rgba(255, 240, 210, 0.085);
+  --k-line: rgba(214, 178, 106, 0.3);
+  --k-line-soft: rgba(255, 238, 205, 0.1);
+  --k-text: #ece4d3;
+  --k-dim: rgba(236, 228, 211, 0.62);
+  --k-faint: rgba(236, 228, 211, 0.4);
+  --k-gold: #c9a659;
+  --k-gold-hi: #e9d193;
+  --k-red: #8f1f1c;
+  --k-red-hi: #b6332b;
+  --k-ok: #78b06a;
+  /* fyra små mässingshörn (ritas med gradienter, inga bilder) */
+  --k-corners:
+    linear-gradient(var(--k-gold), var(--k-gold)) top 6px left 6px / 14px 1px,
+    linear-gradient(var(--k-gold), var(--k-gold)) top 6px left 6px / 1px 14px,
+    linear-gradient(var(--k-gold), var(--k-gold)) top 6px right 6px / 14px 1px,
+    linear-gradient(var(--k-gold), var(--k-gold)) top 6px right 6px / 1px 14px,
+    linear-gradient(var(--k-gold), var(--k-gold)) bottom 6px left 6px / 14px 1px,
+    linear-gradient(var(--k-gold), var(--k-gold)) bottom 6px left 6px / 1px 14px,
+    linear-gradient(var(--k-gold), var(--k-gold)) bottom 6px right 6px / 14px 1px,
+    linear-gradient(var(--k-gold), var(--k-gold)) bottom 6px right 6px / 1px 14px;
+}
+html, body { background: #0d0c0b; color: var(--k-text); }
+::selection { background: rgba(201, 166, 89, 0.35); }
+
+/* ---------- Gemensamt för alla kort och paneler ---------- */
+.card, .lobby-panel, .board-card, #volume-panel {
+  background: var(--k-corners), var(--k-panel);
+  background-repeat: no-repeat;
+  border: 1px solid var(--k-line);
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 4px rgba(0, 0, 0, 0.25), inset 0 0 0 5px rgba(214, 178, 106, 0.08), 0 24px 60px rgba(0, 0, 0, 0.55);
+  color: var(--k-text);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.card h1, .card h2, .lobby-panel h2, #scoreboard h2, .side-card h2 {
+  font-family: var(--font-head); color: var(--k-gold-hi); text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6); letter-spacing: 0.12em; font-weight: 700;
+}
+.card h2 { font-size: 22px; text-transform: uppercase; }
+.rules, .lp-section .rules, .card .rules { color: var(--k-dim); }
+.subtitle { color: var(--k-dim); }
+.error { color: #ff8a78; }
+.version { color: var(--k-faint); letter-spacing: 0.08em; }
+label { font-family: var(--font-head); font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--k-dim); font-weight: 600; }
+
+input[type="text"] {
+  background: rgba(0, 0, 0, 0.38); color: var(--k-text); border: 1px solid var(--k-line-soft); border-radius: 3px;
+  font-family: var(--font-body); font-size: 17px; padding: 11px 12px; transition: border-color 0.2s, box-shadow 0.2s;
+}
+input[type="text"]::placeholder { color: var(--k-faint); font-style: italic; }
+input[type="text"]:focus { outline: none; border-color: var(--k-gold); box-shadow: 0 0 0 3px rgba(201, 166, 89, 0.16); }
+
+/* Knappar: järn som standard, guldkant när den är vald, rött bara för det viktigaste */
+.card button.small, .lobby-panel .lp-body button.small, .board-card button.small, #volume-panel button.small, .lobby-panel button.small.iron {
+  margin: 0; padding: 8px 10px; font-family: var(--font-body); font-size: 14px; font-weight: 500;
+  color: var(--k-text); background: linear-gradient(180deg, rgba(255, 240, 210, 0.08), rgba(255, 240, 210, 0.03));
+  border: 1px solid var(--k-line-soft); border-radius: 3px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: border-color 0.15s, background 0.15s, color 0.15s, transform 0.1s;
+}
+.card button.small:hover:not(:disabled), .lobby-panel .lp-body button.small:hover:not(:disabled), .board-card button.small:hover, #volume-panel button.small:hover, .lobby-panel button.small.iron:hover {
+  border-color: var(--k-line); background: var(--k-raise-2); color: #fff; transform: none;
+}
+.lobby-panel .mode-btn.active, .lobby-panel .team-btn.active, .lobby-panel .time-btn.active, .lobby-panel .weather-btn.active, .lobby-panel .map-btn.active, .weapon-list button.active {
+  background: linear-gradient(180deg, rgba(201, 166, 89, 0.24), rgba(201, 166, 89, 0.1)) !important; color: var(--k-gold-hi) !important;
+  border-color: var(--k-gold) !important; box-shadow: inset 0 0 12px rgba(201, 166, 89, 0.12) !important;
+}
+.lobby-panel .mode-btn:disabled:not(.active), .lobby-panel .time-btn:disabled:not(.active), .lobby-panel .weather-btn:disabled:not(.active) { opacity: 0.45; }
+
+button.primary {
+  margin-top: 22px; padding: 13px 14px; border-radius: 3px;
+  font-family: var(--font-head); font-size: 16px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase;
+  color: #fbeed6; text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
+  background: linear-gradient(180deg, var(--k-red-hi), var(--k-red) 55%, #651412);
+  border: 1px solid var(--k-gold);
+  box-shadow: inset 0 0 0 3px rgba(0, 0, 0, 0.18), inset 0 0 0 4px rgba(233, 209, 147, 0.25), 0 8px 22px rgba(0, 0, 0, 0.45);
+  transition: filter 0.2s, transform 0.12s, box-shadow 0.2s;
+}
+button.primary:hover:not(:disabled) { filter: brightness(1.12); transform: translateY(-1px); }
+button.primary:disabled { opacity: 0.45; cursor: default; filter: saturate(0.5); }
+
+/* Färgval: runda emaljknappar, guldring runt den valda */
+.swatch { border: 1px solid rgba(0, 0, 0, 0.6); box-shadow: inset 0 -3px 6px rgba(0, 0, 0, 0.35), inset 0 2px 3px rgba(255, 255, 255, 0.25), 0 0 0 1px rgba(255, 240, 210, 0.12); transition: transform 0.15s; }
+.swatch:hover:not(:disabled) { transform: scale(1.08); }
+.swatch.selected, .lobby-panel .swatch.selected { outline: none; box-shadow: 0 0 0 2px var(--k-solid), 0 0 0 3.5px var(--k-gold-hi), 0 0 14px rgba(233, 209, 147, 0.45); transform: scale(1.06); }
+
+/* ---------- Startskärmen: titel och formulär i en kolumn till vänster, borgen syns till höger ---------- */
+#lobby.start-screen {
+  justify-content: flex-start; align-items: stretch; padding: 0;
+  background: linear-gradient(90deg, rgba(8, 7, 6, 0.9) 0%, rgba(8, 7, 6, 0.72) 30%, rgba(8, 7, 6, 0.15) 58%, transparent 75%),
+    radial-gradient(ellipse at 70% 120%, rgba(0, 0, 0, 0.5), transparent 60%);
+}
+.start-col {
+  width: min(540px, 100%); padding: 0 clamp(24px, 6vw, 84px); display: flex; flex-direction: column; justify-content: center; gap: 26px;
+  animation: k-rise 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes k-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.brand { text-align: left; }
+.brand-kicker { font-family: var(--font-head); font-size: 12px; letter-spacing: 0.32em; text-transform: uppercase; color: var(--k-gold); }
+.brand h1 {
+  margin: 8px 0 0; text-align: left; font-family: var(--font-head); font-weight: 700; font-size: clamp(34px, 4.4vw, 52px); line-height: 1.02;
+  letter-spacing: 0.06em; text-transform: uppercase; color: #f4ead6;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6), 0 0 40px rgba(0, 0, 0, 0.6);
+}
+.brand-rule { display: block; width: 120px; height: 9px; margin: 14px 0 12px;
+  background: linear-gradient(var(--k-gold), var(--k-gold)) left center / 100% 1px no-repeat,
+    radial-gradient(circle, var(--k-gold-hi) 0 2.5px, transparent 3px) left center / 9px 9px no-repeat; }
+.brand .subtitle { margin: 0; text-align: left; font-size: 17px; font-style: italic; color: var(--k-dim); }
+.start-card { max-width: none; padding: 22px 24px 18px; }
+.start-card label:first-child { margin-top: 0; }
+.start-card .name-note { text-align: left; color: var(--k-faint); margin-top: 6px; }
+.start-card .colors { gap: 9px; }
+#restore { color: var(--k-dim); font-size: 14px; margin-top: 14px; }
+#restore summary { color: var(--k-dim); }
+#restore summary:hover { color: var(--k-gold-hi); }
+#restore .restore-row input { font-size: 14px; padding: 8px 10px; }
+.start-card .version { text-align: left; margin-top: 12px; }
+@media (max-width: 700px) {
+  #lobby.start-screen { background: rgba(8, 7, 6, 0.72); justify-content: center; }
+  .start-col { padding: 20px; }
+}
+
+/* ---------- Lobbypanelen ---------- */
+.lobby-panel { border-radius: 4px; animation: lp-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.lp-head { padding: 20px 22px 12px; }
+.lp-kicker { display: block; font-family: var(--font-head); font-size: 11px; letter-spacing: 0.32em; text-transform: uppercase; color: var(--k-gold); }
+.lp-head h2 { margin-top: 2px; font-size: 26px; letter-spacing: 0.22em; text-transform: uppercase; color: #f4ead6; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6); }
+.room-chip { background: rgba(0, 0, 0, 0.35); border: 1px solid var(--k-line-soft); border-radius: 3px; color: var(--k-dim); font-size: 13px; }
+.room-chip strong { color: var(--k-gold-hi); }
+.lobby-panel button.small.iron { padding: 4px 10px; font-size: 13px; }
+
+.lp-tabs { gap: 0; padding: 0 16px; border-bottom: 1px solid var(--k-line-soft); }
+.lp-tab {
+  background: none; border: none; border-radius: 0; padding: 10px 4px 11px; position: relative;
+  font-family: var(--font-head); font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--k-dim); text-shadow: none;
+}
+.lp-tab:hover { color: var(--k-text); }
+.lp-tab.active { background: none; color: var(--k-gold-hi); box-shadow: none; }
+.lp-tab.active::after { content: ""; position: absolute; left: 18%; right: 18%; bottom: -1px; height: 2px; background: var(--k-gold); box-shadow: 0 0 10px rgba(201, 166, 89, 0.6); }
+.tab-count { background: rgba(201, 166, 89, 0.2); color: var(--k-gold-hi); border: 1px solid rgba(201, 166, 89, 0.45); letter-spacing: 0; font-family: var(--font-body); font-weight: 700; }
+
+.lp-body { background: none; border: none; border-radius: 0; box-shadow: none; margin: 0; padding: 4px 20px 16px; scrollbar-color: rgba(201, 166, 89, 0.35) transparent; }
+.lp-section h3 { font-size: 11px; letter-spacing: 0.24em; color: var(--k-gold); margin: 18px 0 9px; }
+.lp-section h3::after { background: linear-gradient(90deg, rgba(214, 178, 106, 0.35), transparent); }
+
+.lobby-panel .look-row { grid-template-columns: 74px 30px 1fr 30px; gap: 6px; }
+.lobby-panel .look-row > span { color: var(--k-dim); font-size: 14px; }
+.lobby-panel .look-row b {
+  background: rgba(0, 0, 0, 0.32); border: 1px solid var(--k-line-soft); border-radius: 3px; color: var(--k-text);
+  font-family: var(--font-body); font-weight: 700; font-size: 15px; padding: 6px 4px;
+}
+.lobby-panel .look-row button.small {
+  width: 30px; height: 30px; border-radius: 3px !important; font-size: 17px !important; color: var(--k-gold-hi) !important;
+  background: linear-gradient(180deg, rgba(255, 240, 210, 0.1), rgba(255, 240, 210, 0.03)) !important;
+  border: 1px solid var(--k-line) !important; box-shadow: none !important;
+}
+.lobby-panel .look-row button.small:hover:not(:disabled) { background: rgba(201, 166, 89, 0.2) !important; }
+@keyframes lp-pop { 0% { transform: scale(0.96); background: rgba(201, 166, 89, 0.3); } 100% { transform: none; } }
+
+/* Vapenkortet */
+.lobby-panel #weapon-card, #weapon-card { background: rgba(0, 0, 0, 0.25); border: 1px solid var(--k-line-soft); border-radius: 3px; padding: 9px 10px; }
+.weapon-type { background: rgba(255, 240, 210, 0.1); color: var(--k-text); border-radius: 2px; font-family: var(--font-head); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; padding: 2px 7px; }
+.weapon-type.two { background: rgba(182, 51, 43, 0.35); color: #ffd9cf; }
+.weapon-type.special { background: rgba(110, 150, 80, 0.3); color: #dcefcf; }
+.weapon-head button.small { padding: 3px 9px !important; font-size: 12px !important; }
+.weapon-stats { color: var(--k-dim); }
+.weapon-stats .bar { background: rgba(255, 240, 210, 0.08); height: 5px; border-radius: 1px; }
+.weapon-stats .bar i { background: linear-gradient(90deg, #8a6c30, var(--k-gold-hi)); border-radius: 1px; }
+.weapon-stats .num { color: var(--k-dim); }
+.weapon-tags span { border-color: var(--k-line-soft); color: var(--k-text); background: rgba(255, 240, 210, 0.05); border-radius: 2px; }
+.weapon-list { border-top-color: var(--k-line-soft); }
+.weapon-list h4 { color: var(--k-gold); font-family: var(--font-head); letter-spacing: 0.16em; font-size: 10.5px; }
+.weapon-list button small { color: var(--k-dim); }
+.lobby-panel .tip { color: var(--k-faint); }
+
+/* Spelarlistan */
+.lobby-panel .lobby-list li {
+  background: rgba(0, 0, 0, 0.25); border: 1px solid var(--k-line-soft); border-radius: 3px; color: var(--k-text); padding: 9px 11px;
+}
+.lobby-list li .pl-name { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.lobby-list .crown {
+  width: 14px; height: 11px; flex: none; background: var(--k-gold-hi);
+  clip-path: polygon(0 100%, 0 25%, 25% 60%, 50% 0, 75% 60%, 100% 25%, 100% 100%);
+}
+.lobby-list .chip { font-style: normal; font-family: var(--font-head); font-size: 9.5px; letter-spacing: 0.14em; padding: 1px 5px; border-radius: 2px; background: rgba(255, 240, 210, 0.1); color: var(--k-dim); }
+.ready-mark { font-family: var(--font-head); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--k-faint); opacity: 1; }
+.ready-mark.on { color: var(--k-ok); }
+.lobby-panel .lobby-list li.team-head { background: none; border: none; color: var(--k-gold); letter-spacing: 0.16em; text-transform: uppercase; font-size: 11px; }
+.team-btn.red { border-left: 3px solid #b8322f !important; }
+.team-btn.blue { border-left: 3px solid #2f5fb3 !important; }
+
+/* Sidfoten */
+.lp-foot { border-top: 1px solid var(--k-line-soft); box-shadow: none; padding: 14px 20px 18px; background: rgba(0, 0, 0, 0.2); }
+.ready-summary .pip { border: 1px solid rgba(0, 0, 0, 0.6); box-shadow: inset 0 -2px 3px rgba(0, 0, 0, 0.35); width: 20px; height: 20px; font-size: 11px; }
+.ready-summary .pip.ready { box-shadow: 0 0 0 2px var(--k-solid), 0 0 0 3px var(--k-gold-hi); }
+.lobby-panel .ready-btn {
+  font-family: var(--font-head); font-size: 14px; letter-spacing: 0.16em; text-transform: uppercase; border-radius: 3px; padding: 11px;
+  color: var(--k-text); background: linear-gradient(180deg, rgba(255, 240, 210, 0.1), rgba(255, 240, 210, 0.04)); border: 1px solid var(--k-line); box-shadow: none;
+}
+.lobby-panel .ready-btn:hover { border-color: var(--k-gold); }
+.lobby-panel .ready-btn.active { background: linear-gradient(180deg, rgba(120, 176, 106, 0.32), rgba(120, 176, 106, 0.14)); border-color: var(--k-ok); color: #e3f4dc; }
+.lobby-panel #start-button { margin-top: 9px; font-size: 16px; padding: 13px; }
+@keyframes lp-glow { 50% { box-shadow: inset 0 0 0 3px rgba(0, 0, 0, 0.18), inset 0 0 0 4px rgba(233, 209, 147, 0.45), 0 0 26px rgba(233, 209, 147, 0.45); } }
+.lobby-panel #lobby-wait { color: var(--k-dim); font-style: italic; }
+
+/* ---------- Topplistan ---------- */
+.board-card { padding: 0; }
+.board-head {
+  background: none; border-bottom: 1px solid var(--k-line-soft); color: var(--k-gold-hi); padding: 13px 16px 12px;
+  font-family: var(--font-head); font-size: 13px; letter-spacing: 0.24em; text-transform: uppercase; text-shadow: none;
+}
+.board-head .chev { color: var(--k-gold); }
+#board-table th { color: var(--k-gold); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; }
+#board-table td { background: rgba(0, 0, 0, 0.22); color: var(--k-text); }
+#board-table tr.top1 td { background: rgba(201, 166, 89, 0.16); }
+#board-table tr.top2 td { background: rgba(200, 205, 212, 0.1); }
+#board-table tr.top3 td { background: rgba(176, 120, 70, 0.12); }
+#board-table tr.top1 td:first-child { background: rgba(201, 166, 89, 0.4); color: #fff4d6; }
+#board-table tr.top2 td:first-child { background: rgba(200, 205, 212, 0.3); }
+#board-table tr.top3 td:first-child { background: rgba(176, 120, 70, 0.35); }
+#board-table tr.me td { background: rgba(143, 31, 28, 0.25); box-shadow: inset 0 1px 0 rgba(182, 51, 43, 0.5), inset 0 -1px 0 rgba(182, 51, 43, 0.5); }
+#board-table tr.me td:first-child { box-shadow: inset 3px 0 0 var(--k-red-hi), inset 0 1px 0 rgba(182, 51, 43, 0.5), inset 0 -1px 0 rgba(182, 51, 43, 0.5); }
+#board-table tr.gap td { color: var(--k-faint); background: none; }
+#my-card { background: rgba(0, 0, 0, 0.22); border: 1px solid var(--k-line-soft); border-radius: 3px; }
+#my-card h3 { color: var(--k-text); letter-spacing: 0.06em; }
+.my-stats div { background: rgba(255, 240, 210, 0.04); border: 1px solid var(--k-line-soft); border-radius: 2px; }
+.my-stats b { color: var(--k-gold-hi); }
+.my-stats span { color: var(--k-dim); }
+#code-box code { background: rgba(0, 0, 0, 0.4); color: var(--k-gold-hi); border: 1px solid var(--k-line-soft); }
+
+/* ---------- Ljud-panelen ---------- */
+#volume-panel { padding: 14px 16px 12px; }
+#volume-panel label { font-size: 10.5px; color: var(--k-dim); margin: 0; }
+#volume-panel input { accent-color: var(--k-gold); }
+
+/* ---------- Resultat, turnering, tangenter ---------- */
+#score-table th { color: var(--k-gold); font-family: var(--font-head); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
+#score-table th, #score-table td { border-bottom-color: var(--k-line-soft); }
+#score-table tr.winner td { background: rgba(201, 166, 89, 0.18); color: var(--k-gold-hi); }
+#awards li { border-bottom-color: var(--k-line-soft); color: var(--k-text); }
+#awards b { color: var(--k-gold-hi); }
+#scoreboard.corner .card { background: var(--k-corners), var(--k-panel); background-repeat: no-repeat; }
+.bracket-round h3 { color: var(--k-gold); font-family: var(--font-head); letter-spacing: 0.14em; text-transform: uppercase; font-size: 11px; }
+.bracket-match { background: rgba(0, 0, 0, 0.3); border: 1px solid var(--k-line-soft); border-radius: 3px; }
+.bracket-match.current { border-color: var(--k-gold); box-shadow: 0 0 14px rgba(201, 166, 89, 0.45); }
+.bracket-slot + .bracket-slot { border-top-color: var(--k-line-soft); }
+.bracket-champion { color: var(--k-gold-hi); font-family: var(--font-head); letter-spacing: 0.08em; }
+#keys-table td { border-top-color: var(--k-line-soft); color: var(--k-text); }
+#keys-table button.waiting { background: var(--k-gold); color: #1a140a; }
+.keys-buttons .primary { margin: 0; }
+.overlay:not(.start-screen):not(.see-through) { background: rgba(6, 5, 4, 0.55); }
+.overlay.see-through { background: rgba(6, 5, 4, 0.4); }
+.status { background: linear-gradient(180deg, var(--k-red-hi), var(--k-red)); border: 1px solid var(--k-gold); border-radius: 3px; font-family: var(--font-body); }
+#event-banner { background: var(--k-panel); border: 1px solid var(--k-gold); border-radius: 3px; }
+
+/* Startskärmen medan borgen laddas: mörk slöja som tonar bort */
+#lobby.start-screen::before {
+  content: ""; position: absolute; inset: 0; background: #0d0c0b; opacity: 0; transition: opacity 1.4s ease; pointer-events: none;
+}
+body.map-loading #lobby.start-screen::before { opacity: 1; }
+.start-col { position: relative; z-index: 1; }
+.brand .subtitle::after { content: ""; }
+body.map-loading .brand .subtitle::after {
+  content: "Borgen laddas …"; display: block; margin-top: 10px; font-style: normal; font-family: var(--font-head);
+  font-size: 11px; letter-spacing: 0.28em; text-transform: uppercase; color: var(--k-gold); animation: k-pulse 1.6s ease-in-out infinite;
+}
+@keyframes k-pulse { 50% { opacity: 0.35; } }

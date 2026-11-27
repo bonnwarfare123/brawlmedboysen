@@ -5,7 +5,7 @@ import { CONFIG } from "./config.js";
 import {
   COLORS, ARENA_RX, ARENA_RZ, clampToArena, arenaShape, ROOM_CODE_RE, VERSION, COMBAT, MATCH, ARMORS, ARMORS_SYNLIGA, HELMETS, SHIELDS, WEAPONS, CAPES, MODE_NAMES, TEAMS,
   attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, TIME_NAMES, MAX_BOTS, WEATHERS, AWARDS,
-  MAPS, MAP_NAMES, INTRO_SECONDS, CROSSBOW, KING_BOW, weaponName, GOBLIN,
+  MAPS, MAPS_SYNLIGA, MAP_NAMES, INTRO_SECONDS, CROSSBOW, KING_BOW, weaponName, GOBLIN,
 } from "./shared.js";
 import { buildArena, makeSky, gritPass } from "./arena.js";
 import { buildCastleArena } from "./castle.js";
@@ -72,8 +72,11 @@ function seconds() {
 // ---------------------------------------------------------------------------
 
 const canvas = $("game");
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+// Ingen kantutjämning på själva skärmbilden: på Hög grafik ritas scenen i efterbehandlingens bild som redan
+// är kantutjämnad (4×), så skärmens egen kantutjämning var dubbelt arbete för grafikkortet.
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
 let resScale = 1; // sänks tillfälligt om datorn inte hinner med (se adaptResolution)
+let shadowsReduced = false; // skyddsnätet har sänkt skuggornas upplösning
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, CONFIG.maxPixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = CONFIG.shadows;
@@ -166,14 +169,18 @@ function fangaOmgivning() {
   }));
 }
 
-// Banan: tornerplatsen byggs direkt, borggården först när någon väljer den
-let arena = buildArena();
-gritPass(arena.group);
+// Banan: Kungaborgen byggs direkt. De äldre banorna (Tornerplatsen, Borggården) finns kvar i koden men är
+// dolda (MAPS_SYNLIGA i shared.js) – de byggs bara om de görs synliga igen.
+let mapKind = MAPS_SYNLIGA[0];
+let arena = mapKind === "borg" ? buildBorgArena() : mapKind === "castle" ? buildCastleArena() : buildArena();
+gritPass(arena.group, mapKind === "castle" ? 0.74 : mapKind === "borg" ? 1 : 0.7, mapKind === "castle" ? 0.97 : mapKind === "borg" ? 1 : 0.95);
 scene.add(arena.group);
-const arenas = { arena };
-let mapKind = "arena";
+const arenas = { [mapKind]: arena };
+// Startskärmen döljer banan bakom en mörk slöja tills borgen (8 MB) har laddats
+document.body.classList.add("map-loading");
+Promise.resolve(arena.ready).finally(() => document.body.classList.remove("map-loading"));
 function applyMap(kind) {
-  kind = MAPS.includes(kind) ? kind : "arena";
+  kind = MAPS_SYNLIGA.includes(kind) ? kind : MAPS_SYNLIGA[0];
   if (kind === mapKind) return;
   if (!arenas[kind]) {
     arenas[kind] = kind === "castle" ? buildCastleArena() : kind === "borg" ? buildBorgArena() : buildArena();
@@ -375,7 +382,7 @@ function applyWeather(value) {
 // Väderknapparna heter annorlunda i borggården
 function renderWeatherLabels() {
   const winter = mapKind === "castle";
-  const names = winter ? { sun: "☀️ Klart", rain: "❄️ Snö", fog: "🌨️ Snöstorm" } : { sun: "🌤️ Sol", rain: "🌧️ Regn", fog: "🌫️ Dimma" };
+  const names = winter ? { sun: "Klart", rain: "Snö", fog: "Snöstorm" } : { sun: "Sol", rain: "Regn", fog: "Dimma" };
   document.querySelectorAll(".weather-btn").forEach((b) => (b.textContent = names[b.dataset.weather]));
 }
 // Ljus, himmel och dimma räknas ut från både tid på dygnet och väder
@@ -614,6 +621,7 @@ let lowQuality = loadSetting("grafik", "hog") === "lag";
 
 function applyQuality() {
   resScale = 1; // (skyddsnätet för bildfrekvensen börjar om)
+  shadowsReduced = false;
   renderer.setPixelRatio(lowQuality ? 1 : Math.min(window.devicePixelRatio, CONFIG.maxPixelRatio));
   renderer.setSize(window.innerWidth, window.innerHeight);
   sun.castShadow = CONFIG.shadows && !lowQuality;
@@ -2837,8 +2845,10 @@ function renderLobby() {
   document.querySelectorAll(".map-btn").forEach((b) => {
     b.classList.toggle("active", b.dataset.map === mapKind);
     b.disabled = !isHost;
+    b.hidden = !MAPS_SYNLIGA.includes(b.dataset.map); // dolda banor visas inte
   });
-  $("ready-button").textContent = me.ready ? "✅ Redo! (tryck för att ångra)" : "Jag är redo";
+  $("map-block").hidden = MAPS_SYNLIGA.length < 2; // bara en bana: inget att välja
+  $("ready-button").textContent = me.ready ? "Redo – klicka för att ångra" : "Jag är redo";
   $("ready-button").classList.toggle("active", !!me.ready);
   const botCount = allPlayers().filter((p) => p.bot).length;
   $("bot-row").hidden = !isHost && botCount === 0;
@@ -2858,10 +2868,13 @@ function renderLobby() {
     dot.className = "dot";
     dot.style.background = cssColor(displayColor(p));
     const label = document.createElement("span");
-    label.textContent = (p.id === hostId ? "👑 " : "") + p.name + (p === me ? " (du)" : "") + (p.bot ? " 🤖" : "");
+    label.className = "pl-name";
+    label.textContent = p.name + (p === me ? " (du)" : "");
+    if (p.id === hostId) label.prepend(Object.assign(document.createElement("i"), { className: "crown", title: "Lobbyledare" }));
+    if (p.bot) label.append(Object.assign(document.createElement("em"), { className: "chip", textContent: "BOT" }));
     const ready = document.createElement("span");
-    ready.className = "ready-mark";
-    ready.textContent = p.ready ? "✅ redo" : "⏳";
+    ready.className = "ready-mark" + (p.ready ? " on" : "");
+    ready.textContent = p.ready ? "Redo" : "Väntar";
     li.append(dot, label, ready);
     list.appendChild(li);
   };
@@ -4273,6 +4286,15 @@ const camTarget = new THREE.Vector3();
 const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();
 
+// Kungaborgen: gården är för trång för en hel cirkel (kameran hamnar i läktare och banér), så kameran
+// pendlar långsamt fram och tillbaka över ena hörnet med borgen i bakgrunden.
+function borgOverview() {
+  const t = performance.now() * 0.00009;
+  const a = 0.575 + 0.275 * Math.sin(t);
+  camera.position.set(13 * Math.sin(a), 8 + Math.sin(t * 0.7) * 0.4, 13 * Math.cos(a));
+  camera.lookAt(-4 * Math.sin(a), 2.5, -5);
+}
+
 function orbitCamera(radius, height, speed, lookY, center = null) {
   const t = performance.now() * speed;
   const cx = center ? center.x : 0;
@@ -4318,7 +4340,8 @@ function updateCamera(dt) {
     camera.updateProjectionMatrix();
   }
   if (!me || phase === "start") {
-    orbitCamera(24, 11, 0.00005, 1); // startskärm: svävar runt arenan
+    if (mapKind === "borg") borgOverview(); // startskärm: glider långsamt över borggården
+    else orbitCamera(24, 11, 0.00005, 1); // startskärm: svävar runt arenan
     return;
   }
   if (phase === "lobby") {
@@ -4342,7 +4365,8 @@ function updateCamera(dt) {
     return;
   }
   if (phase === "bracket" || phase === "matchEnd") {
-    orbitCamera(18, 9, 0.00008, 0.5); // överblick över arenan
+    if (mapKind === "borg") borgOverview();
+    else orbitCamera(18, 9, 0.00008, 0.5); // överblick över arenan
     return;
   }
   if (me.spectating || (me.dead && !me.corpse) || (me.dead && seconds() - me.diedAt > 3)) {
@@ -4504,14 +4528,33 @@ function adaptResolution(fps, now) {
     return;
   }
   peakFps = Math.max(peakFps * 0.999, fps); // ungefär skärmens uppdatering (60, 144, 165 …)
-  if (fps < peakFps * 0.8 && fps < 110) slowFor++;
+  // Målet: nära skärmens takt, men aldrig mer än ~58 bilder/s – en dator som aldrig når högre än
+  // 35 bilder/s ska också få lättare grafik (förr jämfördes bara med datorns egen bästa takt).
+  const goal = Math.min(peakFps * 0.85, 57);
+  if (fps < goal) slowFor++;
   else slowFor = 0;
-  if (fps >= peakFps * 0.95) fastFor++;
+  if (fps >= Math.min(peakFps * 0.95, 62)) fastFor++;
   else fastFor = 0;
   if (now - resChangedAt < 3000) return;
   let next = resScale;
-  if (slowFor >= 2) next = Math.max(0.75, resScale - 0.1);
-  else if (fastFor >= 8 && resScale < 1) next = Math.min(1, resScale + 0.05);
+  let shadowLow = shadowsReduced;
+  if (slowFor >= 2) {
+    if (resScale > 0.62) next = Math.max(0.6, resScale - 0.1);
+    else shadowLow = true; // upplösningen redan nere: skuggorna i lägre upplösning
+  } else if (fastFor >= 8) {
+    if (shadowsReduced) shadowLow = false;
+    else if (resScale < 1) next = Math.min(1, resScale + 0.05);
+  }
+  if (shadowLow !== shadowsReduced) {
+    shadowsReduced = shadowLow;
+    const size = shadowLow ? CONFIG.shadowMapSizeLow : CONFIG.shadowMapSize;
+    sun.shadow.mapSize.set(size, size);
+    sun.shadow.map?.dispose();
+    sun.shadow.map = null;
+    resChangedAt = now;
+    slowFor = fastFor = 0;
+    return;
+  }
   if (next === resScale) return;
   resScale = next;
   resChangedAt = now;
@@ -4577,6 +4620,55 @@ function frame() {
     frameMs += performance.now() - now;
   }
 }
+
+// Felsökning (konsolen): __bmbStats() visar vad bilden kostar
+globalThis.__bmbStats = () => {
+  const r = renderer.info.render;
+  let meshes = 0, casters = 0, casterTris = 0, skinned = 0, lights = 0, visTris = 0;
+  scene.traverseVisible((o) => {
+    if (o.isLight && o.intensity > 0) lights++;
+    if (!o.isMesh) return;
+    meshes++;
+    if (o.isSkinnedMesh) skinned++;
+    const g = o.geometry;
+    const t = (g.index ? g.index.count : g.attributes.position?.count || 0) / 3 * (o.isInstancedMesh ? o.count : 1);
+    visTris += t;
+    if (o.castShadow) { casters++; casterTris += t; }
+  });
+  const per = {};
+  const tri = (o) => (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position?.count || 0) / 3 * (o.isInstancedMesh ? o.count : 1);
+  for (const c of scene.children) {
+    if (!c.visible) continue;
+    let key = c.name || c.type;
+    if (c.type === "Group" && !c.name) {
+      const names = [];
+      c.traverse((o) => { if (o.name && names.length < 3) names.push(o.name); });
+      key = "G" + scene.children.indexOf(c) + ":" + names.join("/");
+    }
+    const e = (per[key] ||= { n: 0, m: 0, t: 0, c: 0, ct: 0 });
+    e.n++;
+    c.traverseVisible((o) => { if (o.isMesh) { e.m++; e.t += tri(o); if (o.castShadow) { e.c++; e.ct += tri(o); } if (!e.ex) e.ex = [o.material?.type, o.geometry?.type, o.material?.opacity, o.material?.transparent, o.scale.x.toFixed(2), c.position.toArray().map((x) => x.toFixed(1)).join(","), Object.keys(c.userData).join(",")].join("|"); } });
+  }
+  // den största gruppen: dess barn (och barnbarn) var för sig
+  let big = null, bigM = 0;
+  for (const c of scene.children) { let m = 0; c.traverseVisible((o) => o.isMesh && m++); if (m > bigM) { bigM = m; big = c; } }
+  const sub = {};
+  const walk = (g, depth, path) => {
+    for (const c of g.children) {
+      if (!c.visible) continue;
+      let m = 0, t = 0, cs = 0, mats = new Set();
+      c.traverseVisible((o) => { if (o.isMesh) { m++; t += tri(o); if (o.castShadow) cs++; mats.add(o.material?.uuid); } });
+      if (!m) continue;
+      const key = path + "/" + (c.name || c.type + g.children.indexOf(c));
+      if (m > 15 && depth < 3 && !c.isMesh) walk(c, depth + 1, key);
+      else { const e = (sub[(c.name || c.type) + "@" + path] ||= { n: 0, m: 0, t: 0, cs: 0, mats: 0 }); e.n++; e.m += m; e.t += Math.round(t); e.cs += cs; e.mats = Math.max(e.mats, mats.size); if (!e.ex) { let f = null; c.traverseVisible((o) => { if (!f && o.isMesh) f = o; }); e.ex = f && [f.material?.type, f.material?.name, f.geometry?.type, f.geometry?.attributes?.position?.count, f.material?.vertexColors, f.material?.map?.image?.width, JSON.stringify(f.userData).slice(0, 60), f.parent?.userData && JSON.stringify(f.parent.userData).slice(0, 60)].join("|"); } }
+    }
+  };
+  if (big) walk(big, 0, "");
+  per.__sub = sub;
+  for (const k in per) { if (k === "__sub") continue; per[k].t = Math.round(per[k].t); per[k].ct = Math.round(per[k].ct); }
+  return { per, calls: r.calls, triangles: r.triangles, meshes, skinned, casters, casterTris: Math.round(casterTris), visTris: Math.round(visTris), lights, programs: renderer.info.programs?.length, textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries, pixelRatio: renderer.getPixelRatio(), shadowMap: sun.shadow.mapSize.x, postfx: !!postfx?.enabled };
+};
 
 setPhase("start");
 renderer.setAnimationLoop(frame);

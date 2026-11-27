@@ -20,7 +20,7 @@ import {
   MAX_PLAYERS, COLORS, NAME_MAX, ROOM_CODE_RE, COMBAT, MATCH, ARENA_RX, ARENA_RZ, insideArena, clampToArena, arenaExtent,
   JOINT_PARENT, LIMB_JOINTS, KILL_ONLY_JOINTS, AIM_JOINT, ARMORS, HELMETS, SHIELDS,
   WEAPONS, CAPES, MODES, attackSpec, cooldownsAfter, weaponSpec, FISTS, TIMES, MAX_BOTS, BOT_NAMES, WEATHERS, AWARDS,
-  MAPS, INTRO_SECONDS, CROSSBOW, KING_BOW, GOBLIN, ARMORS_SYNLIGA,
+  MAPS, MAPS_SYNLIGA, INTRO_SECONDS, CROSSBOW, KING_BOW, GOBLIN, ARMORS_SYNLIGA,
 } from "../public/js/shared.js";
 
 export default {
@@ -294,7 +294,7 @@ export class GameRoom extends DurableObject {
     this.duel = null;    // pågående duell: { ri, mi }
     this.time = "day";   // dag eller kväll
     this.weather = "sun"; // sol, regn eller dimma
-    this.map = "arena";   // bana: tornerplatsen eller borggården
+    this.map = MAPS_SYNLIGA[0]; // bana (bara de synliga går att välja)
     this.items = new Map(); // tappade vapen på marken: id → { id, w, p }
 
     // Om rummet "sov" (hibernation) och vaknar igen: återskapa spelarlistan
@@ -311,7 +311,7 @@ export class GameRoom extends DurableObject {
     if (this.ctx.storage && this.ctx.blockConcurrencyWhile) {
       this.ctx.blockConcurrencyWhile(async () => {
         const saved = await this.ctx.storage.get(["host", "mode", "time", "bots", "weather", "map"]);
-        if (MAPS.includes(saved.get("map"))) this.map = saved.get("map");
+        if (MAPS_SYNLIGA.includes(saved.get("map"))) this.map = saved.get("map");
         if (WEATHERS.includes(saved.get("weather"))) this.weather = saved.get("weather");
         const host = saved.get("host");
         const mode = saved.get("mode");
@@ -660,7 +660,7 @@ export class GameRoom extends DurableObject {
   }
 
   handleMap(player, value) {
-    if (player.id !== this.hostId || this.phase !== "lobby" || !MAPS.includes(value)) return;
+    if (player.id !== this.hostId || this.phase !== "lobby" || !MAPS_SYNLIGA.includes(value)) return;
     this.map = value;
     this.remember("map", value);
     this.broadcast({ t: "map", v: value });

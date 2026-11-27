@@ -1,7 +1,7 @@
 // Delade regler som både spelet (webbläsaren) och servern använder.
 // Ändrar du något här gäller det på båda ställena.
 
-export const VERSION = "0.44";
+export const VERSION = "0.60";
 
 // STRIDSREGLER – servern använder dessa för att avgöra träffar.
 // Tider i sekunder, avstånd i meter, vinklar i grader (åt varje håll).
@@ -153,6 +153,8 @@ export const WEATHERS = ["sun", "rain", "fog"];
 
 // Banor (lobbyledaren väljer). Borggården har ett intro när matchen börjar.
 export const MAPS = ["arena", "castle", "borg"];
+// Banor som går att välja. Tornerplatsen och Borggården är dolda sedan spelet fick sin nya stil (v0.60).
+export const MAPS_SYNLIGA = ["borg"];
 export const MAP_NAMES = { arena: "Tornerplatsen", castle: "Borggården", borg: "Kungaborgen" };
 export const INTRO_SECONDS = 10;
 

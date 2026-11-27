@@ -22,10 +22,15 @@
   <canvas id="game"></canvas>
 
   <!-- Startskärm -->
-  <div id="lobby" class="overlay">
-    <div class="card">
+  <div id="lobby" class="overlay start-screen">
+    <div class="start-col">
+    <header class="brand">
+      <span class="brand-kicker">Kungaborgen · 2–6 riddare</span>
       <h1>Brawlmedboysen</h1>
+      <span class="brand-rule" aria-hidden="true"></span>
       <p class="subtitle" id="lobby-subtitle">Skapa ett rum och bjud in dina vänner</p>
+    </header>
+    <div class="card start-card">
 
       <label for="name-input">Ditt riddarnamn</label>
       <input id="name-input" type="text" maxlength="20" placeholder="Sir Klumpig" autocomplete="off">
@@ -44,21 +49,23 @@
       </details>
       <p class="version">v<span id="version"></span></p>
     </div>
+    </div>
   </div>
 
   <!-- Lobbyn: väntar på att lobbyledaren startar. Tre flikar (Riddare, Match, Spelare) och en fast sidfot med Redo/Starta. -->
   <div id="match-lobby" class="side-card lobby-panel" hidden>
     <header class="lp-head">
+      <span class="lp-kicker">Kungaborgen</span>
       <h2>Lobby</h2>
       <div class="room-row">
         <span class="room-chip" title="Rumskod">Rum <strong id="lobby-room-code"></strong></span>
-        <button id="lobby-copy-link" class="small iron">🔗 Kopiera inbjudan</button>
+        <button id="lobby-copy-link" class="small iron">Kopiera inbjudan</button>
       </div>
     </header>
     <nav class="lp-tabs" role="tablist">
-      <button class="lp-tab active" data-tab="knight" role="tab">⚔️ Riddare</button>
-      <button class="lp-tab" data-tab="match" role="tab">🏰 Match</button>
-      <button class="lp-tab" data-tab="players" role="tab">👥 Spelare <span id="tab-player-count" class="tab-count"></span></button>
+      <button class="lp-tab active" data-tab="knight" role="tab">Riddare</button>
+      <button class="lp-tab" data-tab="match" role="tab">Match</button>
+      <button class="lp-tab" data-tab="players" role="tab">Spelare <span id="tab-player-count" class="tab-count"></span></button>
     </nav>
     <div class="lp-body">
       <!-- Riddare: färg och utseende -->
@@ -75,7 +82,7 @@
         <h3>Vapen</h3>
         <div class="look-row weapon-row"><span>Vapen</span><button class="small" data-look="w" data-dir="-1" aria-label="Föregående">‹</button><b id="look-w"></b><button class="small" data-look="w" data-dir="1" aria-label="Nästa">›</button></div>
         <div id="weapon-card">
-          <div class="weapon-head"><span id="weapon-type" class="weapon-type"></span><button id="weapon-list-button" class="small" type="button">📜 Alla vapen</button></div>
+          <div class="weapon-head"><span id="weapon-type" class="weapon-type"></span><button id="weapon-list-button" class="small" type="button">Alla vapen</button></div>
           <div class="weapon-stats" id="weapon-stats"></div>
           <div class="weapon-tags" id="weapon-tags"></div>
           <p id="weapon-info" class="rules weapon-info"></p>
@@ -93,29 +100,31 @@
           <button class="small mode-btn" data-mode="tourney">Turnering</button>
         </div>
         <p id="mode-info" class="rules"></p>
-        <h3>Bana</h3>
-        <div class="mode-row map-row">
-          <button class="small map-btn" data-map="arena">🏟️ Tornerplatsen</button>
-          <button class="small map-btn" data-map="castle">🏰 Borggården</button>
-          <button class="small map-btn" data-map="borg">👑 Kungaborgen</button>
+        <div id="map-block">
+          <h3>Bana</h3>
+          <div class="mode-row map-row">
+            <button class="small map-btn" data-map="arena">Tornerplatsen</button>
+            <button class="small map-btn" data-map="castle">Borggården</button>
+            <button class="small map-btn" data-map="borg">Kungaborgen</button>
+          </div>
         </div>
         <h3>Tid på dygnet</h3>
         <div class="mode-row two">
-          <button class="small time-btn" data-time="day">☀️ Dag</button>
-          <button class="small time-btn" data-time="evening">🌇 Kväll</button>
+          <button class="small time-btn" data-time="day">Dag</button>
+          <button class="small time-btn" data-time="evening">Kväll</button>
         </div>
         <h3>Väder</h3>
         <div class="mode-row">
-          <button class="small weather-btn" data-weather="sun">🌤️ Sol</button>
-          <button class="small weather-btn" data-weather="rain">🌧️ Regn</button>
-          <button class="small weather-btn" data-weather="fog">🌫️ Dimma</button>
+          <button class="small weather-btn" data-weather="sun">Sol</button>
+          <button class="small weather-btn" data-weather="rain">Regn</button>
+          <button class="small weather-btn" data-weather="fog">Dimma</button>
         </div>
         <h3>Träningsmotståndare</h3>
         <div id="bot-row" class="look-row bot-row">
           <span>Botar</span>
           <button id="bot-remove" class="small" aria-label="Färre">−</button><b id="bot-count">Inga</b><button id="bot-add" class="small" aria-label="Fler">+</button>
         </div>
-        <p class="rules host-note">Bara lobbyledaren (👑) kan ändra matchinställningarna.</p>
+        <p class="rules host-note">Bara lobbyledaren (med kronan) kan ändra matchinställningarna.</p>
       </section>
 
       <!-- Spelare: vilka som är med och vilka lag -->
@@ -126,28 +135,28 @@
             <button class="small team-btn red" data-team="0">Röda laget</button>
             <button class="small team-btn blue" data-team="1">Blå laget</button>
           </div>
-          <button id="shuffle-button" class="small" hidden>🎲 Slumpa lag</button>
+          <button id="shuffle-button" class="small" hidden>Slumpa lag</button>
         </div>
         <h3>Riddare i rummet</h3>
         <ul id="lobby-players" class="lobby-list"></ul>
-        <button class="small keys-open" type="button">⌨️ Tangenter</button>
+        <button class="small keys-open" type="button">Tangenter</button>
         <p class="rules" id="lobby-rules"></p>
       </section>
     </div>
     <footer class="lp-foot">
       <div class="ready-summary" id="ready-summary"></div>
       <button id="ready-button" class="ready-btn">Jag är redo</button>
-      <button id="start-button" class="primary" hidden>⚔️ Starta matchen</button>
+      <button id="start-button" class="primary" hidden>Starta matchen</button>
       <p id="lobby-wait" class="subtitle"></p>
     </footer>
   </div>
 
   <!-- Topplistan (gemensam för alla rum) och mitt eget kort, visas i lobbyn -->
   <div id="board" class="card board-card" hidden>
-    <button id="board-toggle" class="board-head" type="button" title="Fäll ihop / visa"><span>🏆 Topplista</span><span class="chev">▾</span></button>
+    <button id="board-toggle" class="board-head" type="button" title="Fäll ihop / visa"><span>Topplista</span><span class="chev">▾</span></button>
     <div class="board-body">
     <table id="board-table">
-      <thead><tr><th>#</th><th>Riddare</th><th title="Matchvinster">🏆</th><th title="Dråp">⚔</th><th title="Matcher">Matcher</th></tr></thead>
+      <thead><tr><th>#</th><th>Riddare</th><th title="Matchvinster">Segrar</th><th title="Dråp">Dråp</th><th title="Matcher">Matcher</th></tr></thead>
       <tbody></tbody>
     </table>
     <p id="board-empty" class="rules" hidden>Ingen har spelat en match än. Bli först!</p>
@@ -162,7 +171,7 @@
         <div><b id="my-sev">0</b><span>Avhuggna lemmar</span></div>
       </div>
       <p id="my-extra" class="rules"></p>
-      <button id="show-code" class="small">🔑 Visa min kod</button>
+      <button id="show-code" class="small">Visa min kod</button>
       <div id="code-box" hidden>
         <p class="rules">Med koden kommer du åt ditt namn från en annan dator. Visa den inte för någon!</p>
         <div class="restore-row"><code id="my-code"></code><button id="copy-code" class="small">Kopiera</button></div>
@@ -186,7 +195,7 @@
     <div class="card">
       <h2 id="match-winner"></h2>
       <table id="score-table">
-        <thead><tr><th>Riddare</th><th>🏆 Rundor</th><th>⚔ Dråp</th></tr></thead>
+        <thead><tr><th>Riddare</th><th>Rundor</th><th>Dråp</th></tr></thead>
         <tbody></tbody>
       </table>
       <ul id="awards"></ul>
@@ -255,17 +264,17 @@
 
   <!-- Volymreglage: syns i lobbyn och när musen är släppt (Esc) under spelet -->
   <div id="volume-panel" class="panel" hidden>
-    <label for="music-volume">🎵 Musik</label>
+    <label for="music-volume">Musik</label>
     <input id="music-volume" type="range" min="0" max="100" step="1">
-    <label for="sfx-volume">🔊 Effekter</label>
+    <label for="sfx-volume">Effekter</label>
     <input id="sfx-volume" type="range" min="0" max="100" step="1">
-    <button class="small keys-open" type="button" style="grid-column: 1 / -1">⌨️ Tangenter</button>
+    <button class="small keys-open" type="button" style="grid-column: 1 / -1">Tangenter</button>
   </div>
 
   <!-- Byt knappar -->
   <div id="keys-panel" class="overlay" hidden>
     <div class="card keys-card">
-      <h2>⌨️ Tangenter</h2>
+      <h2>Tangenter</h2>
       <p class="rules">Klicka på en ruta och tryck sedan den tangent eller musknapp du vill ha (Esc avbryter). Högerklicka på en ruta för att tömma den. Används knappen redan byter de två plats.</p>
       <table id="keys-table"><tbody></tbody></table>
       <div class="keys-buttons">

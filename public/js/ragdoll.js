@@ -470,6 +470,12 @@ export class Debris {
     for (let i = this.items.length - 1; i >= 0; i--) {
       const r = this.items[i];
       r.update(dt);
+      // När delen ligger still slutar den kasta skugga: skuggbilden behöver inte ritas om för den
+      // (en död riddare har hela rustningen kvar, 30–45 000 trianglar, och de blir fler under en runda)
+      if (r.asleep && !r.shadowOff) {
+        r.shadowOff = true;
+        for (const body of r.bodies) body.object.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+      }
       // Gamla delar sjunker långsamt ner i marken och försvinner
       const over = r.age - this.lifeSeconds;
       if (over > 0) {

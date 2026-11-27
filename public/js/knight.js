@@ -471,8 +471,51 @@ const GRIP_RANGE = {
 const GRIP_TURNS = [0, 0.35, -0.35, 0.7, -0.7, 1.0];
 // vänsterhandens rullning runt skaftet (prövas om armen inte når med högerhandens vridning)
 const GRIP_ROLLS = [0, 0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.4, -2.4, 3.14];
+
+// Armlösare med "polvektor": armbågen pekar mot polen (i bålens mått). Till skillnad från vinkellösaren
+// (solveArm, Euler-vinklar) har den inga vändpunkter – armen kan inte plötsligt slå runt ett halvt varv.
+// t = målet för handleden räknat från axeln. Lägger överarmens vridning i outQ och ger armbågsvinkeln.
+const _pa = { d: new THREE.Vector3(), pp: new THREE.Vector3(), u: new THREE.Vector3(), X: new THREE.Vector3(), Y: new THREE.Vector3(), Z: new THREE.Vector3(), M: new THREE.Matrix4() };
+function poleArm(t, L1, L2, pole, outQ) {
+  const { d, pp, u, X, Y, Z, M } = _pa;
+  let D = t.length();
+  const maxR = L1 + L2 - 0.0005;
+  const minR = Math.abs(L1 - L2) + 0.02;
+  // Mycket nära axeln är riktningen osäker (målet kan passera rakt igenom axeln): luta den mot nedåt
+  d.copy(t);
+  if (D < 0.16) d.y -= (0.16 - D) * 1.5;
+  if (d.lengthSq() < 1e-10) d.set(0, -1, 0);
+  d.normalize();
+  D = Math.min(maxR, Math.max(minR, D));
+  // polen vinkelrätt mot linjen axel–hand
+  pp.copy(pole).addScaledVector(d, -pole.dot(d));
+  if (pp.lengthSq() < 1e-8) pp.set(0, 0, -1).addScaledVector(d, d.z);
+  pp.normalize();
+  const cosA = Math.max(-1, Math.min(1, (L1 * L1 + D * D - L2 * L2) / (2 * L1 * D)));
+  const sinA = Math.sqrt(1 - cosA * cosA);
+  u.copy(d).multiplyScalar(cosA).addScaledVector(pp, sinA); // överarmens riktning
+  const cosK = Math.max(-1, Math.min(1, (D * D - L1 * L1 - L2 * L2) / (2 * L1 * L2)));
+  const knee = Math.acos(cosK);
+  // överarmens axlar: −Y längs armen, Z dit underarmen böjer (bort från polen), X = Y × Z
+  Y.copy(u).negate();
+  // (underarmens riktning vinkelrätt mot överarmen; vid nästan rak arm används polen)
+  Z.copy(d).multiplyScalar(D).addScaledVector(u, -L1); // armbåge → hand
+  Z.addScaledVector(u, -Z.dot(u));
+  if (Z.lengthSq() < 1e-6) Z.copy(pp).negate().addScaledVector(u, pp.dot(u));
+  Z.normalize();
+  X.crossVectors(Y, Z);
+  M.makeBasis(X, Y, Z);
+  outQ.setFromRotationMatrix(M);
+  return -knee;
+}
+const wrapPi = (x) => x - Math.round(x / (2 * Math.PI)) * 2 * Math.PI;
 const _grip = { has: false, score: 0, q: new THREE.Quaternion(), elbow: 0, pen: 0, miss: 0, hand: new THREE.Quaternion(), gripW: new THREE.Vector3() };
 const _gRollQ = new THREE.Quaternion();
+const _gPole = new THREE.Vector3();
+const POLE_L = new THREE.Vector3(1, -0.7, 0.05).normalize();
+const POLE_R = new THREE.Vector3(-1, -0.7, -0.25).normalize();
+const _gEv = { pen: 0, miss: 0, elbow: 0, q: null, handQ: null };
+const GRIP_HYST = 0.35; // försprång för förra bildrutans grepp
 const _pHandQ = new THREE.Quaternion();
 const _pFore = new THREE.Quaternion();
 const _pSh = new THREE.Vector3();
@@ -3637,23 +3680,27 @@ export class Knight {
     if (badge) {
       // Liten skylt "BOT" för träningsmotståndare
       const bx = tx + tw / 2 + 10;
-      ctx.fillStyle = "rgba(20, 14, 8, 0.85)";
+      ctx.fillStyle = "rgba(12, 11, 10, 0.85)";
       ctx.fillRect(bx, 24, 62, 36);
-      ctx.fillStyle = "#e0c070";
+      ctx.fillStyle = "#c9a659";
       ctx.font = "bold 24px Georgia, serif";
       ctx.textAlign = "left";
       ctx.fillText("BOT", bx + 6, 43);
       ctx.textAlign = "center";
     }
 
-    const w = 260;
+    // livmätaren: smal, mörk med tunn mässingslinje (v0.60)
+    const w = 250;
     const x = 256 - w / 2;
-    ctx.fillStyle = "rgba(20, 14, 8, 0.8)";
-    ctx.fillRect(x - 4, 88, w + 8, 26);
-    ctx.fillStyle = "#4a1410";
-    ctx.fillRect(x, 92, w, 18);
-    ctx.fillStyle = hp > 50 ? "#4caf50" : hp > 25 ? "#e0a020" : "#d0302a";
-    ctx.fillRect(x, 92, (w * Math.max(0, hp)) / COMBAT.maxHp, 18);
+    ctx.fillStyle = "rgba(12, 11, 10, 0.85)";
+    ctx.fillRect(x - 4, 89, w + 8, 22);
+    ctx.strokeStyle = "rgba(214, 178, 106, 0.55)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x - 3, 90, w + 6, 20);
+    ctx.fillStyle = "#3a1210";
+    ctx.fillRect(x, 93, w, 14);
+    ctx.fillStyle = hp > 50 ? "#6aa85a" : hp > 25 ? "#d9a23a" : "#c8382c";
+    ctx.fillRect(x, 93, (w * Math.max(0, hp)) / COMBAT.maxHp, 14);
     this.labelTexture.needsUpdate = true;
   }
 
@@ -3668,62 +3715,77 @@ export class Knight {
       this.setHp(this.hp ?? COMBAT.maxHp);
       return;
     }
+    // v0.60: mörk järnskylt med tunn mässingslinje (samma stil som lobbypanelen)
     const ctx = this.labelCanvas.getContext("2d");
     ctx.clearRect(0, 0, 512, 128);
-    const name = (info.host ? "♛ " : "") + this.name;
-    let size = 40;
-    ctx.font = `bold ${size}px Cinzel, Georgia, serif`;
-    while (ctx.measureText(name).width > 380 && size > 20) {
+    const name = this.name;
+    const crown = info.host ? 34 : 0;
+    const bot = this.isBot ? 60 : 0;
+    let size = 36;
+    ctx.font = `700 ${size}px Cinzel, Georgia, serif`;
+    while (ctx.measureText(name).width > 370 - crown - bot && size > 20) {
       size -= 2;
-      ctx.font = `bold ${size}px Cinzel, Georgia, serif`;
+      ctx.font = `700 ${size}px Cinzel, Georgia, serif`;
     }
-    const tw = Math.max(200, ctx.measureText(name).width + 70 + (this.isBot ? 66 : 0));
-    const x0 = 256 - tw / 2;
-    // Skylten: mörkt trä med guldkant
-    const r = 14;
-    ctx.beginPath();
-    ctx.moveTo(x0 + r, 6); ctx.lineTo(x0 + tw - r, 6); ctx.quadraticCurveTo(x0 + tw, 6, x0 + tw, 6 + r);
-    ctx.lineTo(x0 + tw, 66 - r); ctx.quadraticCurveTo(x0 + tw, 66, x0 + tw - r, 66);
-    ctx.lineTo(256 + 18, 66); ctx.lineTo(256, 80); ctx.lineTo(256 - 18, 66);
-    ctx.lineTo(x0 + r, 66); ctx.quadraticCurveTo(x0, 66, x0, 66 - r); ctx.lineTo(x0, 6 + r); ctx.quadraticCurveTo(x0, 6, x0 + r, 6);
-    const grad = ctx.createLinearGradient(0, 6, 0, 80);
-    grad.addColorStop(0, "rgba(74, 49, 27, 0.92)");
-    grad.addColorStop(1, "rgba(38, 25, 14, 0.92)");
+    const nw = ctx.measureText(name).width;
+    const tw = Math.max(180, nw + 64 + crown + bot);
+    const x0 = Math.round(256 - tw / 2);
+    const y0 = 8, y1 = 70;
+    const grad = ctx.createLinearGradient(0, y0, 0, y1);
+    grad.addColorStop(0, "rgba(30, 28, 25, 0.92)");
+    grad.addColorStop(1, "rgba(12, 11, 10, 0.92)");
     ctx.fillStyle = grad;
-    ctx.fill();
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = info.you ? "#ecd189" : "#a8853a";
-    ctx.stroke();
-    // Färgprick (riddarens färg) och namnet
+    ctx.fillRect(x0, y0, tw, y1 - y0);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = info.you ? "rgba(233, 209, 147, 0.95)" : "rgba(214, 178, 106, 0.5)";
+    ctx.strokeRect(x0 + 1, y0 + 1, tw - 2, y1 - y0 - 2);
+    // mässingshörn
+    ctx.fillStyle = "#c9a659";
+    for (const [cx, cy, dx, dy] of [[x0 + 6, y0 + 6, 1, 1], [x0 + tw - 6, y0 + 6, -1, 1], [x0 + 6, y1 - 6, 1, -1], [x0 + tw - 6, y1 - 6, -1, -1]]) {
+      ctx.fillRect(dx > 0 ? cx : cx - 12, dy > 0 ? cy : cy - 2, 12, 2);
+      ctx.fillRect(dx > 0 ? cx : cx - 2, dy > 0 ? cy : cy - 12, 2, 12);
+    }
+    // riddarens färg som ett smalt heraldiskt band till vänster
     ctx.fillStyle = "#" + new THREE.Color(this.labelColor ?? this.colorHex).getHexString();
-    ctx.beginPath();
-    ctx.arc(x0 + 30, 36, 11, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "rgba(0,0,0,0.6)";
-    ctx.stroke();
+    ctx.fillRect(x0 + 16, y0 + 14, 7, y1 - y0 - 28);
+    let tx = x0 + 36;
+    if (crown) {
+      ctx.fillStyle = "#e9d193";
+      ctx.beginPath();
+      const cy = 39, w = 24, h = 17;
+      ctx.moveTo(tx, cy + h / 2); ctx.lineTo(tx, cy - h / 4); ctx.lineTo(tx + w * 0.25, cy + h * 0.1); ctx.lineTo(tx + w / 2, cy - h / 2);
+      ctx.lineTo(tx + w * 0.75, cy + h * 0.1); ctx.lineTo(tx + w, cy - h / 4); ctx.lineTo(tx + w, cy + h / 2); ctx.closePath();
+      ctx.fill();
+      tx += crown;
+    }
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
-    ctx.fillStyle = "#f6e7c4";
-    ctx.font = `bold ${size}px Cinzel, Georgia, serif`;
-    ctx.fillText(name, x0 + 52, 38);
-    if (this.isBot) {
-      const bx = x0 + 52 + ctx.measureText(name).width + 10;
-      ctx.fillStyle = "rgba(201, 162, 74, 0.9)";
-      ctx.fillRect(bx, 22, 52, 30);
-      ctx.fillStyle = "#2a1c0f";
-      ctx.font = "bold 20px Georgia, serif";
-      ctx.fillText("BOT", bx + 5, 38);
+    ctx.fillStyle = "#f2e8d4";
+    ctx.font = `700 ${size}px Cinzel, Georgia, serif`;
+    ctx.fillText(name, tx, 41);
+    if (bot) {
+      const bx = tx + nw + 12;
+      ctx.fillStyle = "rgba(255, 240, 210, 0.12)";
+      ctx.fillRect(bx, 26, 46, 26);
+      ctx.fillStyle = "rgba(236, 228, 211, 0.75)";
+      ctx.font = "700 17px Cinzel, Georgia, serif";
+      ctx.fillText("BOT", bx + 5, 40);
     }
-    // REDO / VÄNTAR under skylten
+    // REDO / VÄNTAR under skylten: bara text mellan två tunna linjer
     ctx.textAlign = "center";
-    ctx.font = "bold 24px Cinzel, Georgia, serif";
-    const status = info.ready ? "✓ REDO" : "VÄNTAR …";
-    const sw = ctx.measureText(status).width + 26;
-    ctx.fillStyle = info.ready ? "rgba(79, 138, 58, 0.95)" : "rgba(40, 30, 20, 0.75)";
-    ctx.fillRect(256 - sw / 2, 88, sw, 34);
-    ctx.fillStyle = info.ready ? "#ffffff" : "#d9c59c";
-    ctx.fillText(status, 256, 106);
+    ctx.font = "700 21px Cinzel, Georgia, serif";
+    const status = info.ready ? "REDO" : "VÄNTAR";
+    if (ctx.letterSpacing !== undefined) ctx.letterSpacing = "4px";
+    const sw = ctx.measureText(status).width;
+    ctx.fillStyle = info.ready ? "#9fd88d" : "rgba(236, 228, 211, 0.7)";
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+    ctx.lineWidth = 5;
+    ctx.strokeText(status, 256, 100);
+    ctx.fillText(status, 256, 100);
+    if (ctx.letterSpacing !== undefined) ctx.letterSpacing = "0px";
+    ctx.fillStyle = info.ready ? "rgba(159, 216, 141, 0.7)" : "rgba(214, 178, 106, 0.45)";
+    ctx.fillRect(256 - sw / 2 - 46, 99, 30, 2);
+    ctx.fillRect(256 + sw / 2 + 16, 99, 30, 2);
     this.labelTexture.needsUpdate = true;
   }
 
@@ -4223,6 +4285,7 @@ export class Knight {
   // Resten av kroppen: först räknas en målvinkel för varje led (T), sedan glider lederna dit mjukt.
 
   animate(dt, motion = { speed: 0, forward: 0, side: 0, airborne: false }) {
+    this._dt = dt;
     const k = 1 - Math.exp(-dt * 14);     // vanliga rörelser
     const kFast = 1 - Math.exp(-dt * 35); // slag, parering och spark ska vara skarpa
     this.time = (this.time || 0) + dt;
@@ -4713,19 +4776,51 @@ export class Knight {
     const freeLeft = this.emote || this.victory === 3 || this.victory === 2 || this.dragAmount > 0.5 || this.kickT >= 0 || this.rollT >= 0 || downAmt > 0.3 || this.grab;
     if (this.twoHanded && !freeLeft && !this.seg.handL.userData.detached && !this.seg.handR.userData.detached && this.weapon.userData.grip2) {
       const g = this.weapon.userData.grip2;
+      // Greppet tas mjukt (efter t.ex. släpad zweihänder eller en spark): armen glider in på ~0,15 s
+      const wasIk = this.ikLeft;
+      this._ikW = wasIk || this._ikW === undefined ? Math.min(1, (this._ikW ?? 1) + dt / 0.15) : 0; // (första bildrutan: direkt)
+      if (this._ikW < 1) {
+        (this._ikFromU ||= new THREE.Quaternion()).copy(this.seg.upperArmL.quaternion);
+        (this._ikFromH ||= new THREE.Quaternion()).copy(this.seg.handL.quaternion);
+        this._ikFromF = this.seg.forearmL.rotation.x;
+      }
       this.ikLeft = true;
       // Först höger arm ut ur bröstet (den håller vapnet), sedan räknas vänster arm efter greppet
       this.keepArmsOut(["R"]);
       this.solveLeftGrip(g);
       // Når vänster hand inte skaftet (t.ex. mitt i ett brett tvåhandsslag) dras vapenhanden in mot
       // vänster axel så mycket som behövs, med vapnets vinkel kvar – båda händerna håller alltid vapnet.
-      for (let f = 0; f < 2 && _grip.has && _grip.miss > 0.008; f++) {
-        this.pullRightToward(this.seg.upperArmL, _grip.gripW, Math.min(0.45, _grip.miss + 0.015));
+      // (fjädern tar över indragningen som läge, så den behöver inte göras om nästa bildruta)
+      for (let f = 0; f < 2 && _grip.has && _grip.miss > 0.006; f++) {
+        this.pullRightToward(this.seg.upperArmL, _grip.gripW, Math.min(0.45, _grip.miss + 0.012));
         this.keepArmsOut(["R"]);
         this.solveLeftGrip(g);
       }
-    } else {
+      if (this._ikW < 1) {
+        // (från förra bildrutans arm en bit mot greppet varje bildruta – når fram på ~0,15 s)
+        const w = 1 - Math.exp(-dt * 25);
+        // (slerp åt rätt håll: från förra läget mot greppet; slerpQuaternions får inte ha sig själv som mål)
+        this.seg.upperArmL.quaternion.copy(_q.copy(this._ikFromU).slerp(this.seg.upperArmL.quaternion, w));
+        this.seg.handL.quaternion.copy(_q.copy(this._ikFromH).slerp(this.seg.handL.quaternion, w));
+        this.seg.forearmL.rotation.x = this._ikFromF + (this.seg.forearmL.rotation.x - this._ikFromF) * w;
+      }
+    } else if (this.ikLeft) {
+      // Greppet släpps: fjädrarna börjar där armen syntes senast (inget ryck)
       this.ikLeft = false;
+      for (const n of ["upperArmL", "forearmL", "handL"]) {
+        const sg = this.seg[n];
+        if (sg.userData.detached) continue;
+        const ud = sg.userData;
+        if (ud.ikRot) sg.rotation.copy(ud.ikRot);
+        ud.sPos = [sg.rotation.x, sg.rotation.y, sg.rotation.z];
+        ud.sv = [0, 0, 0];
+      }
+    }
+    if (this.ikLeft) {
+      for (const n of ["upperArmL", "forearmL", "handL"]) {
+        const ud = this.seg[n].userData;
+        (ud.ikRot ||= new THREE.Euler()).copy(this.seg[n].rotation);
+      }
     }
     // Armarna får inte gå in i bröstet: knuffas ut åt sidan eller fram om de gör det
     this.keepArmsOut(this.ikLeft ? ["R"] : ["L", "R"]);
@@ -4790,57 +4885,100 @@ export class Knight {
     const reach = this.armLen[0] + this.armLen[1] - 0.005;
     const B = _grip; // återanvänds (inget nytt skräpminne varje bildruta)
     B.has = false;
-    // Kroppens läge räknas en gång (det ändras inte av var handen sitter på skaftet)
     this.group.updateMatrixWorld(true);
     _inv.copy(torso.matrixWorld).invert();
-    // Handen kan glida längs skaftet: närmare höger hand (når lättare) eller längre bort (armen går fri från kroppen)
     this.seg.handR.getWorldQuaternion(_gHandQ);
     _gHandAx.set(0, 1, 0).transformDirection(this.weapon.matrixWorld); // skaftets riktning
-    _gFist.copy(_gStd);
-    if (this.greppDelta) _gFist.add(this.greppDelta.L); // modellens knutna vänsterhand (rustningsmodell.js)
-    const fistLocal = _gFistL.copy(_gFist);
-    rollLoop: for (let ri = 0; ri < GRIP_ROLLS.length; ri++) {
-      const roll = GRIP_ROLLS[ri];
-      // Vänster hand vrids som höger hand (näven runt samma skaft), rullad runt skaftet om det behövs
+    _gFistL.copy(_gStd);
+    if (this.greppDelta) _gFistL.add(this.greppDelta.L); // modellens knutna vänsterhand (rustningsmodell.js)
+    const omr = GRIP_RANGE[this.weaponKey];
+    const fwd = this.weapon.userData.gripForward;
+    // Prövar ett läge: vridning runt skaftet (roll), glidning längs skaftet (slide), armbågens vridning (turn).
+    // Ger poäng (lägre = bättre) och lämnar armens lösning i _gEv.
+    const ev = (roll, slide, turn) => {
       const handQ = _gRollQ.setFromAxisAngle(_gHandAx, roll).multiply(_gHandQ);
-      for (let si = 0; si < GRIP_SLIDES.length; si++) {
-        const slide = GRIP_SLIDES[si];
-        if (!this.weapon.userData.gripForward && grip[1] + slide > -0.13 && !GRIP_RANGE[this.weaponKey]) continue; // armborstet: vänster hand framför höger
-        const omr = GRIP_RANGE[this.weaponKey];
-        if (omr && (grip[1] + slide < omr[0] || grip[1] + slide > omr[1])) continue; // inte förbi greppets ände
-        // handleden ska sitta där näven hamnar på greppunkten: greppunkt − (handens vridning × nävens mitt)
-        _gGripW.set(grip[0], grip[1] + slide, grip[2]).applyMatrix4(this.weapon.matrixWorld);
-        const target = _gTarget.copy(_gGripW).sub(_gFist.copy(fistLocal).applyQuaternion(handQ));
-        target.applyMatrix4(_inv).sub(upper.position);
-        const { upperX, upperZ, elbow } = solveArm([target.x, target.y, target.z], this.armLen[0], this.armLen[1]);
-        const base = _q.setFromEuler(_gEuler.set(upperX, 0, upperZ));
-        const axis = _gAxis.copy(target).normalize();
-        const miss = Math.max(0, target.length() - reach); // når inte ända fram
-        for (let ti = 0; ti < GRIP_TURNS.length; ti++) {
-          const turn = GRIP_TURNS[ti];
-          const q = _q2.setFromAxisAngle(axis, turn).multiply(base);
-          // armbågens och underarmens läge (i bålens mått)
-          const elbowP = _mid.set(0, -this.armLen[0], 0).applyQuaternion(q).add(upper.position);
-          const foreQ = _gFore.copy(q).multiply(_gBend.setFromAxisAngle(_xAxis, elbow));
-          const midP = _gMidP.set(0, -this.armLen[1] * 0.5, 0).applyQuaternion(foreQ).add(elbowP);
-          const pen = inside(elbowP) + inside(midP);
-          // poäng: inte i kroppen, når fram, armbågen utåt (vänster = +x) och lite nedåt, så lite vridning som möjligt
-          const score = pen * 10 + miss * 25 - (elbowP.x - upper.position.x) * 2 + Math.abs(turn) * 0.15 + Math.abs(slide) * 0.6 + Math.abs(roll) * 0.12;
-          if (!B.has || score < B.score) {
-            B.has = true;
-            B.score = score;
-            B.q.copy(q);
-            B.elbow = elbow;
-            B.pen = pen;
-            B.miss = miss;
-            B.hand.copy(handQ);
-            B.gripW.copy(_gGripW);
+      _gGripW.set(grip[0], grip[1] + slide, grip[2]).applyMatrix4(this.weapon.matrixWorld);
+      const target = _gTarget.copy(_gGripW).sub(_gFist.copy(_gFistL).applyQuaternion(handQ));
+      target.applyMatrix4(_inv).sub(upper.position);
+      // armbågen pekar utåt och nedåt (lite bakåt), vriden "turn" runt linjen axel–hand
+      _gPole.copy(POLE_L).applyAxisAngle(_gAxis.copy(target).normalize(), turn);
+      const q = _q2;
+      const elbow = poleArm(target, this.armLen[0], this.armLen[1], _gPole, q);
+      const elbowP = _mid.set(0, -this.armLen[0], 0).applyQuaternion(q).add(upper.position);
+      const foreQ = _gFore.copy(q).multiply(_gBend.setFromAxisAngle(_xAxis, elbow));
+      const midP = _gMidP.set(0, -this.armLen[1] * 0.5, 0).applyQuaternion(foreQ).add(elbowP);
+      const pen = inside(elbowP) + inside(midP);
+      const miss = Math.max(0, target.length() - reach);
+      const back = Math.max(0, -0.06 - elbowP.z); // armbågen inte bakom ryggen
+      const fold = Math.max(0, 0.2 - target.length()); // greppet inte inne vid axeln (armen helt hopvikt)
+      _gEv.pen = pen;
+      _gEv.miss = miss;
+      _gEv.elbow = elbow;
+      _gEv.q = q;
+      _gEv.handQ = handQ;
+      // poäng: inte i kroppen, når fram, armbågen utåt (vänster = +x) och lite nedåt, så lite vridning som möjligt
+      return pen * 10 + miss * 25 - (elbowP.x - upper.position.x) * 2 + Math.abs(turn) * 0.15 + Math.abs(slide) * 0.6 + Math.abs(roll) * 0.12 + back * 12 + fold * 30;
+    };
+    const take = (score, roll, slide, turn) => {
+      B.has = true;
+      B.score = score;
+      B.q.copy(_gEv.q);
+      B.elbow = _gEv.elbow;
+      B.pen = _gEv.pen;
+      B.miss = _gEv.miss;
+      B.hand.copy(_gEv.handQ);
+      B.gripW.copy(_gGripW);
+      B.roll = roll;
+      B.slide = slide;
+      B.turn = turn;
+    };
+    const slideOk = (slide) => {
+      if (!fwd && grip[1] + slide > -0.13 && !omr) return false; // armborstet: vänster hand framför höger
+      if (omr && (grip[1] + slide < omr[0] || grip[1] + slide > omr[1])) return false; // inte förbi greppets ände
+      return true;
+    };
+    // Förra bildrutans läge (utjämnat) prövas först och får ett försprång: armen byter bara lösning när en
+    // annan är klart bättre – annars hoppar den mellan två nästan lika bra lösningar varannan bildruta.
+    const S = (this._gS ||= { r: 0, s: 0, t: 0, r0: 0, s0: 0, t0: 0, f: -1, ok: -9 });
+    if (S.f !== this._frame) {
+      S.r0 = S.r;
+      S.s0 = S.s;
+      S.t0 = S.t;
+      S.f = this._frame;
+    }
+    const prevOk = S.ok >= this._frame - 1;
+    if (prevOk && slideOk(S.s0)) take(ev(S.r0, S.s0, S.t0) - GRIP_HYST, S.r0, S.s0, S.t0);
+    const keepGood = B.has && B.pen < 0.05 && B.miss < 0.003;
+    // (med jämna mellanrum söks ändå alla lägen, så armen kan glida över till ett bättre grepp)
+    if (!keepGood || this._frame % 6 === 0) {
+      rollLoop: for (let ri = 0; ri < GRIP_ROLLS.length; ri++) {
+        const roll = GRIP_ROLLS[ri];
+        for (let si = 0; si < GRIP_SLIDES.length; si++) {
+          const slide = GRIP_SLIDES[si];
+          if (!slideOk(slide)) continue;
+          for (let ti = 0; ti < GRIP_TURNS.length; ti++) {
+            const turn = GRIP_TURNS[ti];
+            const score = ev(roll, slide, turn);
+            if (!B.has || score < B.score) take(score, roll, slide, turn);
           }
+          if (B.has && B.pen === 0 && B.miss === 0) break rollLoop;
         }
-        if (B.has && B.pen === 0 && B.miss === 0) break rollLoop;
       }
     }
     if (!B.has) return;
+    // Valen glider mjukt mot det bästa (armen räknas om exakt för de utjämnade värdena, så handen sitter kvar)
+    if (prevOk) {
+      const a = 1 - Math.exp(-(this._dt || 1 / 60) * 16);
+      S.r = S.r0 + wrapPi(B.roll - S.r0) * a;
+      S.s = S.s0 + (B.slide - S.s0) * a;
+      S.t = S.t0 + (B.turn - S.t0) * a;
+      if (S.r !== B.roll || S.s !== B.slide || S.t !== B.turn) take(ev(S.r, S.s, S.t), S.r, S.s, S.t);
+    } else {
+      S.r = B.roll;
+      S.s = B.slide;
+      S.t = B.turn;
+    }
+    S.ok = this._frame;
     this._gripDbg = { miss: +B.miss.toFixed(3), pen: +B.pen.toFixed(3) };
     upper.quaternion.copy(B.q);
     fore.rotation.set(B.elbow, 0, 0);
@@ -4869,21 +5007,11 @@ export class Knight {
     const wrist = _pWr.setFromMatrixPosition(hand.matrixWorld).addScaledVector(dir, dist);
     _inv.copy(this.seg.torso.matrixWorld).invert();
     const t = wrist.applyMatrix4(_inv).sub(upper.position);
-    const { upperX, upperZ, elbow } = solveArm([t.x, t.y, t.z], this.armLen[0], this.armLen[1]);
-    const base = _q.setFromEuler(_gEuler.set(upperX, 0, upperZ));
-    const axis = _gAxis.copy(t).normalize();
-    let bestQ = null;
-    let best = Infinity;
-    for (const turn of GRIP_TURNS) {
-      const q = _q2.setFromAxisAngle(axis, -turn).multiply(base);
-      const elbowP = _mid.set(0, -this.armLen[0], 0).applyQuaternion(q).add(upper.position);
-      const score = (elbowP.x - upper.position.x) * 2 + Math.abs(turn) * 0.15; // höger armbåge utåt = −x
-      if (score < best) {
-        best = score;
-        bestQ = (bestQ || new THREE.Quaternion()).copy(q);
-      }
-    }
-    upper.quaternion.copy(bestQ);
+    // armbågen utåt (höger = −x) och nedåt; samma polvektorlösare som vänster arm (inga vändpunkter)
+    // polen = där armbågen redan är (armen ändras så lite som möjligt), aldrig in mot kroppen
+    _gPole.set(0, -this.armLen[0], 0).applyQuaternion(upper.quaternion);
+    if (_gPole.x > -0.02) _gPole.x = -0.02;
+    const elbow = poleArm(t, this.armLen[0], this.armLen[1], _gPole, upper.quaternion);
     fore.rotation.set(elbow, 0, 0);
     upper.updateMatrixWorld(true);
     fore.getWorldQuaternion(_pFore);
