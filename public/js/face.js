@@ -243,6 +243,7 @@ export function faceTexture(f, rand) {
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
+  tex.userData.egen = true; // en per riddare: frigörs med riddaren (Knight.dispose)
   return tex;
 }
 

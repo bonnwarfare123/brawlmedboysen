@@ -28,6 +28,22 @@ const BEN = ["pelvis", "torso", "head", "upperArmL", "forearmL", "handL", "upper
 const cache = new Map(); // nyckel → { scene, meta } när den är laddad
 const laddar = new Map();
 
+// v0.61: enklare versioner (LOD1, ca 35–40 % av trianglarna, C16_lod_export.py) – används för skuggorna
+// och för riddare långt bort. Laddas i bakgrunden; saknas de används bara den fulla modellen.
+export const LOD_URL = (nyckel) => MODELLER[nyckel]?.replace(/\.glb$/, "_lod1.glb");
+export const LOD_AVSTAND = 13; // meter: längre bort än så ritas den enklare rustningen
+export const SKUGG_LAGER = 1; // ritas bara i skuggkartan (huvudkameran ser lager 0)
+const lodCache = new Map();
+const LOD_AV = typeof location !== "undefined" && /[?&]lod=av/.test(location.search); // för jämförelser
+function laddaLod(nyckel) {
+  if (LOD_AV || lodCache.has(nyckel)) return null;
+  lodCache.set(nyckel, null);
+  return new GLTFLoader().loadAsync(LOD_URL(nyckel)).then((gltf) => {
+    gltf.scene.updateMatrixWorld(true);
+    lodCache.set(nyckel, gltf.scene);
+  }).catch(() => {});
+}
+
 function ladda(nyckel) {
   if (laddar.has(nyckel)) return laddar.get(nyckel);
   const url = MODELLER[nyckel];
@@ -52,7 +68,8 @@ function ladda(nyckel) {
 
 // Börja ladda alla direkt, så de oftast är klara innan första riddaren byggs
 export function forladdaRustningar() {
-  return Promise.all(Object.keys(MODELLER).map(ladda));
+  // de enklare versionerna är små (1–1,5 MB) och laddas samtidigt, så de finns när riddarna byggs
+  return Promise.all([...Object.keys(MODELLER).map(ladda), ...Object.keys(MODELLER).map(laddaLod)]);
 }
 // Spelet väntar (högst 8 s) på modellerna innan första riddaren byggs, så att alla ser samma kropp
 await Promise.race([forladdaRustningar(), new Promise((r) => setTimeout(r, 8000))]);
@@ -85,6 +102,13 @@ export function byggnadFor(spec) {
 }
 
 const LAG_SMUTS = new THREE.Color(0x3a332c);
+// Siktet (main.js updateAim) skjuter en stråle varje bild. Mot den skinnade rustningen (30–45 000 trianglar,
+// varje hörn räknas om med benen) kostade det flera millisekunder, och träffen blev alltid "bäckenet".
+// Siktets stråle hoppar därför över rustningen och träffar de dolda kroppsdelarna (rätt kroppsdel).
+function rustningsStrale(raycaster, hits) {
+  if (raycaster.utanRustning) return;
+  THREE.SkinnedMesh.prototype.raycast.call(this, raycaster, hits);
+}
 // ?rendering=gammal i adressen: spelåtergivningen före v0.53 (för jämförelse)
 const GAMMAL_RENDERING = typeof location !== "undefined" && /[?&]rendering=gammal/.test(location.search);
 
@@ -148,11 +172,50 @@ export function anvandRustningsmodell(knight, spec, colorHex) {
     mesh.bind(skel, new THREE.Matrix4());
     mesh.castShadow = mesh.receiveShadow = true;
     mesh.userData.rustning = true;
+    mesh.userData.lod = 0;
+    mesh.raycast = rustningsStrale;
+    // v0.61: utanför bilden ritas rustningen inte (klotet runt bäckenet täcker hela kroppen; när en lem
+    // huggs av stängs det av, se rustningHuggAv)
     mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1.6);
-    mesh.frustumCulled = false;
+    mesh.frustumCulled = true;
     seg.pelvis.add(mesh);
     delar.push({ mesh, ordning });
   });
+
+  // 3b. Den enklare rustningen (LOD1): samma skelett och samma material (efter namn)
+  const lod = [];
+  const lodScen = lodCache.get(knight.style);
+  if (lodScen && delar.length) {
+    const avNamn = new Map();
+    spec.scene.traverse((o) => {
+      if (!o.isMesh) return;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) avNamn.set(m.name, m);
+    });
+    lodScen.traverse((o) => {
+      if (!o.isSkinnedMesh) return;
+      const ordning = o.skeleton.bones.map((b) => b.name);
+      const ben = ordning.map((n) => seg[n]);
+      const src = (Array.isArray(o.material) ? o.material : [o.material]).map((m) => avNamn.get(m.name));
+      if (ben.some((b) => !b) || src.some((m) => !m)) return;
+      const geo = o.geometry.clone();
+      geo.applyMatrix4(o.matrixWorld);
+      // samma ben i samma ordning som den fulla: dela skelettet (en benbild per riddare i stället för två)
+      const lik = delar.find((d) => d.ordning.join() === ordning.join());
+      const skel = lik ? lik.mesh.skeleton : new THREE.Skeleton(ben, ordning.map((n) => vila[n].clone().invert()));
+      const mesh = new THREE.SkinnedMesh(geo, Array.isArray(o.material) ? src.map(material) : material(src[0]));
+      mesh.bind(skel, new THREE.Matrix4());
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.userData.rustning = true;
+      mesh.userData.lod = 1;
+      mesh.raycast = () => {}; // den enklare träffas aldrig av strålar (den fulla gör det)
+      mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1.6);
+      mesh.frustumCulled = true;
+      mesh.layers.set(SKUGG_LAGER); // nära: bara skugga
+      seg.pelvis.add(mesh);
+      lod.push({ mesh, ordning });
+    });
+    if (lod.length) for (const d of delar) d.mesh.castShadow = false; // skuggan kommer från LOD1
+  }
 
   // 4. Hjälmen: stel, i hjälmgruppen (som sitter i huvudets led)
   const huvud = new THREE.Vector3().setFromMatrixPosition(vila.head);
@@ -193,7 +256,7 @@ export function anvandRustningsmodell(knight, spec, colorHex) {
   }
   knight.greppMatt = nave; // för felsökning
 
-  knight.rustning = { delar };
+  knight.rustning = { delar, lod, langt: false };
   return delar.length > 0;
 }
 
@@ -236,7 +299,8 @@ export function rustningHuggAv(knight, segName) {
     if (o.userData?.segment) lossa.add(o.userData.segment);
   });
   const foralder = knight.seg[segName].parent?.userData?.segment || "pelvis";
-  for (const { mesh, ordning } of r.delar) {
+  for (const { mesh, ordning } of [...r.delar, ...(r.lod || [])]) {
+    mesh.frustumCulled = false; // delarna kan nu hamna långt från bäckenet
     const g = mesh.geometry;
     const idx = g.attributes.skinIndex;
     const w = g.attributes.skinWeight;
@@ -263,5 +327,28 @@ export function rustningHuggAv(knight, segName) {
     }
     idx.needsUpdate = true;
     w.needsUpdate = true;
+  }
+}
+
+// v0.61: välj rustning efter avståndet till kameran (med lite marginal så den inte flimrar fram och tillbaka).
+// opt.dist: avståndet där den enklare tar över. opt.shadow: skuggan från den enklare (false = Ultra, som förut).
+export function rustningLod(knight, avstand, opt = { dist: LOD_AVSTAND, shadow: true }) {
+  const r = knight.rustning;
+  if (!r || !r.lod || !r.lod.length) return;
+  const d = opt.dist ?? LOD_AVSTAND;
+  const langt = r.langt ? avstand > d - 1 : avstand > d + 1;
+  const skugga = opt.shadow !== false;
+  if (langt === r.langt && skugga === r.skugga) return;
+  r.langt = langt;
+  r.skugga = skugga;
+  for (const x of r.delar) {
+    x.mesh.visible = !langt;
+    x.mesh.castShadow = !skugga;
+  }
+  for (const x of r.lod) {
+    x.mesh.visible = langt || skugga;
+    x.mesh.castShadow = skugga || langt;
+    if (langt) x.mesh.layers.enable(0);
+    else x.mesh.layers.disable(0);
   }
 }

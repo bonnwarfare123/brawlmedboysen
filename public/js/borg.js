@@ -362,6 +362,7 @@ function crowdSpots() {
 
 export function buildBorgArena() {
   const group = new THREE.Group();
+  group.name = "borg";
   const colliders = [];
   const rand = seededRandom(99);
 

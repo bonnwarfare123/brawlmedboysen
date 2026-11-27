@@ -141,8 +141,19 @@ export class PostFX {
       lift: { value: new THREE.Vector3() },
       vignette: { value: 0.25 },
     }, { toneMapped: true });
+    this.bloomOn = true;
     this.setSize(window.innerWidth, window.innerHeight);
     this.setGrade("day");
+  }
+
+  // v0.61: grafiknivåer. samples = kantutjämningens prov (4 = som förut), bloom = glödskenet.
+  setQuality({ samples = 4, bloom = true } = {}) {
+    if (this.target.samples !== samples) {
+      this.target.dispose();
+      this.target.samples = samples;
+    }
+    this.bloomOn = bloom;
+    this.final.uniforms.strength.value = bloom ? this.bloomStrength ?? 0.35 : 0;
   }
 
   setGrade(kind) {
@@ -153,7 +164,8 @@ export class PostFX {
     u.tint.value.set(...g.tint);
     u.lift.value.set(...g.lift);
     u.vignette.value = g.vignette;
-    u.strength.value = g.bloom;
+    this.bloomStrength = g.bloom;
+    u.strength.value = this.bloomOn === false ? 0 : g.bloom;
     this.down.uniforms.threshold.value = g.threshold;
   }
 
@@ -212,6 +224,11 @@ export class PostFX {
     r.setRenderTarget(this.target);
     r.render(this.scene, this.camera);
     for (const [c, hex] of saved) c.setHex(hex);
+    if (!this.bloomOn) {
+      // utan glöd: bara färgsättningen (glödbilden är tom och styrkan 0)
+      this.pass(this.final, null);
+      return;
+    }
     const autoClear = r.autoClear;
     // Krymp i steg (första steget tar bara det ljusa)
     let src = this.target;

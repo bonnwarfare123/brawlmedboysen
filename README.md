@@ -1,4 +1,4 @@
-# Brawlmedboysen – v0.60
+# Brawlmedboysen – v0.62
 
 Ett medeltida 3D-brawlspel för 2–6 spelare i webbläsaren.
 
@@ -197,3 +197,43 @@ Det kan aldrig bli någon faktura.
 **Lugnare armar och bättre flyt (v0.59):** *Armarna:* tvåhandsvapnens vänsterarm kunde slå runt ett halvt varv mellan två bildrutor ("vibrerade" och "flög bakåt"). Orsaken var armlösaren, som räknade med Euler-vinklar med vändpunkter. Nu löses vänster arm (och vapenarmens indragning) med en polvektor: armbågen pekar utåt-nedåt utan vändpunkter. Greppet håller förra bildrutans läge om inget är klart bättre, och byten glider mjukt. Greppet tas mjukt efter släpad zweihänder, sparkar och liknande, och greppet nära axeln är säkrat. Mätt i ett test med alla 18 vapen, alla attacker, parering, laddning, spring och svängar vid 60 bilder/s: armryck på tvåhandsvapnen gick från 300–550 per vapen (största hopp ca 160°) till 30–70 (största ca 10–45°). Enhandsvapnen hade redan inga ryck. Vänster hands avstånd till skaftet gick från upp till 13 cm under attacker till högst 3 cm. *Flyt:* banornas stillastående delar slås nu ihop även när de bara skiljer sig i färg (färgen bakas in i hörnfärgerna): 20–23 % färre ritanrop på Tornerplatsen och Borggården, med samma bild. Döda kroppar och avhuggna delar slutar kasta skugga när de ligger still. Varje död riddare har kvar hela rustningen (30–45 000 trianglar), så det blev tungt mot slutet av en runda. Skyddsnätet för bildfrekvensen siktar nu på ca 57 bilder/s även på datorer som aldrig når högre. Förut jämförde det bara med datorns egen bästa takt och slog aldrig till på en dator som låg stadigt lågt. Det kan nu sänka upplösningen till 60 % och därefter skuggornas upplösning. Det höjer igen när det går lätt. Skärmens egen kantutjämning är avstängd: på Hög grafik är bilden redan kantutjämnad i efterbehandlingen. Spelet ber också om datorns snabbare grafikkort. I konsolen visar `__bmbStats()` ritanrop, trianglar och skuggkastare.
 
 **Bara Kungaborgen och ny lobby (v0.60):** Tornerplatsen och Borggården är dolda. De ligger kvar i koden men går inte att välja, och servern godtar bara de synliga banorna (`MAPS_SYNLIGA = ["borg"]` i `shared.js`, som `ARMORS_SYNLIGA`). Kungaborgen byggs direkt när spelet startar, och de gamla banorna byggs inte alls (snabbare start, mindre minne). Startskärmen visar borggården: kameran pendlar långsamt över ena hörnet, eftersom gården är för trång för en hel cirkel. En mörk slöja med "Borgen laddas …" ligger kvar tills borgen har laddats. Nytt utseende för startskärm, lobby, topplista, ljudpanel, tangenter, resultattavla och turneringsträd. Ytorna är mörkt järn med tunna mässingslinjer och små mässingshörn, och rubrikerna är i Cinzel med versaler. Vald knapp får guldkant. Heraldiskt rött används bara för huvudknappen (Skapa rum / Starta matchen). Startskärmen har titeln och formuläret i en kolumn till vänster, och borgen syns till höger. Emojierna i lobbyn är borta. Lobbyledaren har en ritad krona, botar har en BOT-märkning, och REDO/VÄNTAR är skrivet som text. Namnskyltarna över riddarna i lobbyn och livmätaren i striden har samma stil. Väljaren "Bana" döljs när det bara finns en bana. Stridens HUD är oförändrad.
+
+**Prestanda (v0.61):**
+
+*Mätverktyg.* **F8** visar en prestandapanel (av som standard) med:
+- FPS nu, snitt över 10 s och 1 % låg, samt bildtid
+- CPU-tid för logik och för ritning
+- GPU-tid (bara i Chrome/Edge; annars "stöds inte")
+- ritanrop, trianglar, ljus och skuggkartor, synliga objekt och partiklar
+- geometrier/texturer och JS-minne (bara Chrome)
+- ping till servern (nytt meddelande `ping`/`pong`)
+
+Grafikminnet går inte att mäta i en webbläsare och visas som "–". I konsolen finns `__bmbStats()`. Testflaggor i adressen: `?grafik=ultra|hog|medel|lag`, `?bake=0` (ingen bakning), `?lod=av` (inga enklare rustningar), `?bench` (fast upplösning).
+
+*Grafiknivåer.* Det finns fyra nivåer: **Ultra, Hög, Medel och Låg**. Välj i ljudpanelen eller stega med F2.
+- **Ultra:** som spelet var före v0.61.
+- **Hög** (standard): samma bild utom att riddare längre bort än 13 m har en enklare rustning och att skuggorna ritas från den enklare rustningen. Skärpan är högst 1,25× på högupplösta skärmar.
+- **Medel:** ingen glöd, 2× kantutjämning och skuggkarta 1024.
+- **Låg:** som förut.
+
+*Enklare rustningar (LOD).* `blender/karaktarer/C16_lod_export.py` förenklar spelets rustningar i Blender (Decimate collapse, viktgrupper och UV behålls, plåtkanter skarpa över 30°). Plåtrustningen gick från 41 900 till 14 700 trianglar, Stadsvakten från 26 200 till 10 500 och Vandrande riddaren från 27 400 till 11 000. Filerna `*_lod1.glb` är 1–1,5 MB och har inga bilder; spelet använder den fulla modellens material. De delar skelett med den fulla rustningen.
+
+*Döda kroppar bakas.* När en kropp eller avhuggen del ligger still slås den ihop till några få statiska meshar, en per material (`bake.js`). Rustningens skinning räknas ut en gång. Bilden är pixelidentisk i test. Delarna somnar också tidigare: efter minst 3 s, när dödsrörelsen är slut och allt har legat still i 1 s (förut alltid efter 10 s). Originalen sparas utanför scenen så att reprisen kan spela upp fallet.
+
+*Siktet.* Siktets stråle mot den skinnade rustningen räknade om 30–45 000 trianglar varje bild och träffade alltid "bäckenet". Nu hoppar strålen över rustningen och träffar de dolda kroppsdelarna, så siktet anger rätt kroppsdel igen.
+
+*Rustningar utanför bilden* ritas inte längre (frustum culling påslaget med ett klot runt kroppen; av när en lem huggs av).
+
+*Minnesläckor.* Riddare som byts ut mellan rundorna och döda kroppar som försvinner frigör nu sina former, material, ansikts- och namnskyltsbilder och skelettens benbilder. Efter en hel match (8 rundor) i lobbyn: geometrier 856 → 409, texturer 380 → 172, JS-minne 52 → 43 MB.
+
+Mätt i en fast testscen på Kungaborgen (6 levande riddare och 6 döda kroppar, samma kamera; `spel_test/test_scen.html`). Trianglar per bild:
+
+| Nivå | Trianglar |
+|---|---|
+| Före v0.61 | 865 000 |
+| Ultra | 868 000 |
+| Hög | 645 000 (−25 %) |
+
+Bilden på Hög skiljer sig bara i riddare längre bort än 13 m. I en riktig strid med samma kroppar och fast kamera gick ritanropen från 622 till 466 när kropparna hade bakats, mot 581 med enbart avstängda skuggor. FPS på en riktig dator är inte mätt här, eftersom testdatorn saknar grafikkort; använd F8.
+
+**Rensat i striden (v0.62):** Kroppsdelen under siktet lyser inte längre upp. Siktet väljer fortfarande kroppsdel åt servern (`VISA_SIKTE_LJUS` i main.js). Det vita svepet bakom vapnet vid slag är borta (`VISA_SVEPSPAR` i knight.js). Båda går att sätta på igen med `true`.

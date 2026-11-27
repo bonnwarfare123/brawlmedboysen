@@ -25,8 +25,9 @@ export const ACTIONS = [
   { id: "emote3", name: "Dansa", keys: ["Digit3"] },
   { id: "sound", name: "Ljud av/på", keys: ["KeyM"] },
   { id: "music", name: "Musik av/på", keys: ["KeyN"] },
-  { id: "quality", name: "Grafikläge", keys: ["F2"] },
+  { id: "quality", name: "Grafiknivå (Ultra → Hög → Medel → Låg)", keys: ["F2"] },
   { id: "stats", name: "Visa prestanda (ritanrop, ms)", keys: ["F3"] },
+  { id: "perf", name: "Prestandapanel (FPS, ms, minne)", keys: ["F8"] },
 ];
 
 // Knappar som webbläsaren inte släpper till spelet

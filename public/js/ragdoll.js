@@ -318,8 +318,10 @@ export class Ragdoll {
     return Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
   }
 
+  // v0.61: somnar också tidigare om allt har legat still en sekund (efter minst 3 s och när
+  // dödsrörelsen är slut) – då kan kroppen bakas ihop (bake.js) i stället för att räknas varje bild.
   get asleep() {
-    return this.age > SIMULATE_SECONDS;
+    return this.age > SIMULATE_SECONDS || this.settled === true;
   }
 
   // Ungefärlig mittpunkt (första kroppsdelens led), t.ex. för kameran
@@ -341,6 +343,16 @@ export class Ragdoll {
     }
     if (steps === MAX_STEPS_PER_FRAME) this.acc = 0;
     this.sync();
+    // Ligger allt still? (största förflyttningen per steg under en halv millimeter)
+    if (steps > 0 && this.age > 3 && !(this.drive && (this.simAge || 0) <= this.drive.until)) {
+      let max = 0;
+      for (const p of this.points) {
+        const m = Math.abs(p.x - p.px) + Math.abs(p.y - p.py) + Math.abs(p.z - p.pz);
+        if (m > max) max = m;
+      }
+      this.stillFor = max < 0.0005 ? (this.stillFor || 0) + Math.min(dt, 0.1) : 0;
+      if (this.stillFor > 1) this.settled = true;
+    }
   }
 
   // Flytta två punkter mot (eller från) varandra. stiffness 1 = hela vägen.
@@ -443,6 +455,15 @@ export class Ragdoll {
       });
       body.object.removeFromParent?.();
     }
+    if (this.baked) {
+      this.baked.traverse((obj) => {
+        if (obj.isMesh && obj.geometry) obj.geometry.dispose();
+      });
+      this.baked.removeFromParent();
+      this.baked = null;
+    }
+    this.owner?.dispose?.();
+    this.owner = null;
   }
 }
 
@@ -474,12 +495,14 @@ export class Debris {
       // (en död riddare har hela rustningen kvar, 30–45 000 trianglar, och de blir fler under en runda)
       if (r.asleep && !r.shadowOff) {
         r.shadowOff = true;
-        for (const body of r.bodies) body.object.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+        if (this.onSleep) this.onSleep(r); // t.ex. baka ihop delarna till några få statiska meshar (bake.js)
+        else for (const body of r.bodies) body.object.traverse((o) => { if (o.isMesh) o.castShadow = false; });
       }
       // Gamla delar sjunker långsamt ner i marken och försvinner
       const over = r.age - this.lifeSeconds;
       if (over > 0) {
         for (const body of r.bodies) body.object.position.y -= 0.12 * dt;
+        if (r.baked) r.baked.position.y -= 0.12 * dt;
         if (over > 3) {
           r.dispose();
           this.items.splice(i, 1);

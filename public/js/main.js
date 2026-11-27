@@ -15,6 +15,9 @@ import { Effects } from "./effects.js";
 import { Debris } from "./ragdoll.js";
 import { Sound } from "./sound.js";
 import { Net } from "./net.js";
+import { PerfOverlay } from "./perf.js";
+import { bakeObjects } from "./bake.js";
+import { SKUGG_LAGER, rustningLod } from "./rustningsmodell.js";
 import { Weather, Motes } from "./weather.js";
 import { PostFX } from "./postfx.js";
 import { Keybinds, ACTIONS, keyName, FORBIDDEN } from "./keybinds.js";
@@ -76,6 +79,20 @@ const canvas = $("game");
 // är kantutjämnad (4×), så skärmens egen kantutjämning var dubbelt arbete för grafikkortet.
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
 let resScale = 1; // sänks tillfälligt om datorn inte hinner med (se adaptResolution)
+// v0.61: rustningarnas enklare version (LOD1) kastar skuggan men syns inte i bilden på nära håll.
+// three.js testar kamerans lager även i skuggpasset, så lagret för "bara skugga" slås på just då.
+{
+  const skuggPass = renderer.shadowMap.render;
+  renderer.shadowMap.render = function (lights, sc, cam) {
+    cam.layers.enable(SKUGG_LAGER);
+    try {
+      skuggPass.call(this, lights, sc, cam);
+    } finally {
+      cam.layers.disable(SKUGG_LAGER);
+    }
+  };
+}
+const BENCH = /[?&]bench\b/.test(location.search);
 let shadowsReduced = false; // skyddsnätet har sänkt skuggornas upplösning
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, CONFIG.maxPixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -283,7 +300,7 @@ function updateLightPool() {
   for (let i = 0; i < LIGHT_POOL; i++) {
     const l = lightPool[i];
     const s = order[i];
-    l.visible = !lowQuality; // låg grafik: inga eldljus alls (som förut)
+    l.visible = Q.eld; // låg grafik: inga eldljus alls (som förut)
     if (!s || !s.light.visible || !s.home.visible) {
       l.intensity = 0;
       continue;
@@ -475,6 +492,47 @@ function bloodKind(attacker, k) {
   };
 }
 const debris = new Debris(30, 45); // döda kroppar och avhuggna delar
+if (BENCH) globalThis.__debris = debris; // prestandatest
+// När en kropp/del ligger still bakas den ihop till några få statiska meshar (samma utseende, få ritanrop)
+if (!/[?&]bake=0/.test(location.search)) debris.onSleep = (r) => {
+  if (replay) {
+    r.shadowOff = false; // vänta tills reprisen är slut (den spelar upp delarnas rörelser)
+    return;
+  }
+  const objs = r.bodies.map((b) => b.object).filter((o) => o.parent);
+  let group = null;
+  try {
+    group = bakeObjects(objs, scene);
+  } catch (e) {
+    console.warn("[bakning]", e);
+  }
+  if (!group) {
+    for (const o of objs) o.traverse?.((m) => { if (m.isMesh) m.castShadow = false; });
+    return;
+  }
+  // Originalen sparas utanför scenen (reprisen byter tillbaka till dem, se updateReplay/stopReplay)
+  for (const o of objs) {
+    o.removeFromParent();
+    // grafikkortets kopia frigörs (formen finns kvar i minnet och laddas upp igen om reprisen behöver den)
+    o.traverse((m) => { if (m.isMesh && m.geometry && !m.userData.sharedGeo) m.geometry.dispose(); });
+  }
+  r.baked = group;
+};
+// Reprisen spelar upp de lösa delarnas rörelser: visa originalen i stället för de bakade kropparna
+function unbakeForReplay(on) {
+  for (const r of debris.items) {
+    if (!r.baked) continue;
+    if (on && !r.bakedSwapped) {
+      for (const b of r.bodies) if (!b.object.parent) scene.add(b.object);
+      r.baked.visible = false;
+      r.bakedSwapped = true;
+    } else if (!on && r.bakedSwapped) {
+      for (const b of r.bodies) b.object.removeFromParent();
+      r.baked.visible = true;
+      r.bakedSwapped = false;
+    }
+  }
+}
 // Lösa delar och kroppar stannar vid staketet (följer banans form)
 const RAGDOLL_BOUNDS = {
   rx: ARENA_RX + 0.55,
@@ -617,33 +675,53 @@ function positionOf(player) {
 // Grafik och ljud: G = byt grafikläge, M = ljud av/på
 // ---------------------------------------------------------------------------
 
-let lowQuality = loadSetting("grafik", "hog") === "lag";
+// v0.61: fyra grafiknivåer. Ultra = som spelet var före v0.61. Hög = nästan samma bild men lättare
+// (enklare rustningar på avstånd och i skuggorna, lite lägre skärpa på högupplösta skärmar).
+const KVALITET = {
+  lag: { namn: "Låg", pr: 1, skuggor: false, karta: 1024, postfx: false, prov: 0, glod: false, damm: false, eld: false, lod: 9, lodSkugga: true },
+  medel: { namn: "Medel", pr: 1, skuggor: true, karta: 1024, postfx: true, prov: 2, glod: false, damm: false, eld: true, lod: 10, lodSkugga: true },
+  hog: { namn: "Hög", pr: 1.25, skuggor: true, karta: 2048, postfx: true, prov: 4, glod: true, damm: true, eld: true, lod: 13, lodSkugga: true },
+  ultra: { namn: "Ultra", pr: 1.5, skuggor: true, karta: 2048, postfx: true, prov: 4, glod: true, damm: true, eld: true, lod: 24, lodSkugga: false },
+};
+const KVALITET_ORDNING = ["ultra", "hog", "medel", "lag"];
+let kvalitet = new URLSearchParams(location.search).get("grafik") || loadSetting("grafik", "hog"); // ?grafik=ultra (tester)
+if (!KVALITET[kvalitet]) kvalitet = "hog";
+let Q = KVALITET[kvalitet];
+let lowQuality = kvalitet === "lag";
 
 function applyQuality() {
+  Q = KVALITET[kvalitet];
+  lowQuality = kvalitet === "lag";
   resScale = 1; // (skyddsnätet för bildfrekvensen börjar om)
   shadowsReduced = false;
-  renderer.setPixelRatio(lowQuality ? 1 : Math.min(window.devicePixelRatio, CONFIG.maxPixelRatio));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, Q.pr, CONFIG.maxPixelRatio));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  sun.castShadow = CONFIG.shadows && !lowQuality;
-  const size = lowQuality ? CONFIG.shadowMapSizeLow : CONFIG.shadowMapSize;
+  sun.castShadow = CONFIG.shadows && Q.skuggor;
+  const size = Q.karta;
   if (sun.shadow.mapSize.x !== size) {
     sun.shadow.mapSize.set(size, size);
     sun.shadow.map?.dispose();
     sun.shadow.map = null;
   }
-  arena.setQuality(lowQuality); // eldkorgarnas ljus kostar lite extra
+  arena.setQuality(!Q.eld); // eldkorgarnas ljus kostar lite extra
   if (postfx) {
-    postfx.enabled = !lowQuality;
+    postfx.enabled = Q.postfx;
+    postfx.setQuality({ samples: Q.prov, bloom: Q.glod });
     // Utan efterbehandling: dämpa färgerna direkt på bilden i stället
-    renderer.domElement.style.filter = lowQuality ? "saturate(0.78) contrast(1.08)" : "";
+    renderer.domElement.style.filter = Q.postfx ? "" : "saturate(0.78) contrast(1.08)";
     postfx.setSize(window.innerWidth, window.innerHeight);
   }
-  motes.off = lowQuality;
+  motes.off = !Q.damm;
   motes.set();
-  $("quality-label").textContent = lowQuality ? "Låg" : "Hög";
-  saveSetting("grafik", lowQuality ? "lag" : "hog");
+  $("quality-label").textContent = Q.namn;
+  document.querySelectorAll(".q-btn").forEach((b) => b.classList.toggle("active", b.dataset.q === kvalitet));
+  saveSetting("grafik", kvalitet);
 }
 applyQuality();
+document.querySelectorAll(".q-btn").forEach((b) => b.addEventListener("click", () => {
+  kvalitet = b.dataset.q;
+  applyQuality();
+}));
 
 $("music-volume").value = Math.round(sound.musicVolume * 100);
 $("sfx-volume").value = Math.round(sound.sfxVolume * 100);
@@ -867,8 +945,12 @@ function createKnight(player) {
 // Ersätt spelarens riddare med en ny hel (t.ex. ny runda eller ny färg)
 function rebuildKnight(player) {
   if (player.knight) {
-    player.knight.removeTrail();
-    if (player.knight.group.parent) player.knight.group.removeFromParent();
+    // en levande (eller dold) riddare frigörs direkt; en död frigörs när kroppen försvinner (ragdoll.owner)
+    if (!player.knight.dead) player.knight.dispose();
+    else {
+      player.knight.removeTrail();
+      if (player.knight.group.parent) player.knight.group.removeFromParent();
+    }
   }
   player.knight = createKnight(player);
   player.knight.setHp(player.hp);
@@ -1090,6 +1172,7 @@ function updateReplay() {
     stopReplay();
     return false;
   }
+  unbakeForReplay(true);
   // Bilden närmast tiden t
   let frame = recording[0];
   for (const f of recording) {
@@ -1133,6 +1216,7 @@ function stopReplay() {
   }
   // Kroppar på marken tillbaka där fysiken har dem
   for (const r of debris.items) r.sync();
+  unbakeForReplay(false);
   replay = null;
   document.body.classList.remove("replay");
   $("replay-label").hidden = true;
@@ -1142,7 +1226,14 @@ function stopReplay() {
 // Nätverk: vad som händer när servern skickar något
 // ---------------------------------------------------------------------------
 
+const perf = new PerfOverlay(renderer, scene);
+globalThis.__perf = perf; // för tester: __perf.stats(), __perf.rec = [] spelar in varje bild
+let pingAt = 0;
 const net = new Net({
+  pong: (msg) => {
+    const ms = performance.now() - msg.c;
+    perf.extra.ping = perf.extra.ping == null ? ms : perf.extra.ping * 0.7 + ms * 0.3;
+  },
   welcome(msg) {
     const you = msg.you;
     mode = msg.mode || "ffa";
@@ -3391,9 +3482,14 @@ function pressCode(code, e, repeat = false) {
     e?.preventDefault?.();
     showStats = !showStats;
   }
+  if (has("perf") && !repeat) {
+    e?.preventDefault?.();
+    perf.toggle();
+  }
   if (has("quality") && !repeat) {
     e?.preventDefault?.();
-    lowQuality = !lowQuality;
+    // F2 stegar Ultra → Hög → Medel → Låg → Ultra
+    kvalitet = KVALITET_ORDNING[(KVALITET_ORDNING.indexOf(kvalitet) + 1) % KVALITET_ORDNING.length];
     applyQuality();
   }
   if (repeat) return;
@@ -3892,10 +3988,13 @@ function tryJump() {
 
 const raycaster = new THREE.Raycaster();
 raycaster.camera = camera;
+raycaster.utanRustning = true; // se rustningsmodell.js
 const screenCenter = new THREE.Vector2(0, 1 - 2 * CONFIG.aimScreenY); // siktet sitter lite ovanför mitten
 $("crosshair").style.top = `${CONFIG.aimScreenY * 100}%`;
 let aim = null; // { id, seg }
 let highlightedKnight = null;
+// v0.62: kroppsdelen under siktet lyser inte längre upp (siktet väljer fortfarande kroppsdel åt servern)
+const VISA_SIKTE_LJUS = false;
 
 function updateAim() {
   aim = null;
@@ -3932,7 +4031,7 @@ function updateAim() {
   // Lys upp kroppsdelen under siktet
   const knight = aim ? others.get(aim.id)?.knight : null;
   if (highlightedKnight && highlightedKnight !== knight) highlightedKnight.setHighlight(null);
-  if (knight) knight.setHighlight(aim.seg);
+  if (knight && VISA_SIKTE_LJUS) knight.setHighlight(aim.seg);
   highlightedKnight = knight;
 }
 
@@ -4335,6 +4434,13 @@ function setLobbyFilmOffset() {
 }
 
 function updateCamera(dt) {
+  if (BENCH && globalThis.__benchCam) {
+    // prestandatest: fast kamera så att mätningarna går att jämföra
+    const c = globalThis.__benchCam;
+    camera.position.set(...c.p);
+    camera.lookAt(...c.t);
+    return;
+  }
   if (phase !== "lobby" && camera.filmOffset !== 0) {
     camera.filmOffset = 0;
     camera.updateProjectionMatrix();
@@ -4523,6 +4629,7 @@ let slowFor = 0;
 let fastFor = 0;
 let resChangedAt = 0;
 function adaptResolution(fps, now) {
+  if (BENCH) return; // prestandatest: fast upplösning så att mätningarna går att jämföra
   if (lowQuality || phase === "lobby" || document.hidden) {
     slowFor = fastFor = 0;
     return;
@@ -4565,6 +4672,7 @@ function adaptResolution(fps, now) {
 }
 
 function frame() {
+  perf.begin();
   const dt = Math.min(clock.getDelta(), 0.1);
 
   // FPS-mätare (uppdateras varje halv sekund)
@@ -4612,9 +4720,23 @@ function frame() {
   updateAim();
   sound.setListener(camera.position.x, camera.position.y, camera.position.z);
   updateLightPool();
+  if (perf.on) {
+    perf.extra.particles = effects.drops.alive + effects.bursts.alive;
+    perf.extra.quality = Q.namn;
+    perf.extra.res = `${Math.round(resScale * 100)} %${shadowsReduced ? ", skuggor sänkta" : ""}`;
+    const t = performance.now();
+    if (t > pingAt) {
+      pingAt = t + 2000;
+      net.send({ t: "ping", c: t });
+    }
+  }
+  // rustningarna: enklare version för riddare långt från kameran
+  for (const p of allPlayers()) if (p.knight?.rustning) rustningLod(p.knight, camera.position.distanceTo(p.knight.group.position), { dist: Q.lod, shadow: Q.lodSkugga });
   renderer.info.reset();
+  perf.beginRender();
   if (postfx) postfx.render();
   else renderer.render(scene, camera);
+  perf.end();
   if (showStats) {
     frameCalls = renderer.info.render.calls;
     frameMs += performance.now() - now;

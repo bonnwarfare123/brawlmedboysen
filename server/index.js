@@ -415,6 +415,9 @@ export class GameRoom extends DurableObject {
     if (!player) return;
 
     switch (msg.t) {
+      case "ping": // prestandapanelen (F8) mäter svarstiden
+        if (typeof msg.c === "number") ws.send(JSON.stringify({ t: "pong", c: msg.c }));
+        break;
       case "start":
         this.handleStart(player);
         break;

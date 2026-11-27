@@ -30,13 +30,18 @@ import { Ragdoll } from "./ragdoll.js";
 import { FootPlanner, solveLeg, solveArm, gaitStride, gaitStance, gaitRun, gaitSprint } from "./ik.js";
 import { Cloth, Chain } from "./cloth.js";
 import { rustningsmodell, byggnadFor, anvandRustningsmodell, rustningHuggAv } from "./rustningsmodell.js";
+
 import { vapenmodell, anvandVapenmodell, skoldmodell, anvandSkoldmodell } from "./vapenmodell.js";
 import { KIT_STYLES, CLOSED_HELMETS, HOOD_HELMETS, kitMaterials, buildKitTorso, buildKitLimbs, buildKitHelmet } from "./kit.js";
 import { rollFeatures, sculptHead as sculptFace, faceTexture, buildHair, beardShell, BEARD_REGION, BEARD_THICK, noseGeometry as wedgeNose } from "./face.js";
 import {
+
   chainmailTexture, leatherTexture, quiltTexture, wrapTexture, strawTexture, metalWearTexture, heraldryTexture, plankBumpTexture, paddedTexture, paddedBumpTexture, coarseWoolTexture,
   linenTexture, daggedTexture, splatterTexture, forgedTexture, woodGrainTexture, plateTexture, rustyPlateTexture,
 } from "./textures.js";
+
+// v0.62: det vita svepet bakom vapnet vid slag (sätt true för att få tillbaka det)
+const VISA_SVEPSPAR = false;
 
 const BLOOD = 0x6a0808;
 const DIRT = new THREE.Color(0x5a4630);
@@ -674,6 +679,7 @@ function contactShadow() {
   }
   const mat = new THREE.MeshBasicMaterial({ map: contactShared.tex, transparent: true, depthWrite: false, opacity: 0.5, polygonOffset: true, polygonOffsetFactor: -2 });
   const mesh = new THREE.Mesh(contactShared.geo, mat);
+  mesh.userData.sharedGeo = true; // formen delas av alla riddare
   mesh.renderOrder = 1;
   mesh.castShadow = mesh.receiveShadow = false;
   mesh.userData.equipment = true;
@@ -687,6 +693,7 @@ export class Knight {
     this.look = look;
     this.isBot = !!opts.bot; // träningsmotståndare får en liten skylt i namnet
     this.group = new THREE.Group();
+    this.group.name = "riddare";
     this.materials = [];
     this.seg = {};
     this.stumps = [];
@@ -3461,6 +3468,7 @@ export class Knight {
   }
 
   updateTrail(scene) {
+    if (!VISA_SVEPSPAR) return; // v0.62: det vita svepet bakom vapnet är avstängt
     const SAMPLES = 12;
     if (!this.trail) {
       const geo = new THREE.BufferGeometry();
@@ -3985,6 +3993,7 @@ export class Knight {
     const v0 = drive ? drive.velocity : velocity;
     const ragdoll = this.makeRagdoll(this.subtree(this.seg.pelvis), v0, scene, bounds, 2, true);
     if (drive) ragdoll.setDrive(drive);
+    ragdoll.owner = this; // riddarens material frigörs när kroppen försvinner
     this.group.removeFromParent();
     return ragdoll;
   }
@@ -5194,12 +5203,25 @@ export class Knight {
     }
   }
 
+  // Frigör grafikkortets resurser (former, material, namnskylten). v0.61: anropas också när riddaren
+  // byts ut mellan rundorna och när en död kropp försvinner – förut låg de kvar (minnesläcka).
   dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
     this.removeTrail();
     this.group.traverse((obj) => {
-      if (obj.isMesh && obj.geometry) obj.geometry.dispose();
+      if (obj.isMesh && obj.geometry && !obj.userData.sharedGeo) obj.geometry.dispose();
     });
+    const egna = new Set();
+    const mats = [...this.materials, ...(this.calm ? this.calm.values() : [])];
+    this.group.traverse((obj) => { if (obj.isMesh) mats.push(...(Array.isArray(obj.material) ? obj.material : [obj.material])); });
+    for (const m of mats) for (const k of ["map", "bumpMap", "normalMap", "roughnessMap", "emissiveMap"]) if (m?.[k]?.userData?.egen) egna.add(m[k]);
     this.materials.forEach((m) => m.dispose());
+    if (this.calm) for (const m of this.calm.values()) m.dispose();
+    egna.forEach((t) => t.dispose());
+    // skelettens benbilder (en textur per skinnad rustning)
+    if (this.rustning) for (const d of [...this.rustning.delar, ...(this.rustning.lod || [])]) d.mesh.skeleton?.dispose();
+    for (const sm of this.skinMeshes || []) sm.skeleton?.dispose?.();
     if (this.labelTexture) this.labelTexture.dispose();
     this.group.removeFromParent();
   }
